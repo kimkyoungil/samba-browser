@@ -159,7 +159,7 @@ def _auth_error_result() -> ResultMessage:
 
 
 def test_auth_error_falls_back_to_next_account_token(monkeypatch):
-    # 기본 로그인 구독이 막히면 SAMBA_CLAUDE_OAUTH_TOKENS 의 다른 계정으로 다시 묻는다
+    # 예비 토큰이 있으면 기본 로그인은 쓰지 않고, 첫 토큰이 막히면 다음 토큰으로 다시 묻는다
     monkeypatch.setenv('SAMBA_CLAUDE_OAUTH_TOKENS', 'tok-a, tok-b')
     seen: list[str | None] = []
 
@@ -172,7 +172,7 @@ def test_auth_error_falls_back_to_next_account_token(monkeypatch):
         yield assistant_text('{"choice": "ok", "reason": "r"}')
 
     result = make_decide(query_fn=_query)('p', Decision)
-    assert seen == [None, 'tok-a', 'tok-b']
+    assert seen == ['tok-a', 'tok-b']
     assert result.choice == "ok"
 
 

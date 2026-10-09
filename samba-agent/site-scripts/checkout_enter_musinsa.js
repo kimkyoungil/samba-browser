@@ -1,8 +1,7 @@
-// 무신사 결제창 진입: 결제수단 고르고 결제하기 직전(또는 결제)까지
+// 무신사 결제창 진입: 결제하기 직전(또는 결제)까지
 // 인자 {card, profile?, dryRun?, expect:{name, option, selected, product_no}, amount?, tab?}
 // dry 면 누르기 직전까지. expect 없으면 결제 안 함
 // 총액 못 읽으면 실패, amount+배송비 초과면 멈춤
-// 반환 {ok, method, popup_url, dry?, points_only?, total, order_item, note, error?}
 const nz = s => String(s || '').replace(/\s+/g, ' ').trim()
 const lc = s => nz(s).toLowerCase()
 const num = s => parseInt(String(s || '').replace(/[^\d]/g, ''), 10) || 0
@@ -19,7 +18,7 @@ const fail = (error, note) => ({ ...R, ok: false, error, note: note || error })
 const ex = typeof args.expect === 'string' ? { name: args.expect } : (args.expect && typeof args.expect === 'object' ? args.expect : null)
 if (!dry && !ex) return fail('no expect', 'no expect')
 
-// 주문서 대조(하네스 order_form_mismatch 기준 + 상품번호): 다르면 사유
+// 주문서 대조: 다르면 사유
 const GEN = new Set('매장정품 정품 신발 운동화 스니커즈 스니커 남성 여성 남녀공용 공용 커플 키즈 아동 나이키 아디다스 뉴발란스 푸마 반스 컨버스 리복 아식스 휠라 스케쳐스 크록스 노스페이스 nike adidas puma vans converse reebok asics fila skechers crocs 모자 가방 티셔츠 블랙 화이트 그레이 네이비 black white grey gray navy'.split(' '))
 const tk = s => lc(s).split(/[^0-9a-z가-힣]+/).filter(Boolean)
 const ft = t => /^(free|one|f|os|onesize|프리)$/.test(t)
@@ -32,23 +31,25 @@ const mismatch = (seg, tree) => {
   if (words.length && !words.some(w => low.includes(w.toLowerCase()))) return `name words ${words.slice(0, 5).join(',')} not in order form`
   if (sizes.length && !sizes.some(x => segNums.includes(x))) return `size ${sizes.join('/')} not in order form`
   // 글자 사이즈는 주문서 줄에 같은 토큰이 있어야
-  const want = sizes.length ? [] : tk(ex.selected || ex.option).filter(t => /^(xxs|xs|s|m|l|xl|xxl|xxxl|2xl|3xl|4xl)$/.test(t) || ft(t))
+  const ot = tk(ex.selected || ex.option)
+  const want = sizes.length ? [] : ot.filter(t => /^(xxs|xs|s|m|l|xl|xxl|xxxl|2xl|3xl|4xl)$/.test(t) || ft(t))
   const st = tk(seg)
-  if (want.length && !want.some(l => st.includes(l) || (ft(l) && st.some(ft)))) return `size ${want.join('/')} not in order form`
+  const oc = ot.filter(t => /\d/.test(t) && t.length > 2 && t.length < 5 && !/^\d+$/.test(t))
+  // FREE 대신 옵션 코드(0TU)만 보일 수 있다
+  if (want.length && !want.some(l => st.includes(l) || (ft(l) && st.some(ft) || (oc.length && oc.every(c => st.includes(c)))))) return `size ${want.join('/')} not in order form`
   // 상품 링크가 보이면 그 번호여야
   const pno = String(ex.product_no || '').replace(/\D/g, '')
   if (pno && /products\/\d+/.test(tree) && !new RegExp('products/' + pno + '(?!\\d)').test(tree)) return `product ${pno} not in order form`
   return null
 }
 
-// 1) 주문서 탭(tabs.list 에 profile 이 실리면 그 계정 것만)
+// 1) 주문서 탭(profile 이 있으면 그 계정 것만)
 const ofs = (await tabs.list()).filter(t => OF.test(t.url || '') && (!args.profile || !t.profile || t.profile === args.profile))
 let tab = null
 if (args.tab) {
   tab = ofs.find(t => t.id === String(args.tab))
   if (!tab) return fail('not-on-order-form', 'order form tab ' + args.tab + ' not found')
 } else {
-  // 후보마다 대조해 딱 하나만(expect 없으면 주문서 하나일 때만)
   const hit = []
   for (const t of ofs) {
     if (!ex) { hit.push(t); continue }
@@ -107,7 +108,7 @@ const payId = parseInt(payLine.slice(1))
 // 5) 시험: 누르기 직전에서 멈춘다
 if (dry) return { ...R, ok: true, dry: true, points_only: pointsOnly || undefined, note: 'dry run — pay button ' + payId + ' not clicked' }
 
-// 6) 결제하기 → 결제창. 늦으면 한 번 더 누른다(무신사페이 제외), 새 창이 둘이면 사람에게
+// 6) 결제하기 → 결제창. 늦으면 한 번 더(무신사페이 제외), 새 창이 둘이면 사람에게
 const before = new Set((await tabs.list()).map(t => t.id))
 const clicks = [String(await page.click(payId)).slice(0, 80)]
 if (pointsOnly) { await sleep(2500); return { ...R, ok: true, points_only: true, click: clicks } }

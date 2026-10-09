@@ -69,7 +69,7 @@ def make_decide(
         # 구독 계정이 모두 막혔을 때 마지막으로 Console API 크레딧(API 키들)
         from samba_agent.llm.auth import api_key_env, fallback_api_keys
 
-        envs.extend(api_key_env(k) for k in fallback_api_keys())
+        envs.extend(api_key_env(k, i) for i, k in enumerate(fallback_api_keys()))
         for i, env in enumerate(envs):
             try:
                 return _run(_ask(qf, prompt, schema, model, max_turns, env))

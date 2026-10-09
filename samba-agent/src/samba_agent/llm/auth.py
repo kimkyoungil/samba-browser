@@ -66,10 +66,12 @@ def fallback_api_keys() -> list[str]:
     return out
 
 
-def api_key_env(api_key: str) -> dict[str, str]:
-    """API 키 슬롯의 환경변수. 워크스페이스에 묶이지 않은 키(sk-ant-usr-)는 요청마다 워크스페이스 ID 헤더가 필요하다."""
+def api_key_env(api_key: str, index: int = 0) -> dict[str, str]:
+    """API 키 슬롯의 환경변수. 워크스페이스에 묶이지 않은 키(sk-ant-usr-)는 요청마다 워크스페이스 ID 헤더가 필요하다.
+    index 번째 키는 SAMBA_ANTHROPIC_WORKSPACE_ID(첫째), _2, _3 … 을 쓰고 없으면 첫째 값을 쓴다(키마다 조직이 다를 수 있다)."""
     env = {API_KEY_ENV: api_key}
-    workspace = env_value('SAMBA_ANTHROPIC_WORKSPACE_ID')
+    suffix = '' if index == 0 else f'_{index + 1}'
+    workspace = env_value(f'SAMBA_ANTHROPIC_WORKSPACE_ID{suffix}') or env_value('SAMBA_ANTHROPIC_WORKSPACE_ID')
     if workspace:
         env[HEADERS_ENV] = f'anthropic-workspace-id: {workspace}'
     return env
@@ -116,7 +118,7 @@ def with_fallback(query_fn: QueryFn) -> QueryFn:
             if 0 < slot <= len(tokens):
                 env[TOKEN_ENV] = tokens[slot - 1]
             elif slot > len(tokens):
-                env.update(api_key_env(api_keys[slot - len(tokens) - 1]))
+                env.update(api_key_env(api_keys[slot - len(tokens) - 1], slot - len(tokens) - 1))
             tried = dataclasses.replace(options, env=env)
             started = False
             try:

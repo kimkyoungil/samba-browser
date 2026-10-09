@@ -1,10 +1,11 @@
 # 주문처리 감시 인수인계 (2026-10-10 07:50 KST)
 
-이 파일 하나로 다른 계정의 새 세션이 감시를 이어받는다. 응답은 항상 한국어, 간결하게(10줄 이내), 사용자는 "금고" 대신 **키마스터**라고 부른다.
+이 파일 하나로 다른 계정(**GPT·Codex**)의 새 세션이 감시를 이어받는다. 원래 Claude 세션이 하던 일이다. 응답은 항상 한국어, 간결하게(10줄 이내), 사용자는 "금고" 대신 **키마스터**라고 부른다.
 
 ## 0. 먼저 읽을 것
-- 전역 지침: `~/.claude-samba/CLAUDE.md`(복사됨), 규칙 `~/.claude-samba/rules/`
-- 메모리: `~/.claude-samba/projects/C--Users-canno-workspace-samba-browser/memory/MEMORY.md` — 색인의 파일을 필요할 때 읽는다. 특히 `watch-failed-jobs`, `cancel-needs-evidence`, `harness-restart-safe-point`, `double-purchase-requeue`, `wrong-purchase-cancel-immediately`, `no-automation-during-user-login`, `never-touch-shipping-status`, `cancel-request-procedure`.
+- 전역 지침: `C:\Users\canno\.claude\CLAUDE.md`(코딩·언어 규칙), `C:\Users\canno\.claude\rules\`
+- 메모리(규칙·사고 기록 96개): `C:\Users\canno\.claude\projects\C--Users-canno-workspace-samba-browser\memory\MEMORY.md` — 색인의 파일을 필요할 때 읽는다. 특히 `watch-failed-jobs`, `cancel-needs-evidence`, `harness-restart-safe-point`, `double-purchase-requeue`, `wrong-purchase-cancel-immediately`, `no-automation-during-user-login`, `never-touch-shipping-status`, `cancel-request-procedure`.
+- 이 PC 는 Windows 11, 셸은 Git Bash/PowerShell. 한국어로만 답한다(시간은 KST).
 
 ## 1. 10분마다 하는 일(이 프롬프트를 /loop 로 그대로 넣는다)
 ```
@@ -52,8 +53,15 @@ docker exec local-postgres-1 psql -U samba -d samba -At -F' | ' -c "select order
 - 삼바웨이브 변경·배포는 `deploy-local.ps1` 만, 크림 중국 세션과 조율(관리자 강제 머지 금지).
 - 커밋 메시지·주석·문서는 한국어, 커밋 끝에 `Co-Authored-By` 줄은 세션 알림이 주는 값을 쓴다.
 
-## 6. 새 계정으로 시작하는 법
+## 6. GPT(Codex)로 이어가는 법
+`/loop` 가 없으니 10분마다 `codex exec` 로 돌린다. 프롬프트는 `monitor-prompt.txt` 에 있다.
 ```powershell
-$env:CLAUDE_CONFIG_DIR='C:/Users/canno/.claude-samba'; cd C:\Users\canno\workspace\samba_browser\samba-agent; claude
+# 한 번 시험
+powershell -ExecutionPolicy Bypass -File C:\Users\canno\workspace\samba_browser\samba-agent\run-order-monitor-codex.ps1
+# 10분마다(작업 스케줄러에 등록)
+schtasks /Create /SC MINUTE /MO 10 /TN SambaOrderMonitorCodex /TR "powershell -NoProfile -ExecutionPolicy Bypass -File C:\Users\canno\workspace\samba_browser\samba-agent\run-order-monitor-codex.ps1"
 ```
-시작하면 "HANDOFF-order-monitor.md 읽고 감시를 이어서 해줘" 라고 하고, 위 1번 프롬프트를 `/loop 10m` 으로 건다. 사용자가 사용량 한도(주간 99%, 월요일 오후 10:59 재설정)로 막히기 전에 PC 에서 해야 한다.
+- 결과는 `logs\monitor-codex-YYYYMMDD.log` 에 쌓인다(변화 있을 때만 3줄, 없으면 한 줄). 마지막 메시지는 `logs\monitor-codex-last.txt`.
+- 샌드박스: 스크립트는 `danger-full-access` 로 돈다(도커·sqlite·브릿지를 만져야 해서). 읽기만 하는 점검으로 줄이려면 `-s workspace-write` 로 바꾸되 docker/sqlite 가 막히는지 먼저 본다.
+- Codex 앱을 쓰면 같은 프롬프트로 앱의 반복 작업(Automations)을 만들어도 된다.
+- 알림 채널이 없다 — 변화는 로그 파일에 남으니 사용자가 폰에서 Codex 앱으로 본다.

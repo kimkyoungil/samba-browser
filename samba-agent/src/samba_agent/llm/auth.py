@@ -76,7 +76,9 @@ def with_fallback(query_fn: QueryFn) -> QueryFn:
             started = False
             try:
                 async for message in query_fn(prompt=prompt, options=tried):
-                    started = True
+                    # 시작 알림(SystemMessage)은 도구가 실행됐다는 뜻이 아니다 — 모델 응답·도구 결과가 온 뒤부터 '시작'으로 본다
+                    if type(message).__name__ in ('AssistantMessage', 'UserMessage'):
+                        started = True
                     yield message
                 _preferred = slot
                 return

@@ -78,9 +78,12 @@ def test_인증과_무관한_오류는_넘기지_않고_그대로_올린다() ->
 def test_응답이_시작된_뒤의_인증_오류는_같은_요청을_다시_보내지_않는다() -> None:
     calls: list[str | None] = []
 
+    class AssistantMessage:
+        pass
+
     async def q(*, prompt, options):
         calls.append(options.env.get(auth.TOKEN_ENV))
-        yield 'partial'
+        yield AssistantMessage()
         raise RuntimeError('401 unauthorized')
 
     with pytest.raises(RuntimeError):
@@ -111,3 +114,24 @@ def test_워크스페이스_ID가_있으면_API_키_슬롯에_헤더를_붙인�
     }
     monkeypatch.delenv('SAMBA_ANTHROPIC_WORKSPACE_ID')
     assert auth.api_key_env('k') == {auth.API_KEY_ENV: 'k'}
+
+
+def test_시작_알림만_온_뒤의_인증_오류도_다음_계정으로_넘긴다() -> None:
+    """실기 2026-10-10: 'Not logged in' 은 시스템 시작 메시지가 먼저 오고 그 뒤에 오류가 난다."""
+
+    class SystemMessage:
+        pass
+
+    seen: list[str | None] = []
+
+    async def q(*, prompt, options):
+        token = options.env.get(auth.TOKEN_ENV)
+        seen.append(token)
+        yield SystemMessage()
+        if token is None:
+            raise RuntimeError('Claude Code returned an error result: Not logged in')
+        yield 'ok'
+
+    out = _collect(auth.with_fallback(q)(prompt='x', options=_Opts()))
+    assert out[-1] == 'ok'
+    assert seen == [None, 'tokA']

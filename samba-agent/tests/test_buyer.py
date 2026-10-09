@@ -2208,3 +2208,19 @@ def test_숫자_조각은_숫자_경계로만_맞춘다_EU44_는_44_5_가_아니
     assert matching_options(opts, 'EU 화이트-407 EU 44') == []
     with_44 = opts + ['285(44/UK9.5) 98,100']
     assert matching_options(with_44, 'EU 화이트-407 EU 44') == ['285(44/UK9.5) 98,100']
+
+
+def test_스케쳐스는_브랜드_글자가_없어도_품번으로_까대기로_고정된다():
+    """실기 2026-10-09 20261009ECF62B: 상품명에 브랜드가 없어 선물하기(고객 직배)로 잘못 샀다."""
+    from samba_agent.agents.buyer import is_fixed_kkadaegi
+
+    def ref(sku: str) -> OrderRef:
+        return OrderRef(order_no='S9', source='LOTTEON', seller='신세계몰', sku=sku, qty=1)
+
+    assert is_fixed_kkadaegi(ref('매장정품 여성슬립온 여자슬립온 여성 플렉스 어필 5 0 SL0WPCEX305 LE122'))
+    assert is_fixed_kkadaegi(ref('남성 와이드 맥스쿠셔닝 프리미어3 SP0MRCGY021'))
+    assert is_fixed_kkadaegi(ref('스케쳐스USA 남성 우노 SC0MFCEY042_I 민트 / 265'))
+    # 다른 브랜드 품번은 걸리지 않는다
+    assert not is_fixed_kkadaegi(ref('나이키 에어포스 CW2288-111'))
+    assert not is_fixed_kkadaegi(ref('아디다스 슈퍼스타 FZ5461'))
+    assert not is_fixed_kkadaegi(ref('KS4780 3 스트라이프 슬림 티셔츠'))

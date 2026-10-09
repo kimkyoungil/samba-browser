@@ -108,11 +108,16 @@ def _norm_address(text: str) -> str:
 
 # 소싱처와 상관없이 항상 까대기(사무실 수령)로 사는 브랜드 — 사용자 2026-10-08 "스케쳐스는 까대기로 고정"
 KKADAEGI_BRANDS = re.compile(r'스케[쳐처]스|skechers', re.IGNORECASE)
+# 상품명에 브랜드 글자가 없어도 품번으로 안다 — 스케쳐스 품번은 S+영문+0+(W|M|G|K)+영문 4자+숫자 3자
+# (SL0WPCEX305·SP0MRCGY021·SC0WFCGY092·SC0MFCEY042). 실기 2026-10-09 20261009ECF62B: 상품명이
+# '매장정품 여성슬립온 … 플렉스 어필 5 0 SL0WPCEX305' 라 브랜드를 못 알아 선물하기(고객 직배)로 샀다
+SKECHERS_STYLE_CODE = re.compile(r'(?<![A-Za-z0-9])S[A-Z]0[WMGK][A-Z]{4}\d{3}(?![0-9])')
 
 
 def is_fixed_kkadaegi(order: OrderRef) -> bool:
     """이 주문의 상품이 까대기로 고정된 브랜드인가(상품명에서 본다)."""
-    return bool(KKADAEGI_BRANDS.search(str(order.sku or '')))
+    text = str(order.sku or '')
+    return bool(KKADAEGI_BRANDS.search(text) or SKECHERS_STYLE_CODE.search(text))
 
 
 def road_key(address: object) -> str:

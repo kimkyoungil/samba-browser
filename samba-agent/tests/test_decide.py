@@ -7,7 +7,22 @@ import pytest
 from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
 
 from samba_agent.agents.base import Decision
+from samba_agent.llm import auth
 from samba_agent.llm.decide import make_decide
+
+
+@pytest.fixture(autouse=True)
+def _isolate_env(monkeypatch):
+    """로컬 .env·환경의 실제 토큰·API 키로 진짜 호출이 나가지 않게 한다."""
+    monkeypatch.setattr(auth, '_dotenv', dict)
+    for name in (
+        'SAMBA_CLAUDE_OAUTH_TOKENS',
+        'SAMBA_ANTHROPIC_API_KEY',
+        'SAMBA_ANTHROPIC_API_KEY_2',
+        'SAMBA_ANTHROPIC_API_KEY_3',
+        'SAMBA_ANTHROPIC_WORKSPACE_ID',
+    ):
+        monkeypatch.delenv(name, raising=False)
 
 
 def assistant_text(text: str) -> AssistantMessage:
@@ -169,3 +184,86 @@ def test_auth_error_on_every_account_raises_value_error(monkeypatch):
 
     with pytest.raises(ValueError, match='인증 실패'):
         make_decide(query_fn=_query)('p', Decision)
+
+
+def test_구독이_모두_막히면_API_키로_Messages_API_를_직접_부른다(monkeypatch) -> None:
+    import httpx
+
+    monkeypatch.setenv('SAMBA_ANTHROPIC_API_KEY', 'sk-ant-api-test')
+    monkeypatch.setenv('SAMBA_ANTHROPIC_WORKSPACE_ID', 'wrkspc_t')
+    sent: dict[str, object] = {}
+
+    def fake_post(url, headers, json, timeout):
+        sent['headers'] = headers
+        return httpx.Response(
+            200,
+            json={'content': [{'type': 'text', 'text': '{"choice": "retry", "reason": "api"}'}]},
+            request=httpx.Request('POST', url),
+        )
+
+    monkeypatch.setattr(httpx, 'post', fake_post)
+
+    async def blocked(*, prompt, options):
+        raise RuntimeError('Not logged in')
+        yield  # pragma: no cover
+
+    out = make_decide(query_fn=blocked)('p', Decision)
+    assert out.choice == 'retry'
+    headers = sent['headers']
+    assert headers['x-api-key'] == 'sk-ant-api-test'
+    assert headers['anthropic-workspace-id'] == 'wrkspc_t'
+
+
+def test_API_키의_크레딧이_없으면_다음_키로_넘기고_모두_실패하면_오류(monkeypatch) -> None:
+    import httpx
+
+    monkeypatch.setenv('SAMBA_ANTHROPIC_API_KEY', 'k1')
+    monkeypatch.setenv('SAMBA_ANTHROPIC_API_KEY_2', 'k2')
+    seen: list[str] = []
+
+    def fake_post(url, headers, json, timeout):
+        seen.append(headers['x-api-key'])
+        return httpx.Response(
+            400,
+            json={'error': {'message': 'Your credit balance is too low'}},
+            request=httpx.Request('POST', url),
+        )
+
+    monkeypatch.setattr(httpx, 'post', fake_post)
+
+    async def blocked(*, prompt, options):
+        raise RuntimeError('Not logged in')
+        yield  # pragma: no cover
+
+    with pytest.raises(ValueError, match='모든 계정'):
+        make_decide(query_fn=blocked)('p', Decision)
+    assert seen == ['k1', 'k2']
+
+
+def test_구독이_한도_소진으로_막혀도_API_로_넘어간다_한도가_남아_있으면_넘어가지_않는다(monkeypatch) -> None:
+    import httpx
+
+    monkeypatch.setenv('SAMBA_ANTHROPIC_API_KEY', 'k1')
+    calls: list[str] = []
+
+    def fake_post(url, headers, json, timeout):
+        calls.append('api')
+        return httpx.Response(
+            200,
+            json={'content': [{'type': 'text', 'text': '{"choice": "x", "reason": "r"}'}]},
+            request=httpx.Request('POST', url),
+        )
+
+    monkeypatch.setattr(httpx, 'post', fake_post)
+
+    async def limited(*, prompt, options):
+        raise RuntimeError("You've hit your weekly limit")
+        yield  # pragma: no cover
+
+    assert make_decide(query_fn=limited)('p', Decision).choice == 'x'
+    assert calls == ['api']
+
+    calls.clear()
+    ok = fake_query('{"choice": "sub", "reason": "r"}')
+    assert make_decide(query_fn=ok)('p', Decision).choice == 'sub'
+    assert calls == []  # 구독이 되면 API 를 부르지 않는다

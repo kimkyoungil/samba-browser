@@ -35,7 +35,7 @@ QueryFn = Callable[..., AsyncIterator[Any]]
 
 # 구독 만료·차단·로그인 풀림 — 다른 계정으로 넘어가야 하는 오류
 _AUTH_ERROR_RE = re.compile(
-    r'subscription access|disabled|not logged in|login|unauthori[sz]ed|'
+    r'subscription access|disabled|not logged in|login|unauthori[sz]ed|usage limit|limit reached|hit your .{0,20}limit|weekly limit|'
     r'authentication|oauth|token.*(expired|invalid)|credit balance|401|403',
     re.IGNORECASE,
 )
@@ -62,21 +62,29 @@ def make_decide(
     qf = query_fn or _default_query
 
     def decide(prompt: str, schema: type[BaseModel]) -> BaseModel:
-        # 기본 로그인 → 막히면 다른 계정 토큰 순서로
+        # 구독: 기본 로그인 → 막히면 다른 계정 토큰 순서로(Claude Code 프로그램 경유)
         envs: list[dict[str, str]] = [{}] + [
             {'CLAUDE_CODE_OAUTH_TOKEN': t} for t in fallback_tokens()
         ]
-        # 구독 계정이 모두 막혔을 때 마지막으로 Console API 크레딧(API 키들)
-        from samba_agent.llm.auth import api_key_env, fallback_api_keys
-
-        envs.extend(api_key_env(k, i) for i, k in enumerate(fallback_api_keys()))
-        for i, env in enumerate(envs):
+        for env in envs:
             try:
                 return _run(_ask(qf, prompt, schema, model, max_turns, env))
             except _AuthError:
-                if i == len(envs) - 1:
-                    raise ValueError('Claude 인증 실패 — 모든 계정이 막혔다') from None
-        raise AssertionError('unreachable')
+                continue
+        # 구독이 모두 막혔으면 Console API 키로 Messages API 를 직접 부른다 —
+        # Max 플랜 API 크레딧은 Claude Code 에는 적용되지 않고 API 직접 호출에만 적용된다(공식 문서, 실측 2026-10-10)
+        from samba_agent.llm.auth import env_value, fallback_api_keys
+
+        for i, key in enumerate(fallback_api_keys()):
+            suffix = '' if i == 0 else f'_{i + 1}'
+            workspace = env_value(f'SAMBA_ANTHROPIC_WORKSPACE_ID{suffix}') or env_value(
+                'SAMBA_ANTHROPIC_WORKSPACE_ID'
+            )
+            try:
+                return _ask_api(prompt, schema, model, key, workspace)
+            except _AuthError:
+                continue
+        raise ValueError('Claude 인증 실패 — 모든 계정이 막혔다')
 
     return decide
 
@@ -152,6 +160,57 @@ async def _ask(
         raise ValueError(
             f'응답이 스키마와 맞지 않다: 오류 {e.error_count()}건, 필드 [{paths}]'
         ) from None
+
+
+API_URL = 'https://api.anthropic.com/v1/messages'
+API_MAX_TOKENS = 4096
+
+
+def _parse_schema_json(text: str, schema: type[BaseModel]) -> BaseModel:
+    raw = _extract_first_json_object(text)
+    if raw is None:
+        raise ValueError('응답에서 JSON 객체를 찾지 못했다')
+    try:
+        return schema.model_validate_json(raw)
+    except ValidationError as e:
+        paths = ', '.join('.'.join(str(p) for p in err['loc']) for err in e.errors())
+        raise ValueError(
+            f'응답이 스키마와 맞지 않다: 오류 {e.error_count()}건, 필드 [{paths}]'
+        ) from None
+
+
+def _ask_api(
+    prompt: str, schema: type[BaseModel], model: str, api_key: str, workspace: str = ''
+) -> BaseModel:
+    """Messages API 를 직접 불러 스키마에 맞는 모델을 돌려준다(API 크레딧 사용). 인증·크레딧 문제는 _AuthError."""
+    import httpx
+
+    headers = {
+        'x-api-key': api_key,
+        'anthropic-version': '2023-06-01',
+        'content-type': 'application/json',
+    }
+    if workspace:
+        headers['anthropic-workspace-id'] = workspace
+    body = {
+        'model': model,
+        'max_tokens': API_MAX_TOKENS,
+        'system': f'JSON 만 출력하라. 다른 말은 붙이지 마라. 스키마: {schema.model_json_schema()}',
+        'messages': [{'role': 'user', 'content': prompt}],
+    }
+    try:
+        r = httpx.post(API_URL, headers=headers, json=body, timeout=120)
+    except httpx.HTTPError as e:
+        raise ValueError(f'API 호출 실패: {type(e).__name__}') from None
+    if r.status_code in (401, 403) or (
+        r.status_code == 400 and _AUTH_ERROR_RE.search(r.text)
+    ):
+        raise _AuthError()
+    if r.status_code != 200:
+        raise ValueError(f'API 응답 오류: HTTP {r.status_code}')
+    blocks = r.json().get('content') or []
+    text = ''.join(str(b.get('text', '')) for b in blocks if b.get('type') == 'text')
+    return _parse_schema_json(text, schema)
 
 
 def _extract_first_json_object(text: str) -> str | None:

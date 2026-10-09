@@ -92,20 +92,19 @@ def test_응답이_시작된_뒤의_인증_오류는_같은_요청을_다시_보
     assert calls == [None]
 
 
-def test_구독_계정이_모두_막히면_마지막으로_API_키를_쓴다(monkeypatch) -> None:
+def test_구독_경유_폴백은_API_키를_쓰지_않는다(monkeypatch) -> None:
+    """Claude Code 에는 API 크레딧이 안 쓰이고, 구독 한도가 남은 동안 API 로 새지 않게 한다."""
     monkeypatch.setenv('SAMBA_ANTHROPIC_API_KEY', 'sk-ant-api-test')
-    monkeypatch.delenv('SAMBA_ANTHROPIC_API_KEY_2', raising=False)
     seen: list[str | None] = []
 
     async def q(*, prompt, options):
         seen.append(options.env.get(auth.API_KEY_ENV) or options.env.get(auth.TOKEN_ENV))
-        if options.env.get(auth.API_KEY_ENV) is None:
-            raise RuntimeError('Not logged in')
-        yield 'ok:api'
+        raise RuntimeError('Not logged in')
+        yield  # pragma: no cover
 
-    out = _collect(auth.with_fallback(q)(prompt='x', options=_Opts()))
-    assert out == ['ok:api']
-    assert seen == [None, 'tokA', 'tokB', 'sk-ant-api-test']
+    with pytest.raises(RuntimeError):
+        _collect(auth.with_fallback(q)(prompt='x', options=_Opts()))
+    assert seen == [None, 'tokA', 'tokB']
 
 
 def test_워크스페이스_ID가_있으면_API_키_슬롯에_헤더를_붙인다(monkeypatch) -> None:
@@ -137,23 +136,6 @@ def test_시작_알림만_온_뒤의_인증_오류도_다음_계정으로_넘긴
     out = _collect(auth.with_fallback(q)(prompt='x', options=_Opts()))
     assert out[-1] == 'ok'
     assert seen == [None, 'tokA']
-
-
-def test_API_키가_둘이면_차례로_쓴다(monkeypatch) -> None:
-    monkeypatch.setenv('SAMBA_ANTHROPIC_API_KEY', 'sk-ant-api-one')
-    monkeypatch.setenv('SAMBA_ANTHROPIC_API_KEY_2', 'sk-ant-api-two')
-    seen: list[str | None] = []
-
-    async def q(*, prompt, options):
-        key = options.env.get(auth.API_KEY_ENV)
-        seen.append(key or options.env.get(auth.TOKEN_ENV))
-        if key != 'sk-ant-api-two':
-            raise RuntimeError('Credit balance is too low')
-        yield 'ok:two'
-
-    out = _collect(auth.with_fallback(q)(prompt='x', options=_Opts()))
-    assert out == ['ok:two']
-    assert seen[-2:] == ['sk-ant-api-one', 'sk-ant-api-two']
 
 
 def test_인증_오류_글이_담긴_AssistantMessage_뒤에도_다음_계정으로_넘긴다() -> None:

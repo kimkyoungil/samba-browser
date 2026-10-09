@@ -15,7 +15,7 @@ from typing import Any
 # 구독 만료·차단·로그인 풀림 — 다른 계정으로 넘어가야 하는 오류(decide.py 와 같은 기준)
 AUTH_ERROR_RE = re.compile(
     r'subscription access|disabled|not logged in|login|unauthori[sz]ed|'
-    r'authentication|oauth|token.*(expired|invalid)|credit balance|usage limit|401|403',
+    r'authentication|oauth|token.*(expired|invalid)|credit balance|usage limit|limit reached|hit your .{0,20}limit|weekly limit|401|403',
     re.IGNORECASE,
 )
 TOKEN_ENV = 'CLAUDE_CODE_OAUTH_TOKEN'
@@ -104,7 +104,7 @@ def with_fallback(query_fn: QueryFn) -> QueryFn:
     async def run(*, prompt: Any, options: Any) -> AsyncIterator[Any]:
         global _preferred
         tokens = fallback_tokens()
-        api_keys = fallback_api_keys()
+        api_keys: list[str] = []  # API 키는 결정 호출의 Messages API 직접 호출에서만 쓴다(구독 한도가 남은 동안은 쓰지 않는다)
         # 슬롯: 0 = 기본 로그인, 1..n = 예비 구독 토큰, 마지막 = API 키(있을 때만)
         count = 1 + len(tokens) + len(api_keys)
         start = _preferred if _preferred < count else 0

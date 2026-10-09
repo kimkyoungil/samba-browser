@@ -101,3 +101,13 @@ def test_구독_계정이_모두_막히면_마지막으로_API_키를_쓴다(mon
     out = _collect(auth.with_fallback(q)(prompt='x', options=_Opts()))
     assert out == ['ok:api']
     assert seen == [None, 'tokA', 'tokB', 'sk-ant-api-test']
+
+
+def test_워크스페이스_ID가_있으면_API_키_슬롯에_헤더를_붙인다(monkeypatch) -> None:
+    monkeypatch.setenv('SAMBA_ANTHROPIC_WORKSPACE_ID', 'wrkspc_test')
+    assert auth.api_key_env('k') == {
+        auth.API_KEY_ENV: 'k',
+        auth.HEADERS_ENV: 'anthropic-workspace-id: wrkspc_test',
+    }
+    monkeypatch.delenv('SAMBA_ANTHROPIC_WORKSPACE_ID')
+    assert auth.api_key_env('k') == {auth.API_KEY_ENV: 'k'}

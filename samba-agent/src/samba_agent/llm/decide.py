@@ -68,7 +68,9 @@ def make_decide(
         # 구독 계정이 모두 막혔을 때 마지막으로 Console API 크레딧(API 키)
         api_key = os.environ.get('SAMBA_ANTHROPIC_API_KEY', '').strip()
         if api_key:
-            envs.append({'ANTHROPIC_API_KEY': api_key})
+            from samba_agent.llm.auth import api_key_env
+
+            envs.append(api_key_env(api_key))
         for i, env in enumerate(envs):
             try:
                 return _run(_ask(qf, prompt, schema, model, max_turns, env))

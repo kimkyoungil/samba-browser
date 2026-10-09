@@ -19,6 +19,7 @@ AUTH_ERROR_RE = re.compile(
 )
 TOKEN_ENV = 'CLAUDE_CODE_OAUTH_TOKEN'
 API_KEY_ENV = 'ANTHROPIC_API_KEY'
+HEADERS_ENV = 'ANTHROPIC_CUSTOM_HEADERS'
 
 # 마지막으로 통한 계정 번호(0 = 기본 로그인, 1.. = 예비 토큰). 막힌 계정을 매번 다시 두드리지 않는다
 _preferred = 0
@@ -35,6 +36,15 @@ def fallback_tokens() -> list[str]:
 def fallback_api_key() -> str:
     """구독 계정이 모두 막혔을 때 마지막으로 쓸 Anthropic API 키(Console 크레딧으로 결제). 없으면 빈 문자열."""
     return os.environ.get('SAMBA_ANTHROPIC_API_KEY', '').strip()
+
+
+def api_key_env(api_key: str) -> dict[str, str]:
+    """API 키 슬롯의 환경변수. 워크스페이스에 묶이지 않은 키(sk-ant-usr-)는 요청마다 워크스페이스 ID 헤더가 필요하다."""
+    env = {API_KEY_ENV: api_key}
+    workspace = os.environ.get('SAMBA_ANTHROPIC_WORKSPACE_ID', '').strip()
+    if workspace:
+        env[HEADERS_ENV] = f'anthropic-workspace-id: {workspace}'
+    return env
 
 
 def is_auth_error(error: BaseException) -> bool:
@@ -57,10 +67,11 @@ def with_fallback(query_fn: QueryFn) -> QueryFn:
             env = dict(getattr(options, 'env', None) or {})
             env.pop(TOKEN_ENV, None)
             env.pop(API_KEY_ENV, None)
+            env.pop(HEADERS_ENV, None)
             if 0 < slot <= len(tokens):
                 env[TOKEN_ENV] = tokens[slot - 1]
             elif slot > len(tokens):
-                env[API_KEY_ENV] = api_key
+                env.update(api_key_env(api_key))
             tried = dataclasses.replace(options, env=env)
             started = False
             try:

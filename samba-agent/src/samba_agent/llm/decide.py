@@ -63,9 +63,10 @@ def make_decide(
 
     def decide(prompt: str, schema: type[BaseModel]) -> BaseModel:
         # 구독: 기본 로그인 → 막히면 다른 계정 토큰 순서로(Claude Code 프로그램 경유)
-        envs: list[dict[str, str]] = [{}] + [
+        # 예비 토큰이 있으면 그것만 쓴다(기본 로그인은 로그아웃된 죽은 칸). 없을 때만 기본 로그인
+        envs: list[dict[str, str]] = [
             {'CLAUDE_CODE_OAUTH_TOKEN': t} for t in fallback_tokens()
-        ]
+        ] or [{}]
         for env in envs:
             try:
                 return _run(_ask(qf, prompt, schema, model, max_turns, env))

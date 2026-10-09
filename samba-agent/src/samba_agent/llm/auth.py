@@ -104,21 +104,20 @@ def with_fallback(query_fn: QueryFn) -> QueryFn:
     async def run(*, prompt: Any, options: Any) -> AsyncIterator[Any]:
         global _preferred
         tokens = fallback_tokens()
-        api_keys: list[str] = []  # API 키는 결정 호출의 Messages API 직접 호출에서만 쓴다(구독 한도가 남은 동안은 쓰지 않는다)
         # 슬롯: 0 = 기본 로그인, 1..n = 예비 구독 토큰, 마지막 = API 키(있을 때만)
-        count = 1 + len(tokens) + len(api_keys)
-        start = _preferred if _preferred < count else 0
-        order = [(start + i) % count for i in range(count)]
+        # 예비 구독 토큰이 있으면 그것만 쓴다 — 기본 로그인(~/.claude)은 로그아웃돼 있어 매번 실패하는 죽은 칸이다(사용자 2026-10-10 "기본 없애").
+        # 토큰이 하나도 없을 때만 기본 로그인을 쓴다
+        slots = list(range(1, len(tokens) + 1)) if tokens else [0]
+        start = _preferred if _preferred in slots else slots[0]
+        order = slots[slots.index(start) :] + slots[: slots.index(start)]
         last: BaseException | None = None
         for slot in order:
             env = dict(getattr(options, 'env', None) or {})
             env.pop(TOKEN_ENV, None)
             env.pop(API_KEY_ENV, None)
             env.pop(HEADERS_ENV, None)
-            if 0 < slot <= len(tokens):
+            if slot > 0:
                 env[TOKEN_ENV] = tokens[slot - 1]
-            elif slot > len(tokens):
-                env.update(api_key_env(api_keys[slot - len(tokens) - 1], slot - len(tokens) - 1))
             tried = dataclasses.replace(options, env=env)
             started = False
             try:

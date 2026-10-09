@@ -42,7 +42,7 @@ def test_기본_로그인이_막히면_첫_예비_토큰으로_넘어간다() ->
     seen: list[str | None] = []
     out = _collect(auth.with_fallback(_fake({None}, seen))(prompt='x', options=_Opts()))
     assert out == ['ok:tokA']
-    assert seen == [None, 'tokA']
+    assert seen == ['tokA']
 
 
 def test_통한_계정을_기억해_다음_호출은_바로_그_계정으로_간다() -> None:
@@ -64,7 +64,7 @@ def test_모든_계정이_막히면_마지막_오류를_그대로_올린다() ->
     seen: list[str | None] = []
     with pytest.raises(RuntimeError, match='Not logged in'):
         _collect(auth.with_fallback(_fake({None, 'tokA', 'tokB'}, seen))(prompt='x', options=_Opts()))
-    assert seen == [None, 'tokA', 'tokB']
+    assert seen == ['tokA', 'tokB']
 
 
 def test_인증과_무관한_오류는_넘기지_않고_그대로_올린다() -> None:
@@ -89,7 +89,7 @@ def test_응답이_시작된_뒤의_인증_오류는_같은_요청을_다시_보
 
     with pytest.raises(RuntimeError):
         _collect(auth.with_fallback(q)(prompt='x', options=_Opts()))
-    assert calls == [None]
+    assert calls == ['tokA']
 
 
 def test_구독_경유_폴백은_API_키를_쓰지_않는다(monkeypatch) -> None:
@@ -104,7 +104,7 @@ def test_구독_경유_폴백은_API_키를_쓰지_않는다(monkeypatch) -> Non
 
     with pytest.raises(RuntimeError):
         _collect(auth.with_fallback(q)(prompt='x', options=_Opts()))
-    assert seen == [None, 'tokA', 'tokB']
+    assert seen == ['tokA', 'tokB']
 
 
 def test_워크스페이스_ID가_있으면_API_키_슬롯에_헤더를_붙인다(monkeypatch) -> None:
@@ -135,7 +135,7 @@ def test_시작_알림만_온_뒤의_인증_오류도_다음_계정으로_넘긴
 
     out = _collect(auth.with_fallback(q)(prompt='x', options=_Opts()))
     assert out[-1] == 'ok'
-    assert seen == [None, 'tokA']
+    assert seen == ['tokA']
 
 
 def test_인증_오류_글이_담긴_AssistantMessage_뒤에도_다음_계정으로_넘긴다() -> None:
@@ -161,4 +161,4 @@ def test_인증_오류_글이_담긴_AssistantMessage_뒤에도_다음_계정으
 
     out = _collect(auth.with_fallback(q)(prompt='x', options=_Opts()))
     assert out[-1].content[0].text == 'ok'
-    assert seen == [None, 'tokA']
+    assert seen == ['tokA']

@@ -1,0 +1,88 @@
+"""Claude 호출 계정 넘김 — 기본 로그인이 막히면 예비 토큰으로 같은 요청을 다시 보낸다."""
+
+import asyncio
+from dataclasses import dataclass, field
+
+import pytest
+
+from samba_agent.llm import auth
+
+
+@dataclass
+class _Opts:
+    env: dict[str, str] = field(default_factory=dict)
+
+
+def _collect(gen) -> list[object]:
+    async def run() -> list[object]:
+        return [m async for m in gen]
+
+    return asyncio.run(run())
+
+
+@pytest.fixture(autouse=True)
+def _reset(monkeypatch):
+    auth._preferred = 0
+    monkeypatch.setenv('SAMBA_CLAUDE_OAUTH_TOKENS', 'tokA, tokB')
+
+
+def _fake(blocked: set[str | None], seen: list[str | None]):
+    async def q(*, prompt, options):
+        token = options.env.get(auth.TOKEN_ENV)
+        seen.append(token)
+        if token in blocked:
+            raise RuntimeError('Claude Code returned an error result: Not logged in · Please run /login')
+        yield f'ok:{token}'
+
+    return q
+
+
+def test_기본_로그인이_막히면_첫_예비_토큰으로_넘어간다() -> None:
+    seen: list[str | None] = []
+    out = _collect(auth.with_fallback(_fake({None}, seen))(prompt='x', options=_Opts()))
+    assert out == ['ok:tokA']
+    assert seen == [None, 'tokA']
+
+
+def test_통한_계정을_기억해_다음_호출은_바로_그_계정으로_간다() -> None:
+    seen: list[str | None] = []
+    wrapped = auth.with_fallback(_fake({None}, seen))
+    _collect(wrapped(prompt='x', options=_Opts()))
+    seen.clear()
+    _collect(wrapped(prompt='y', options=_Opts()))
+    assert seen == ['tokA']
+
+
+def test_예비_토큰도_막히면_다음_토큰으로() -> None:
+    seen: list[str | None] = []
+    out = _collect(auth.with_fallback(_fake({None, 'tokA'}, seen))(prompt='x', options=_Opts()))
+    assert out == ['ok:tokB']
+
+
+def test_모든_계정이_막히면_마지막_오류를_그대로_올린다() -> None:
+    seen: list[str | None] = []
+    with pytest.raises(RuntimeError, match='Not logged in'):
+        _collect(auth.with_fallback(_fake({None, 'tokA', 'tokB'}, seen))(prompt='x', options=_Opts()))
+    assert seen == [None, 'tokA', 'tokB']
+
+
+def test_인증과_무관한_오류는_넘기지_않고_그대로_올린다() -> None:
+    async def q(*, prompt, options):
+        raise ValueError('schema mismatch')
+        yield  # pragma: no cover
+
+    with pytest.raises(ValueError):
+        _collect(auth.with_fallback(q)(prompt='x', options=_Opts()))
+
+
+def test_응답이_시작된_뒤의_인증_오류는_같은_요청을_다시_보내지_않는다() -> None:
+    calls: list[str | None] = []
+
+    async def q(*, prompt, options):
+        calls.append(options.env.get(auth.TOKEN_ENV))
+        yield 'partial'
+        raise RuntimeError('401 unauthorized')
+
+    with pytest.raises(RuntimeError):
+        _collect(auth.with_fallback(q)(prompt='x', options=_Opts()))
+    assert calls == [None]

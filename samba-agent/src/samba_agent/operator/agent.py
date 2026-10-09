@@ -110,6 +110,7 @@ class OperatorAgent:
     async def _loop(self, prompt: str, call: BridgeCall, state: _State) -> None:
         from claude_agent_sdk import ClaudeAgentOptions, create_sdk_mcp_server, tool
         from claude_agent_sdk import query as default_query
+        from samba_agent.llm.auth import with_fallback
 
         def text(body: str) -> dict[str, Any]:
             return {'content': [{'type': 'text', 'text': body[:_RESULT_MAX]}]}
@@ -156,7 +157,7 @@ class OperatorAgent:
             model=self.model,
             max_turns=self.max_turns,
         )
-        query_fn = self._query_fn or default_query
+        query_fn = self._query_fn or with_fallback(default_query)
         async for _message in query_fn(prompt=prompt, options=options):
             pass
 

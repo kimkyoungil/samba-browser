@@ -557,6 +557,7 @@ class PhoneBuyer:
     async def _loop(self, tb: PhoneToolbox, ctx: str) -> None:
         from claude_agent_sdk import ClaudeAgentOptions, create_sdk_mcp_server, tool
         from claude_agent_sdk import query as default_query
+        from samba_agent.llm.auth import with_fallback
 
         def text(body: str) -> dict[str, Any]:
             return {'content': [{'type': 'text', 'text': body[:6000]}]}
@@ -686,6 +687,6 @@ class PhoneBuyer:
             model=self.model,
             max_turns=self.max_turns,
         )
-        query_fn = self._query_fn or default_query
+        query_fn = self._query_fn or with_fallback(default_query)
         async for _message in query_fn(prompt=ctx, options=options):
             pass

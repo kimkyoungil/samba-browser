@@ -79,6 +79,23 @@ def is_auth_error(error: BaseException) -> bool:
     return AUTH_ERROR_RE.search(f'{type(error).__name__} {error}') is not None
 
 
+def _counts_as_started(message: Any) -> bool:
+    """도구가 실행됐을 수 있는 메시지인가. 'Not logged in' 도 AssistantMessage 로 오므로(실기 2026-10-10) 인증 오류 글은 제외한다."""
+    kind = type(message).__name__
+    if kind == 'UserMessage':
+        return True
+    if kind != 'AssistantMessage':
+        return False
+    if getattr(message, 'error', None):
+        return False
+    texts: list[str] = []
+    for block in getattr(message, 'content', None) or []:
+        if type(block).__name__ == 'ToolUseBlock':
+            return True
+        texts.append(str(getattr(block, 'text', '') or ''))
+    return not AUTH_ERROR_RE.search(' '.join(texts))
+
+
 def with_fallback(query_fn: QueryFn) -> QueryFn:
     """query_fn 을 감싼다. 응답이 한 줄도 오기 전에 인증 오류가 나면 다음 계정으로 같은 요청을 다시 보낸다."""
 
@@ -105,7 +122,7 @@ def with_fallback(query_fn: QueryFn) -> QueryFn:
             try:
                 async for message in query_fn(prompt=prompt, options=tried):
                     # 시작 알림(SystemMessage)은 도구가 실행됐다는 뜻이 아니다 — 모델 응답·도구 결과가 온 뒤부터 '시작'으로 본다
-                    if type(message).__name__ in ('AssistantMessage', 'UserMessage'):
+                    if _counts_as_started(message):
                         started = True
                     yield message
                 _preferred = slot

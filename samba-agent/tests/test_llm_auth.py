@@ -23,7 +23,7 @@ def _collect(gen) -> list[object]:
 @pytest.fixture(autouse=True)
 def _reset(monkeypatch):
     auth._preferred = 0
-    monkeypatch.setattr(auth, '_dotenv', lambda: {})  # 로컬 .env 에 물들지 않게
+    monkeypatch.setattr(auth, '_dotenv', dict)  # 로컬 .env 에 물들지 않게
     monkeypatch.setenv('SAMBA_CLAUDE_OAUTH_TOKENS', 'tokA, tokB')
 
 
@@ -154,3 +154,29 @@ def test_API_키가_둘이면_차례로_쓴다(monkeypatch) -> None:
     out = _collect(auth.with_fallback(q)(prompt='x', options=_Opts()))
     assert out == ['ok:two']
     assert seen[-2:] == ['sk-ant-api-one', 'sk-ant-api-two']
+
+
+def test_인증_오류_글이_담긴_AssistantMessage_뒤에도_다음_계정으로_넘긴다() -> None:
+    """실기 2026-10-10: 'Not logged in' 은 AssistantMessage 로 오고 그 뒤에 결과 오류가 난다."""
+
+    class TextBlock:
+        def __init__(self, text: str) -> None:
+            self.text = text
+
+    class AssistantMessage:
+        def __init__(self, text: str) -> None:
+            self.content = [TextBlock(text)]
+
+    seen: list[str | None] = []
+
+    async def q(*, prompt, options):
+        token = options.env.get(auth.TOKEN_ENV)
+        seen.append(token)
+        if token is None:
+            yield AssistantMessage('Not logged in · Please run /login')
+            raise RuntimeError('Claude Code returned an error result: Not logged in')
+        yield AssistantMessage('ok')
+
+    out = _collect(auth.with_fallback(q)(prompt='x', options=_Opts()))
+    assert out[-1].content[0].text == 'ok'
+    assert seen == [None, 'tokA']

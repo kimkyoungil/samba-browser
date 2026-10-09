@@ -86,3 +86,18 @@ def test_응답이_시작된_뒤의_인증_오류는_같은_요청을_다시_보
     with pytest.raises(RuntimeError):
         _collect(auth.with_fallback(q)(prompt='x', options=_Opts()))
     assert calls == [None]
+
+
+def test_구독_계정이_모두_막히면_마지막으로_API_키를_쓴다(monkeypatch) -> None:
+    monkeypatch.setenv('SAMBA_ANTHROPIC_API_KEY', 'sk-ant-api-test')
+    seen: list[str | None] = []
+
+    async def q(*, prompt, options):
+        seen.append(options.env.get(auth.API_KEY_ENV) or options.env.get(auth.TOKEN_ENV))
+        if options.env.get(auth.API_KEY_ENV) is None:
+            raise RuntimeError('Not logged in')
+        yield 'ok:api'
+
+    out = _collect(auth.with_fallback(q)(prompt='x', options=_Opts()))
+    assert out == ['ok:api']
+    assert seen == [None, 'tokA', 'tokB', 'sk-ant-api-test']

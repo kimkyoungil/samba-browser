@@ -18,6 +18,7 @@ AUTH_ERROR_RE = re.compile(
     re.IGNORECASE,
 )
 TOKEN_ENV = 'CLAUDE_CODE_OAUTH_TOKEN'
+API_KEY_ENV = 'ANTHROPIC_API_KEY'
 
 # 마지막으로 통한 계정 번호(0 = 기본 로그인, 1.. = 예비 토큰). 막힌 계정을 매번 다시 두드리지 않는다
 _preferred = 0
@@ -31,6 +32,11 @@ def fallback_tokens() -> list[str]:
     return [t.strip() for t in raw.split(',') if t.strip()]
 
 
+def fallback_api_key() -> str:
+    """구독 계정이 모두 막혔을 때 마지막으로 쓸 Anthropic API 키(Console 크레딧으로 결제). 없으면 빈 문자열."""
+    return os.environ.get('SAMBA_ANTHROPIC_API_KEY', '').strip()
+
+
 def is_auth_error(error: BaseException) -> bool:
     return AUTH_ERROR_RE.search(f'{type(error).__name__} {error}') is not None
 
@@ -41,16 +47,20 @@ def with_fallback(query_fn: QueryFn) -> QueryFn:
     async def run(*, prompt: Any, options: Any) -> AsyncIterator[Any]:
         global _preferred
         tokens = fallback_tokens()
-        count = 1 + len(tokens)
+        api_key = fallback_api_key()
+        # 슬롯: 0 = 기본 로그인, 1..n = 예비 구독 토큰, 마지막 = API 키(있을 때만)
+        count = 1 + len(tokens) + (1 if api_key else 0)
         start = _preferred if _preferred < count else 0
         order = [(start + i) % count for i in range(count)]
         last: BaseException | None = None
         for slot in order:
             env = dict(getattr(options, 'env', None) or {})
-            if slot > 0:
+            env.pop(TOKEN_ENV, None)
+            env.pop(API_KEY_ENV, None)
+            if 0 < slot <= len(tokens):
                 env[TOKEN_ENV] = tokens[slot - 1]
-            else:
-                env.pop(TOKEN_ENV, None)
+            elif slot > len(tokens):
+                env[API_KEY_ENV] = api_key
             tried = dataclasses.replace(options, env=env)
             started = False
             try:

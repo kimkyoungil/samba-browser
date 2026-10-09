@@ -65,6 +65,10 @@ def make_decide(
         envs: list[dict[str, str]] = [{}] + [
             {'CLAUDE_CODE_OAUTH_TOKEN': t} for t in fallback_tokens()
         ]
+        # 구독 계정이 모두 막혔을 때 마지막으로 Console API 크레딧(API 키)
+        api_key = os.environ.get('SAMBA_ANTHROPIC_API_KEY', '').strip()
+        if api_key:
+            envs.append({'ANTHROPIC_API_KEY': api_key})
         for i, env in enumerate(envs):
             try:
                 return _run(_ask(qf, prompt, schema, model, max_turns, env))

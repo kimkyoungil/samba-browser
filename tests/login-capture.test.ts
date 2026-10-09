@@ -247,6 +247,28 @@ describe('judgeLoginOutcome — 제출 뒤 로그인 성공 판정', () => {
     ).toBe('failure')
   })
 
+  it('로그인 경로를 벗어나 비밀번호 칸이 사라졌으면 화면 글에 실패 문구가 섞여 있어도 성공(인스타그램 피드)', () => {
+    expect(
+      judgeLoginOutcome({
+        prevUrl: 'https://www.instagram.com/accounts/login/',
+        url: 'https://www.instagram.com/',
+        text: '스토리 게시물 이 방법은 잘못 알려진 상식 invalid',
+        passwordVisible: false
+      })
+    ).toBe('success')
+  })
+
+  it('비밀번호 칸이 남아 있으면 주소가 바뀌어도 실패 문구를 실패로 본다', () => {
+    expect(
+      judgeLoginOutcome({
+        prevUrl: 'https://www.instagram.com/accounts/login/',
+        url: 'https://www.instagram.com/accounts/login/?error=1',
+        text: '죄송합니다. 입력하신 비밀번호가 잘못되었습니다',
+        passwordVisible: true
+      })
+    ).toBe('failure')
+  })
+
   it('비밀번호 칸이 그대로고 주소도 그대로면 아직 모름', () => {
     expect(judgeLoginOutcome({ prevUrl, url: prevUrl, text: '', passwordVisible: true })).toBe(
       'unknown'

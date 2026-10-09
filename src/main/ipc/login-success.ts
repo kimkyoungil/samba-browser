@@ -45,6 +45,12 @@ export interface LoginObservation {
  */
 export function judgeLoginOutcome(o: LoginObservation): LoginOutcome {
   const snippet = o.text.slice(0, SNAPSHOT_TEXT_CHECK_LIMIT)
+  // 로그인 페이지를 벗어나 새 화면으로 갔고 비밀번호 칸도 사라졌으면 실패 문구를 보지 않는다 —
+  // 인스타그램 같은 피드 화면은 게시글 글에 '잘못'·'invalid' 가 섞여 성공한 로그인을 실패로 오판했다(실기 2026-10-09,
+  // 키마스터에 저장 제안이 한 번도 뜨지 않음). 실패 문구는 로그인 폼이 그대로 남은 화면에서만 의미가 있다
+  const leftLogin =
+    o.passwordVisible === false && !!o.url && o.url !== o.prevUrl && !LOGIN_PATH_RE.test(o.url)
+  if (leftLogin) return 'success'
   if (FAILURE_TEXT_RE.test(snippet)) return 'failure'
   if (isLoginSuccess(o.prevUrl, o.url, o.text)) return 'success'
   if (o.passwordVisible === false && o.url) return 'success'

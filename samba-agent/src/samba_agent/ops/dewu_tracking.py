@@ -33,7 +33,11 @@ CARRIERS = (
     'EMS',
     '百世快递',
 )
-_TRK = re.compile(r'(' + '|'.join(CARRIERS) + r')\s*[|｜:：]?\s*(?:运单号|快递单号)?\s*[:：]?\s*([A-Z]{0,3}\d{8,24})')
+_TRK = re.compile(
+    r'('
+    + '|'.join(CARRIERS)
+    + r')\s*[|｜:：]?\s*(?:运单号|快递单号)?\s*[:：]?\s*([A-Z]{0,3}\d{8,24})'
+)
 SEARCH_HINT = '品牌名/商品名/订单号'
 INTERVAL_S = 30 * 60
 
@@ -48,7 +52,9 @@ def tracking_of(nodes: list[Node]) -> tuple[str, str] | None:
     return carrier, m.group(2)
 
 
-def read_dewu_tracking(phone: Phone, order_no: str, *, sleep: Callable[[float], None] = time.sleep) -> tuple[str, str] | None:
+def read_dewu_tracking(
+    phone: Phone, order_no: str, *, sleep: Callable[[float], None] = time.sleep
+) -> tuple[str, str] | None:
     """得物 주문 한 건의 송장. 발송 전·못 찾으면 None."""
     phone.launch(DEWU)
     sleep(4)
@@ -95,7 +101,9 @@ def read_dewu_tracking(phone: Phone, order_no: str, *, sleep: Callable[[float], 
     return got
 
 
-def collect_dewu_tracking(wave: object, phone: Phone, *, sleep: Callable[[float], None] = time.sleep) -> dict[str, int]:
+def collect_dewu_tracking(
+    wave: object, phone: Phone, *, sleep: Callable[[float], None] = time.sleep
+) -> dict[str, int]:
     """대상 주문들의 송장을 읽어 삼바에 넣는다. 결과 {'checked', 'updated'}."""
     targets = wave.dewu_tracking_targets()  # type: ignore[attr-defined]
     out = {'checked': 0, 'updated': 0}
@@ -113,7 +121,11 @@ def collect_dewu_tracking(wave: object, phone: Phone, *, sleep: Callable[[float]
 
 
 def start_dewu_tracking_loop(
-    wave: object, idle: Callable[[], bool], *, adb: str | None = None, phone_serial: str | None = None
+    wave: object,
+    idle: Callable[[], bool],
+    *,
+    adb: str | None = None,
+    phone_serial: str | None = None,
 ) -> threading.Thread:
     """30분마다(하네스 작업이 없을 때만) 得物 송장을 모은다. 폰이 없으면 그 바퀴는 건너뛴다."""
     import os

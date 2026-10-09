@@ -153,7 +153,9 @@ def _bridge_token() -> str:
     token = os.environ.get('SAMBA_BRIDGE_TOKEN', '')
     if not token and Path('.env').exists():
         m = re.search(
-            r'^SAMBA_BRIDGE_TOKEN="?([^"\r\n]+)', Path('.env').read_text(encoding='utf-8'), re.MULTILINE
+            r'^SAMBA_BRIDGE_TOKEN="?([^"\r\n]+)',
+            Path('.env').read_text(encoding='utf-8'),
+            re.MULTILINE,
         )
         token = m.group(1) if m else ''
     return token

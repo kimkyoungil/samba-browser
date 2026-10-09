@@ -27,7 +27,7 @@ DEFAULT_TIMEOUT_S = 600.0
 # 淘宝 상품 링크로 인정하는 형태 — 단축 링크(m.tb.cn)·상품 주소(item.taobao.com·detail.tmall.com)
 _LINK = re.compile(
     r'https?://(?:m\.tb\.cn/[\w./?=&%-]+|(?:item|detail|h5)\.(?:taobao|tmall)\.com/[\w./?=&%-]+|[\w.]*\.taobao\.com/[\w./?=&%-]*item[\w./?=&%-]*)',
-    re.I,
+    re.IGNORECASE,
 )
 NETWORK_MARKS = ('网络异常', '网络', '네트워크')
 
@@ -120,6 +120,7 @@ class LinkFetcher:
     async def _loop(self, box: LinkToolbox, ctx: str) -> None:
         from claude_agent_sdk import ClaudeAgentOptions, create_sdk_mcp_server, tool
         from claude_agent_sdk import query as default_query
+
         from samba_agent.llm.auth import with_fallback
 
         tb = box.tb

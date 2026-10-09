@@ -59,7 +59,7 @@ def with_fallback(query_fn: QueryFn) -> QueryFn:
                     yield message
                 _preferred = slot
                 return
-            except Exception as e:  # noqa: BLE001 — SDK·CLI 오류 형식이 정해져 있지 않다
+            except Exception as e:
                 # 이미 응답이 오기 시작했으면(도구가 실행됐을 수 있다) 같은 요청을 다시 보내지 않는다
                 if started or not is_auth_error(e):
                     raise

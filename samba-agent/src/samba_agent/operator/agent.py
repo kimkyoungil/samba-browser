@@ -110,6 +110,7 @@ class OperatorAgent:
     async def _loop(self, prompt: str, call: BridgeCall, state: _State) -> None:
         from claude_agent_sdk import ClaudeAgentOptions, create_sdk_mcp_server, tool
         from claude_agent_sdk import query as default_query
+
         from samba_agent.llm.auth import with_fallback
 
         def text(body: str) -> dict[str, Any]:

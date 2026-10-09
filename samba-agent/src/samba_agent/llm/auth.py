@@ -9,6 +9,7 @@ import dataclasses
 import os
 import re
 from collections.abc import AsyncIterator, Callable
+from pathlib import Path
 from typing import Any
 
 # 구독 만료·차단·로그인 풀림 — 다른 계정으로 넘어가야 하는 오류(decide.py 와 같은 기준)
@@ -27,21 +28,48 @@ _preferred = 0
 QueryFn = Callable[..., AsyncIterator[Any]]
 
 
+def _dotenv() -> dict[str, str]:
+    """`.env` 를 직접 읽는다 — Settings(pydantic)는 값을 읽어도 os.environ 으로 내보내지 않아, 환경변수만 보면 비어 있다
+    (실기 2026-10-10: .env 의 예비 토큰·API 키가 하네스에서 한 번도 안 쓰였다)."""
+    out: dict[str, str] = {}
+    root = Path(__file__).resolve().parents[3]
+    for path in (Path.cwd() / '.env', root / '.env'):
+        try:
+            text = path.read_text(encoding='utf-8')
+        except OSError:
+            continue
+        for line in text.splitlines():
+            if '=' in line and not line.lstrip().startswith('#'):
+                key, _, value = line.partition('=')
+                out.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+    return out
+
+
+def env_value(name: str) -> str:
+    """환경변수 → .env 순으로 값을 찾는다. 없으면 빈 문자열."""
+    return os.environ.get(name, '').strip() or _dotenv().get(name, '').strip()
+
+
 def fallback_tokens() -> list[str]:
     """기본 로그인이 막혔을 때 차례로 쓸 다른 계정의 OAuth 토큰."""
-    raw = os.environ.get('SAMBA_CLAUDE_OAUTH_TOKENS', '')
+    raw = env_value('SAMBA_CLAUDE_OAUTH_TOKENS')
     return [t.strip() for t in raw.split(',') if t.strip()]
 
 
-def fallback_api_key() -> str:
-    """구독 계정이 모두 막혔을 때 마지막으로 쓸 Anthropic API 키(Console 크레딧으로 결제). 없으면 빈 문자열."""
-    return os.environ.get('SAMBA_ANTHROPIC_API_KEY', '').strip()
+def fallback_api_keys() -> list[str]:
+    """구독 계정이 모두 막혔을 때 마지막으로 쓸 Anthropic API 키들(Console 크레딧으로 결제). SAMBA_ANTHROPIC_API_KEY, _2, _3 …"""
+    out: list[str] = []
+    for name in ('SAMBA_ANTHROPIC_API_KEY', 'SAMBA_ANTHROPIC_API_KEY_2', 'SAMBA_ANTHROPIC_API_KEY_3'):
+        v = env_value(name)
+        if v and v not in out:
+            out.append(v)
+    return out
 
 
 def api_key_env(api_key: str) -> dict[str, str]:
     """API 키 슬롯의 환경변수. 워크스페이스에 묶이지 않은 키(sk-ant-usr-)는 요청마다 워크스페이스 ID 헤더가 필요하다."""
     env = {API_KEY_ENV: api_key}
-    workspace = os.environ.get('SAMBA_ANTHROPIC_WORKSPACE_ID', '').strip()
+    workspace = env_value('SAMBA_ANTHROPIC_WORKSPACE_ID')
     if workspace:
         env[HEADERS_ENV] = f'anthropic-workspace-id: {workspace}'
     return env
@@ -57,9 +85,9 @@ def with_fallback(query_fn: QueryFn) -> QueryFn:
     async def run(*, prompt: Any, options: Any) -> AsyncIterator[Any]:
         global _preferred
         tokens = fallback_tokens()
-        api_key = fallback_api_key()
+        api_keys = fallback_api_keys()
         # 슬롯: 0 = 기본 로그인, 1..n = 예비 구독 토큰, 마지막 = API 키(있을 때만)
-        count = 1 + len(tokens) + (1 if api_key else 0)
+        count = 1 + len(tokens) + len(api_keys)
         start = _preferred if _preferred < count else 0
         order = [(start + i) % count for i in range(count)]
         last: BaseException | None = None
@@ -71,7 +99,7 @@ def with_fallback(query_fn: QueryFn) -> QueryFn:
             if 0 < slot <= len(tokens):
                 env[TOKEN_ENV] = tokens[slot - 1]
             elif slot > len(tokens):
-                env.update(api_key_env(api_key))
+                env.update(api_key_env(api_keys[slot - len(tokens) - 1]))
             tried = dataclasses.replace(options, env=env)
             started = False
             try:

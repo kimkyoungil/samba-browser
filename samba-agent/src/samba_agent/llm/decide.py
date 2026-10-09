@@ -16,7 +16,6 @@ Claude 구독 로그인(로컬 Claude Code 인증)을 그대로 쓴다 — API �
 
 import asyncio
 import concurrent.futures
-import os
 import re
 from collections.abc import AsyncIterator, Callable
 from typing import Any
@@ -48,7 +47,9 @@ class _AuthError(Exception):
 
 def fallback_tokens() -> list[str]:
     """기본 로그인이 막혔을 때 차례로 쓸 다른 계정의 OAuth 토큰."""
-    raw = os.environ.get('SAMBA_CLAUDE_OAUTH_TOKENS', '')
+    from samba_agent.llm.auth import env_value
+
+    raw = env_value('SAMBA_CLAUDE_OAUTH_TOKENS')
     return [t.strip() for t in raw.split(',') if t.strip()]
 
 
@@ -65,12 +66,10 @@ def make_decide(
         envs: list[dict[str, str]] = [{}] + [
             {'CLAUDE_CODE_OAUTH_TOKEN': t} for t in fallback_tokens()
         ]
-        # 구독 계정이 모두 막혔을 때 마지막으로 Console API 크레딧(API 키)
-        api_key = os.environ.get('SAMBA_ANTHROPIC_API_KEY', '').strip()
-        if api_key:
-            from samba_agent.llm.auth import api_key_env
+        # 구독 계정이 모두 막혔을 때 마지막으로 Console API 크레딧(API 키들)
+        from samba_agent.llm.auth import api_key_env, fallback_api_keys
 
-            envs.append(api_key_env(api_key))
+        envs.extend(api_key_env(k) for k in fallback_api_keys())
         for i, env in enumerate(envs):
             try:
                 return _run(_ask(qf, prompt, schema, model, max_turns, env))

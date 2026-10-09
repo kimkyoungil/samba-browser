@@ -23,6 +23,7 @@ def _collect(gen) -> list[object]:
 @pytest.fixture(autouse=True)
 def _reset(monkeypatch):
     auth._preferred = 0
+    monkeypatch.setattr(auth, '_dotenv', lambda: {})  # 로컬 .env 에 물들지 않게
     monkeypatch.setenv('SAMBA_CLAUDE_OAUTH_TOKENS', 'tokA, tokB')
 
 
@@ -93,6 +94,7 @@ def test_응답이_시작된_뒤의_인증_오류는_같은_요청을_다시_보
 
 def test_구독_계정이_모두_막히면_마지막으로_API_키를_쓴다(monkeypatch) -> None:
     monkeypatch.setenv('SAMBA_ANTHROPIC_API_KEY', 'sk-ant-api-test')
+    monkeypatch.delenv('SAMBA_ANTHROPIC_API_KEY_2', raising=False)
     seen: list[str | None] = []
 
     async def q(*, prompt, options):
@@ -135,3 +137,20 @@ def test_시작_알림만_온_뒤의_인증_오류도_다음_계정으로_넘긴
     out = _collect(auth.with_fallback(q)(prompt='x', options=_Opts()))
     assert out[-1] == 'ok'
     assert seen == [None, 'tokA']
+
+
+def test_API_키가_둘이면_차례로_쓴다(monkeypatch) -> None:
+    monkeypatch.setenv('SAMBA_ANTHROPIC_API_KEY', 'sk-ant-api-one')
+    monkeypatch.setenv('SAMBA_ANTHROPIC_API_KEY_2', 'sk-ant-api-two')
+    seen: list[str | None] = []
+
+    async def q(*, prompt, options):
+        key = options.env.get(auth.API_KEY_ENV)
+        seen.append(key or options.env.get(auth.TOKEN_ENV))
+        if key != 'sk-ant-api-two':
+            raise RuntimeError('Credit balance is too low')
+        yield 'ok:two'
+
+    out = _collect(auth.with_fallback(q)(prompt='x', options=_Opts()))
+    assert out == ['ok:two']
+    assert seen[-2:] == ['sk-ant-api-one', 'sk-ant-api-two']

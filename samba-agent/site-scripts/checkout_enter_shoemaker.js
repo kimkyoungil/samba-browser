@@ -37,7 +37,8 @@ const it = f.items[0]
 if (!e) return null
 if (e.code && it.code !== e.code) return `ProductCode ${it.code} != ${e.code}`
 if (e.sizes.length && !e.sizes.some(x => (it.size.match(SZ) || []).includes(x))) return `size ${it.size} != ${e.sizes}`
-if (e.words.length && !e.words.some(w => it.name.toLowerCase().includes(w.toLowerCase()))) return `name ${e.words.slice(0, 4)} not in ${it.name}`
+// ProductCode는 상품명 번역보다 강한 증거다. 슈마커 주문서가 한글명 대신 영문명을 보여도 코드+사이즈가 맞으면 통과한다.
+if (!e.code && e.words.length && !e.words.some(w => it.name.toLowerCase().includes(w.toLowerCase()))) return `name ${e.words.slice(0, 4)} not in ${it.name}`
 return null
 }
 async function pickForm() {

@@ -280,11 +280,30 @@ function AccountCard({
 }
 
 // 미로그인 — 이메일/비밀번호 가입·로그인 + 구글로 계속하기
+// 아이디 저장 — 이 PC 의 화면 편의 값이라 로컬 저장소에만 둔다(비밀번호는 저장하지 않는다)
+const REMEMBER_EMAIL_KEY = 'samba.login.rememberedEmail'
+function readRememberedEmail(): string {
+  try {
+    return window.localStorage.getItem(REMEMBER_EMAIL_KEY) ?? ''
+  } catch {
+    return ''
+  }
+}
+function writeRememberedEmail(email: string | null): void {
+  try {
+    if (email) window.localStorage.setItem(REMEMBER_EMAIL_KEY, email)
+    else window.localStorage.removeItem(REMEMBER_EMAIL_KEY)
+  } catch {
+    // 저장소를 못 쓰면 아이디 저장만 빠진다
+  }
+}
+
 export function SignInCard(): React.JSX.Element {
   const { t } = useTranslation()
   const auth = useAuthStore()
   const [mode, setMode] = useState<'signIn' | 'signUp'>('signIn')
-  const [email, setEmail] = useState('')
+  const [email, setEmail] = useState(() => readRememberedEmail())
+  const [remember, setRemember] = useState(() => readRememberedEmail() !== '')
   const [password, setPassword] = useState('')
   // 비밀번호를 잊었을 때: 이 PC 에 데이터 세션이 살아 있으면 메일 없이 새 비밀번호를 정할 수 있다
   const [resetting, setResetting] = useState(false)
@@ -297,8 +316,12 @@ export function SignInCard(): React.JSX.Element {
 
   const submit = (): void => {
     if (!canSubmit) return
-    if (mode === 'signUp') void auth.signUp(email.trim(), password)
-    else void auth.signIn(email.trim(), password)
+    if (mode === 'signUp') {
+      void auth.signUp(email.trim(), password)
+      return
+    }
+    writeRememberedEmail(remember ? email.trim() : null)
+    void auth.signIn(email.trim(), password)
   }
 
   // 구글 로그인은 기본 브라우저에서 끝날 때까지 최대 5분 기다린다.
@@ -331,6 +354,16 @@ export function SignInCard(): React.JSX.Element {
           placeholder="you@example.com"
         />
       </SettingsRow>
+      {mode === 'signIn' && (
+        <label className="flex w-fit cursor-pointer items-center gap-1.5 text-[12px] text-[var(--text2)]">
+          <input
+            type="checkbox"
+            checked={remember}
+            onChange={(e) => setRemember(e.target.checked)}
+          />
+          {t('account.rememberEmail')}
+        </label>
+      )}
       <SettingsRow label={t('account.password')}>
         <TextInput
           value={password}

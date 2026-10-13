@@ -1420,6 +1420,8 @@ ${handoffToolResult(result)}`
   ): Promise<string> =>
     withPopupNotice(async () => {
       if (ctx.mode === 'read_only') return READ_ONLY_REFUSAL
+      // keys 경로는 Enter 를 누르지 않는다 — 조용히 무시하면 제출이 안 된 걸 모른 채 넘어가게 된다
+      if (keys && submit) return 'refused: keys=true 와 submit=true 는 같이 쓸 수 없다 — 입력만 하고 Enter 는 따로 누른다'
       const tab = activeOr(ctx)
       if (!tab) return 'no active tab'
       // 결제 비밀번호 키패드에서는 입력하지 않는다(숫자칸·키패드 모두)
@@ -1601,7 +1603,7 @@ ${handoffToolResult(result)}`
 
   const typeTool = tool(
     'type',
-    'Type text into input [n]. submit=true presses Enter. keys=true sends real key events (for rich editors).',
+    'Type text into input [n]. submit=true presses Enter. keys=true sends real key events (for rich editors); keys and submit cannot be combined.',
     {
       id: z.number().int(),
       text: z.string(),

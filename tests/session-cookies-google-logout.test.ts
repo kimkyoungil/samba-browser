@@ -35,6 +35,8 @@ describe('isGoogleLoginCookie', () => {
     expect(isGoogleLoginCookie({ name: '__Secure-3PSID', domain: '.google.com' })).toBe(true)
     expect(isGoogleLoginCookie({ name: 'NID', domain: '.google.com' })).toBe(false)
     expect(isGoogleLoginCookie({ name: 'SID', domain: '.naver.com' })).toBe(false)
+    expect(isGoogleLoginCookie({ name: 'HSID', domain: '.google.co.kr' })).toBe(true)
+    expect(isGoogleLoginCookie({ name: 'SID', domain: '.notgoogle.com' })).toBe(false)
   })
 })
 

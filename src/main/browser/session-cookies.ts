@@ -195,7 +195,8 @@ export const GOOGLE_LOGIN_COOKIE_NAMES = [
   'LOGIN_INFO'
 ]
 
-const GOOGLE_LOGIN_DOMAINS = ['google.com', 'youtube.com']
+// 구글은 나라별 도메인(google.co.kr 등)에도 같은 로그인 쿠키를 둔다 — 실기 2026-10-13: .google.co.kr 의 SID·HSID 가 남았다
+const GOOGLE_LOGIN_DOMAIN_RE = /(^|\.)(google\.(com|[a-z]{2}(\.[a-z]{2})?)|youtube\.com)$/
 
 export function isGoogleLogoutUrl(url: string): boolean {
   return /^https:\/\/accounts\.google\.com\/Logout(\?|$)/.test(url) || /^https:\/\/accounts\.youtube\.com\/accounts\/ClearSID(\?|$)/.test(url)
@@ -205,7 +206,7 @@ export function isGoogleLogoutUrl(url: string): boolean {
 export function isGoogleLoginCookie(c: Pick<Cookie, 'name' | 'domain'>): boolean {
   if (!GOOGLE_LOGIN_COOKIE_NAMES.includes(c.name)) return false
   const host = (c.domain ?? '').replace(/^\./, '').toLowerCase()
-  return GOOGLE_LOGIN_DOMAINS.some((d) => host === d || host.endsWith(`.${d}`))
+  return GOOGLE_LOGIN_DOMAIN_RE.test(host)
 }
 
 /** 구글·유튜브 로그인 쿠키를 지운다. 지운 개수를 돌려준다 */

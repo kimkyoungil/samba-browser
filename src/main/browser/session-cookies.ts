@@ -161,4 +161,71 @@ export function installSessionCookieKeeper(ses: Session): void {
     // 값은 남기지 않는다 — 어느 쿠키인지 이름만
     onError: (name) => console.warn(`세션 쿠키 유지 실패: ${name}`)
   })
+  installGoogleLogoutCleanup(ses)
+}
+
+// === 구글 로그아웃 쿠키 ======================================================
+// 구글 로그아웃은 SID·HSID·SAPISID 등을 만료시키는 쿠키를 보낸다. 그런데 유튜브 쪽 삭제(accounts.youtube.com 의
+// ClearSID 프레임, .youtube.com 도메인)는 SameSite 를 적지 않은 쿠키라 교차 사이트 응답으로 보고 크로미움이 막는다
+// (SameSiteUnspecifiedTreatedAsLax). 그래서 유튜브 로그인 쿠키가 남아 로그아웃이 안 된 것처럼 보인다(실기 2026-10-13).
+// 로그아웃·ClearSID 응답이 끝나면 구글 로그인 쿠키를 앱이 직접 지운다
+
+/** 구글 로그아웃·유튜브 로그아웃 프레임 주소 — 이 응답이 끝나면 로그인 쿠키를 지운다 */
+export const GOOGLE_LOGOUT_URL_PATTERNS = [
+  'https://accounts.google.com/Logout*',
+  'https://accounts.youtube.com/accounts/ClearSID*'
+]
+
+/** 로그아웃 때 지울 구글·유튜브 로그인 쿠키 이름 */
+export const GOOGLE_LOGIN_COOKIE_NAMES = [
+  'SID',
+  'HSID',
+  'SSID',
+  'APISID',
+  'SAPISID',
+  '__Secure-1PSID',
+  '__Secure-1PAPISID',
+  '__Secure-1PSIDTS',
+  '__Secure-3PSID',
+  '__Secure-3PAPISID',
+  '__Secure-3PSIDTS',
+  'LSID',
+  '__Host-1PLSID',
+  '__Host-3PLSID',
+  'LOGIN_INFO'
+]
+
+const GOOGLE_LOGIN_DOMAINS = ['google.com', 'youtube.com']
+
+export function isGoogleLogoutUrl(url: string): boolean {
+  return /^https:\/\/accounts\.google\.com\/Logout(\?|$)/.test(url) || /^https:\/\/accounts\.youtube\.com\/accounts\/ClearSID(\?|$)/.test(url)
+}
+
+/** 구글·유튜브 도메인의 로그인 쿠키인가(하위 도메인 포함) */
+export function isGoogleLoginCookie(c: Pick<Cookie, 'name' | 'domain'>): boolean {
+  if (!GOOGLE_LOGIN_COOKIE_NAMES.includes(c.name)) return false
+  const host = (c.domain ?? '').replace(/^\./, '').toLowerCase()
+  return GOOGLE_LOGIN_DOMAINS.some((d) => host === d || host.endsWith(`.${d}`))
+}
+
+/** 구글·유튜브 로그인 쿠키를 지운다. 지운 개수를 돌려준다 */
+export async function clearGoogleLoginCookies(store: CookieStoreLike): Promise<number> {
+  const all = await store.get({})
+  let removed = 0
+  for (const c of all) {
+    if (!isGoogleLoginCookie(c)) continue
+    await store.remove(cookieUrl(c), c.name)
+    removed++
+  }
+  return removed
+}
+
+/** 로그아웃 응답이 끝나면 구글 로그인 쿠키를 지우도록 파티션 세션에 건다 */
+export function installGoogleLogoutCleanup(ses: Session): void {
+  ses.webRequest.onCompleted({ urls: GOOGLE_LOGOUT_URL_PATTERNS }, (details) => {
+    if (!isGoogleLogoutUrl(details.url)) return
+    void clearGoogleLoginCookies(ses.cookies as unknown as CookieStoreLike).catch((e: unknown) =>
+      console.warn('구글 로그인 쿠키 정리 실패', e instanceof Error ? e.message : String(e))
+    )
+  })
 }

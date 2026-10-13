@@ -130,6 +130,19 @@ def infer_source(product_name: str | None) -> tuple[str, str] | None:
     return None
 
 
+# 마켓이 상품명을 잘라 롯데온 상품번호 뒷자리가 떨어진 것 — 'LE' + 6~9자리로 끝난다
+# (실기 2026-10-07 현대H몰 '… 여자로퍼 LE122077228' → 수집상품 LE1220772281)
+_TRUNCATED_LOTTEON_NO = re.compile(r'(?<!\w)(LE\d{6,9})$')
+
+
+def infer_lotteon_prefix(product_name: str | None) -> str | None:
+    """상품명 끝의 잘린 롯데온 상품번호(접두어). 온전한 번호로 추정되는 상품명이면 None."""
+    if infer_source(product_name) is not None:
+        return None
+    found = _TRUNCATED_LOTTEON_NO.search((product_name or '').rstrip())
+    return found.group(1) if found else None
+
+
 def infer_musinsa_product_id(product_name: str | None) -> str | None:
     """무신사로 추정되면 그 상품번호, 아니면 None."""
     found = infer_source(product_name)
@@ -172,6 +185,8 @@ class WaveOrder(BaseModel):
     # 소싱처가 비어 있어 상품명 끝 숫자로 소싱처·상품번호를 추정했는가(infer_source)
     source_inferred: bool = False
     inferred_product_id: str | None = None
+    # 상품명 끝의 잘린 롯데온 상품번호 — 소싱처는 추정하지 않고 접두어로 수집상품 연결만 시도한다
+    inferred_product_prefix: str | None = None
 
     @model_validator(mode='after')
     def _infer_source(self) -> Self:
@@ -185,6 +200,8 @@ class WaveOrder(BaseModel):
             self.source_url = _INFER_URL[site].format(product_id)
             self.source_inferred = True
             self.inferred_product_id = product_id
+        else:
+            self.inferred_product_prefix = infer_lotteon_prefix(self.product_name)
         return self
 
     @property
@@ -322,6 +339,28 @@ class WaveClient:
         body = self._request('GET', '/pending-orders', params={'days': days, 'limit': limit})
         items = body.get('items') if isinstance(body, dict) else None
         return [WaveOrder.model_validate(i) for i in items or []]
+
+    def market_cancelled_pending(self, days: int = 14) -> list[dict[str, str]]:
+        """마켓이 이미 취소로 돌린 미이행(주문접수·소싱번호 없음) 주문 — /pending-orders 가 일부러 빼는 것들.
+
+        삼바웨이브가 아직 이 경로를 모르면(404) 빈 목록이다.
+        """
+        try:
+            body = self._request('GET', '/market-cancelled-pending', params={'days': days})
+        except WaveError as e:
+            if e.status == 404:
+                return []
+            raise
+        items = body.get('items') if isinstance(body, dict) else None
+        return [
+            {
+                'id': str(i.get('id') or ''),
+                'order_number': str(i.get('order_number') or ''),
+                'shipping_status': str(i.get('shipping_status') or ''),
+            }
+            for i in (items or [])
+            if isinstance(i, dict) and i.get('id')
+        ]
 
     def sourcing_numbers(self, days: int = 14) -> set[str]:
         """최근 주문에 적힌 소싱주문번호 전부 — 교차 검증이 소싱처 주문 내역과 견준다(삼바에 없는 소싱 주문 찾기)."""

@@ -321,6 +321,26 @@ def test_무신사에서_사라진_상품은_재고X_로_마감한다(tmp_path):
     assert any('재고X' in t for _, t in slack.lines)
 
 
+def test_상품명이_잘린_롯데온_주문은_접두어로_연결만_시도한다(tmp_path):
+    """소싱처도 추정 못 한 주문(LE+9자리) — 삼바웨이브에 접두어 연결을 한 번만 부탁하고 접수는 않는다."""
+    reg = Registry.load(DEFAULT_ROOT)
+    q = JobQueue(tmp_path / 'jobs.sqlite')
+    slack = _Slack()
+    order = wave_order(
+        'H1',
+        source='',
+        product_name='스케쳐스 여성 클레오 플렉스 웨지 여자로퍼 LE122077228',
+        product_option='차콜/240',
+    )
+    wave = _LinkWave([order], link_status=409)
+    intake = Intake(wave, q, reg, slack.post_new, slack.post_line, days=7)
+    assert intake.run_once().enqueued == 0
+    assert wave.linked == [('H1', 'LE122077228')]
+    assert q.get('H1') is None
+    intake.run_once()
+    assert len(wave.linked) == 1  # 되풀이하지 않는다
+
+
 def test_범위_밖_소싱처의_미등록_주문은_연결만_하고_접수하지_않는다(tmp_path):
     """ABC마트(10자리) — 이행 범위는 무신사·29CM 지만 상품관리 연결은 해 둔다(사용자 2026-09-25)."""
     reg = Registry.load(DEFAULT_ROOT)
@@ -402,3 +422,100 @@ def test_소싱처_미등록_주문_연결은_행_id_로_부른다(tmp_path):
     Intake(wave, q, reg, slack.post_new, slack.post_line, days=7).run_once()
     assert wave.linked == [('ord_G1', '3347853')]
     assert q.get('ord_G1').order_no == 'G1'
+
+
+def test_bridge_down_으로_멈춘_작업은_5분_뒤_한_번_다시_넣는다(tmp_path):
+    """실기 2026-10-06 탑텐 청자켓 — 앱이 죽어 bridge_down 으로 멈춘 채 20시간+ 방치됐다."""
+    from datetime import UTC, datetime, timedelta
+
+    reg = Registry.load(DEFAULT_ROOT)
+    q = JobQueue(tmp_path / 'jobs.sqlite')
+    slack = _Slack()
+    order = wave_order('T1', source='MUSINSA', product_name='탑텐 청자켓', product_option='95')
+    wave = _FakeWave([order])
+    intake = Intake(wave, q, reg, slack.post_new, slack.post_line, days=7)
+    intake.run_once()
+    job = q.get('T1')
+    q.finish(job.id, 'needs_human', error='bridge_down')
+    intake.run_once()  # 방금 멈췄다 — 5분 안에는 두지 않는다
+    assert q.get('T1').state == 'needs_human'
+    old = (datetime.now(UTC) - timedelta(minutes=6)).isoformat(timespec='seconds')
+    q._db.execute('UPDATE jobs SET updated_at=? WHERE id=?', (old, job.id))
+    intake.run_once()
+    again = q.get('T1')
+    assert again.state == 'queued' and again.attempts == 1
+    q.finish(job.id, 'needs_human', error='bridge_down')
+    q._db.execute('UPDATE jobs SET updated_at=? WHERE id=?', (old, job.id))
+    intake.run_once()  # 두 번째는 자동으로 하지 않는다
+    assert q.get('T1').state == 'needs_human'
+
+
+class _CancelWave(_FakeWave):
+    """마켓 취소 정리까지 흉내 낸다."""
+
+    def __init__(self, orders, cancelled) -> None:
+        super().__init__(orders)
+        self.cancelled = cancelled
+        self.set_calls: list[tuple[str, str]] = []
+
+    def market_cancelled_pending(self, days: int = 14):
+        return list(self.cancelled)
+
+    def set_cancel_requested(self, order_no: str, reason: str, flag=None) -> bool:
+        self.set_calls.append((order_no, reason))
+        return True
+
+
+def test_마켓이_취소로_돌린_미이행_주문은_취소중으로_정리한다(tmp_path):
+    """실기 2026-10-06 탑텐 청자켓 — 마켓 취소완료인데 주문접수로 20시간+ 방치됐다."""
+    reg = Registry.load(DEFAULT_ROOT)
+    q = JobQueue(tmp_path / 'jobs.sqlite')
+    slack = _Slack()
+    wave = _CancelWave(
+        [],
+        [{'id': 'ord_T1', 'order_number': '3475968284 2906047682', 'shipping_status': '취소완료'}],
+    )
+    intake = Intake(wave, q, reg, slack.post_new, slack.post_line, days=7)
+    intake.run_once()
+    assert [k for k, _ in wave.set_calls] == ['ord_T1']
+    assert '취소완료' in wave.set_calls[0][1]
+    assert any('취소중으로 정리' in t for t in slack.tops)
+    intake.run_once()  # 한 번 정리한 주문은 다시 건드리지 않는다
+    assert len(wave.set_calls) == 1
+
+
+def test_소싱처_매칭에_끝내_실패한_주문은_한참_뒤_근거를_남겨_취소중으로_정리한다(
+    tmp_path, monkeypatch
+):
+    """사용자 2026-10-08: 소싱처 미등록 주문은 매칭 로직을 거치고, 그래도 안 되면 취소중이다."""
+    from samba_agent.queue import intake as intake_mod
+
+    reg = Registry.load(DEFAULT_ROOT)
+    q = JobQueue(tmp_path / 'jobs.sqlite')
+    slack = _Slack()
+    unlinked = wave_order(
+        'U1', source='', product_name='노스페이스 크림색 키즈 아동 플리스 재킷', id='ord_U1'
+    )
+    wave = _CancelWave([unlinked], [])
+    intake = Intake(wave, q, reg, slack.post_new, slack.post_line, days=7, sources=('MUSINSA',))
+    intake.run_once()
+    assert wave.set_calls == []  # 처음 본 직후엔 연결이 돌 틈을 준다
+    monkeypatch.setattr(intake_mod, 'UNLINKED_CANCEL_AFTER', timedelta(seconds=0))
+    intake.run_once()
+    assert [k for k, _ in wave.set_calls] == ['ord_U1']
+    assert '소싱처 매칭 실패' in wave.set_calls[0][1]
+    intake.run_once()  # 한 번 정리한 주문은 다시 건드리지 않는다
+    assert len(wave.set_calls) == 1
+
+    # 끝 번호로 추정되는 주문(소싱처를 알아낼 수 있다)은 정리하지 않는다
+    class _NoLink(_CancelWave):
+        def link_product(self, *a, **k):
+            raise WaveError(FailReason.UNKNOWN, '연결 못 함')
+
+    wave2 = _NoLink(
+        [wave_order('U2', source='', product_name='나이키 덩크 6079566', id='ord_U2')], []
+    )
+    Intake(
+        wave2, JobQueue(tmp_path / 'j2.sqlite'), reg, slack.post_new, slack.post_line, days=7
+    ).run_once()
+    assert wave2.set_calls == []

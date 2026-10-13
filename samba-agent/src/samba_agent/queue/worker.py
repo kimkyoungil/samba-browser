@@ -23,9 +23,6 @@ from samba_agent.wave.flags import auto_cancel_evidence
 THREAD_PREFIX = 'job:'
 # 카카오페이 비밀번호를 사람이 끝내 안 넣어 멈춘 결제(payer 문구) — 다른 수단으로 사지 않고 메모만 남긴다
 KAKAO_FALLBACK_MARK = '카카오페이 폰 비밀번호를 기다렸지만'
-# 배송지를 저장했는데 목록에 바로 안 보여 멈춘 결제 전 실패(구매 문구) — 한 번 다시 돌린다
-SHIP_RETRY_MARK = '저장 뒤 목록에 없음'
-SHIP_RETRY_KEY = '_ship_retry'
 
 _log = logging.getLogger(__name__)
 
@@ -64,6 +61,8 @@ class WorkerDeps:
     add_memo: Callable[[str, str], bool] | None = None
     # 끝난(done) 작업 뒤처리 — (작업, 그래프 결과) → 보고할 한 줄(할 일 없으면 None). SSG 선물 수락(폰)에 쓴다
     after_done: Callable[[Job, dict], str | None] | None = None
+    # AI 대행 — 결제 전에 막힌 작업의 판단을 맡긴다. (작업, 오류 코드, 사유) → 맡았으면 True
+    operator: Callable[[Job, str | None, str], bool] | None = None
     # 브라우저 그래프 대신 폰으로 사는 소싱처(대문자 id → 처리기). 처리기는 (작업, 주문) → (결과, 오류 코드, 보고)
     # 중국 크림(SHIHUO) 주문 — 得物 앱 구매(사용자 2026-10-01)
     phone_sources: dict[str, Callable[[Job, OrderRef], tuple[str, str | None, str]]] = field(
@@ -178,6 +177,30 @@ class Worker:
         # 슬랙 보고와 별개로 로그에도 남긴다 — 폰 구매는 그래프 이벤트가 없어 실패 사유를 로그에서 못 찾았다(실기 10/3)
         _log.info('[폰 구매] %s', mask_text(f'{job.order_no} {outcome} — {line}')[:300])
         self.d.report(job, mask_text(f'{job.order_no} {outcome} — {line}')[:300])
+        if outcome == 'needs_human' and str(fail or 'unknown') == 'unknown':
+            retried = self._retry_transient(job, line)
+            if retried is not None:
+                return retried
+        return self.d.queue.get_by_id(job.id)
+
+    def _retry_transient(self, job: Job, reason: str) -> Job | None:
+        """결제 전 일시 오류로 멈춘 작업을 스스로 다시 넣는다(최대 TRANSIENT_RETRY_MAX 번). 다시 넣었으면 그 작업, 아니면 None."""
+        tries = int(job.options.get(TRANSIENT_RETRY_KEY) or 0)
+        if tries >= TRANSIENT_RETRY_MAX or not is_transient_prepay(reason):
+            return None
+        self.d.queue.finish(job.id, 'failed', error='unknown')
+        self.d.queue.enqueue(
+            job.order_no,
+            job.requester,
+            {**job.options, TRANSIENT_RETRY_KEY: tries + 1},
+            job.thread_ts,
+            wave_id=job.wave_id,
+        )
+        self.d.report(
+            job,
+            f'{job.order_no} 결제 전 일시 오류 — 하네스가 다시 한다({tries + 1}/{TRANSIENT_RETRY_MAX}): '
+            f'{mask_text(reason)[:120]}',
+        )
         return self.d.queue.get_by_id(job.id)
 
     def _close_leftovers(self, label: str) -> None:
@@ -416,21 +439,14 @@ class Worker:
                 line = f'뒤처리 실패: {mask_text(str(exc))[:120]}'
             if line:
                 self.d.report(job, f'{job.order_no} {line}')
-        if outcome == 'needs_human' and not self.d.dry_run and not job.options.get(SHIP_RETRY_KEY):
-            reason = _failed_reason(out)
-            if SHIP_RETRY_MARK in reason:
-                # 롯데온 선물: 새 배송지를 저장했는데 목록에 바로 안 보여 멈춘 경우 — 다시 돌리면 저장된 배송지를
-                # 기존 항목으로 골라 통과한다(실기 2026-09-30~10-01, 3건 모두 두 번째에 이행). 한 번만 다시 산다
-                self.d.queue.finish(job.id, 'failed', error=str(fail) if fail else None)
-                self.d.queue.enqueue(
-                    job.order_no,
-                    job.requester,
-                    {**job.options, SHIP_RETRY_KEY: 1},
-                    job.thread_ts,
-                    wave_id=job.wave_id,
-                )
-                self.d.report(job, f'{job.order_no} 배송지 저장 뒤 목록 미반영 — 한 번 다시 산다')
-                return self.d.queue.get_by_id(job.id)  # type: ignore[return-value]
+        # 새 배송지 저장이 목록에 안 보여 멈춘 건('저장 뒤 목록에 없음')은 자동으로 다시 사지 않고 사람에게 넘긴다.
+        # 예전엔 한 번 다시 돌려 기존 항목 선택으로 통과시켰는데, 그 재시도가 엉뚱한 배송지를 골라 5건이 오배송됐다(2026-10-08)
+        if outcome == 'needs_human' and not self.d.dry_run and str(fail or 'unknown') == 'unknown':
+            retried = self._retry_transient(job, _failed_reason(out))
+            if retried is not None:
+                return retried
+            if self.d.operator is not None:
+                self.d.operator(job, fail and str(fail), _failed_reason(out))
         tries = int(job.options.get(ACCOUNT_RETRY_KEY) or 0)
         if outcome == 'needs_human' and not self.d.dry_run and tries < ACCOUNT_RETRY_MAX:
             reason = _failed_reason(out)
@@ -542,6 +558,45 @@ def _buy_payload(out: dict) -> dict[str, object] | None:
 
 
 # 네이버페이 창 계정 불일치(payer.NAVERPAY_MISMATCH_MARK) 사유에서 문제 계정(프로필) 이름을 뽑는다
+# 결제 전 일시 오류(화면이 늦게 뜸·창이 안 뜸·폰 화면 가림)로 멈춘 건 — 돈이 안 나갔으니 사람이 이어서 하라고 하기 전에
+# 하네스가 두 번까지 스스로 다시 한다(2026-10-08 사용자: "매번 내가 지시해야지만 하냐")
+TRANSIENT_RETRY_KEY = '_transient_retry'
+TRANSIENT_RETRY_MAX = 2
+TRANSIENT_MARKS = (
+    '검색 버튼',
+    '검색창을 못 찾',
+    '결제창이 안 떴다(결제 전)',
+    '결제창을 열지 못했다: 수단 라디오',
+    '선물 정보 화면이 안 뜸',
+    'timed out',
+    '폰 명령 오류',
+    '폰 구매 오류',
+    '연결돼 있지 않다',
+    '구매창 가격을 못 읽었다',
+    '立即购买 를 못 찾',
+    '브릿지가 계속 busy',
+    'not-on-order-form',
+    '배송지 입력 검증에 실패했다: 주문서 없음',
+)
+# 결제가 됐을 수 있는 사유 — 절대 자동으로 다시 사지 않는다(중복 결제)
+PAID_RISK_MARKS = (
+    '결제 비밀번호',
+    'verify-failed',
+    '결제됐는지',
+    '승인 실패',
+    '결제는 됐는데',
+    '결제 완료',
+)
+
+
+def is_transient_prepay(reason: str) -> bool:
+    """결제 전 일시 오류로 멈춘 사유인가 — 결제가 됐을 수 있는 말이 하나라도 있으면 아니다."""
+    text = reason or ''
+    if any(m in text for m in PAID_RISK_MARKS):
+        return False
+    return any(m in text for m in TRANSIENT_MARKS)
+
+
 ACCOUNT_RETRY_KEY = '_account_retry'
 # 결제 앱 계정 문제로 계정을 빼고 다시 사는 횟수 상한(계정 수보다 하나 적게)
 ACCOUNT_RETRY_MAX = 3

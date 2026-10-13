@@ -14,17 +14,17 @@ import logging
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from datetime import UTC, datetime, timedelta
 
 from samba_agent.agents.contracts import OrderRef
 from samba_agent.failures import FailReason
 from samba_agent.queue.db import JobQueue
 from samba_agent.wave.client import WaveClient, WaveError, WaveOrder, flag_text
 
-if TYPE_CHECKING:
-    from datetime import datetime
-
 log = logging.getLogger(__name__)
+
+# 소싱처를 끝내 못 찾은 주문을 취소중으로 정리하기까지 기다리는 시간 — 추정·접두어 연결·판매자상품코드 읽기가 돌 틈을 준다
+UNLINKED_CANCEL_AFTER = timedelta(minutes=60)
 
 # 슬랙 최상위 메시지에 싣는 상품명 길이 — 길면 스레드 제목이 읽히지 않는다
 SKU_LIMIT = 40
@@ -109,6 +109,11 @@ class Intake:
         # 소싱처를 추정도 못 한 주문 — 샵마인·EMP 의 판매자상품코드를 읽어 달라고 넘긴다(주문번호, 판매처)
         self._on_unlinked = on_unlinked
         self._lookup_asked: set[str] = set()
+        # 마켓 취소로 이미 취소중 정리를 끝낸 주문 행 id
+        self._cancel_settled: set[str] = set()
+        # 소싱처가 비어 있는 채로 처음 본 시각(주문 행 id) — 오래 비어 있으면 취소중으로 정리한다
+        self._unlinked_since: dict[str, datetime] = {}
+        self._unlinked_cancelled: set[str] = set()
         # 슬랙 `수집 중지` 가 세우는 깃발. 세워져 있으면 run_once 는 아무것도 하지 않는다
         self.paused = False
 
@@ -128,12 +133,22 @@ class Intake:
             log.warning('자동 수집 실패 — 다음 주기에 다시 해본다: %s', e)
             return IntakeReport()
 
+        self._settle_market_cancelled()
         seen = enqueued = skipped_live = unsupported = 0
         handled: set[str] = set()
         for wave_order in sorted(orders, key=_paid_key):
             seen += 1
             order = wave_order.to_order_ref()
             self._ask_lookup(wave_order)
+            if self._cancel_unlinked(wave_order):
+                continue
+            if wave_order.inferred_product_prefix and not (wave_order.source_site or '').strip():
+                # 상품명이 잘려 소싱처를 추정 못 한 주문 — 접두어 연결만 한 번 부탁하고 접수하지 않는다
+                # (소싱처가 없어 살 수 없다). 연결되면 다음 주기에 소싱처가 채워져 들어온다
+                if order.wave_key not in self._linked_only:
+                    self._linked_only.add(order.wave_key)
+                    self._link_prefix(wave_order)
+                continue
             if not self._in_scope(wave_order):
                 # 이행 범위 밖이라도 소싱처 미등록 주문은 상품관리 상품에 연결만 해 둔다(사용자 2026-09-25 — ABC마트).
                 # 연결되면 소싱처가 채워져 다음 주기부터는 추정 주문이 아니다
@@ -143,6 +158,10 @@ class Intake:
                 continue
             # 작업은 삼바웨이브 행(id) 단위다 — 같은 상품주문번호라도 행(사이즈)이 다르면 따로 산다
             if order.wave_key in handled or self._already_queued(order):
+                # 앱이 죽어(bridge_down) 사러 가기도 전에 멈춘 건은 사람이 이어서 하기를 기다리지 않고 한 번 다시 넣는다
+                # (실기 2026-10-06 탑텐 청자켓: bridge_down 으로 멈춘 채 20시간+ 방치). 미이행 목록에 아직 있는 주문만 —
+                # 취소·기입된 주문은 목록에 없다
+                self._retry_bridge_down(order)
                 skipped_live += 1
                 continue
             if enqueued + unsupported >= self._max_new:
@@ -165,6 +184,41 @@ class Intake:
             seen=seen, enqueued=enqueued, skipped_live=skipped_live, unsupported=unsupported
         )
 
+    def _cancel_unlinked(self, wave_order: WaveOrder) -> bool:
+        """소싱처 매칭에 끝내 실패한 주문을 취소중으로 정리한다. 정리했으면 True(접수하지 않는다).
+
+        상품명 끝 번호 추정·접두어 연결·판매자상품코드 읽기를 다 거쳐도 소싱처가 비어 있으면 살 수 없는 주문이다.
+        방치하지 않고 근거를 남겨 취소중으로 둔다(사용자 2026-10-08: "매칭이 안 되면 취소중인 거 몰라?").
+        처음 본 뒤 UNLINKED_CANCEL_AFTER 가 지나야 한다 — 연결이 돌 틈을 준다. 하네스가 이미 다루는 주문은 건드리지 않는다.
+        """
+        if (wave_order.source_site or '').strip() or wave_order.source_inferred:
+            return False
+        if wave_order.inferred_product_prefix:
+            return False  # 접두어 연결이 아직 가능성이 있다
+        key = (wave_order.id or '').strip()
+        if not key or key in self._unlinked_cancelled:
+            return key in self._unlinked_cancelled
+        job = self._queue.find(wave_order.order_number, key)
+        if job is not None:
+            return False
+        first = self._unlinked_since.setdefault(key, datetime.now(UTC))
+        if datetime.now(UTC) - first < UNLINKED_CANCEL_AFTER:
+            return False
+        try:
+            changed = self._wave.set_cancel_requested(
+                key,
+                '소싱처 매칭 실패 — 상품명 끝 번호 추정·접두어 연결·판매자상품코드 읽기로도 소싱처를 못 찾아 살 수 없음',
+            )
+        except WaveError as e:
+            log.info('소싱처 미등록 주문 취소중 정리 실패 %s: %s', wave_order.order_number, e)
+            return False
+        self._unlinked_cancelled.add(key)
+        if changed:
+            line = f'{wave_order.order_number} 소싱처 매칭 실패 — 취소중으로 정리'
+            log.info(line)
+            self._post_new(line)
+        return True
+
     def _ask_lookup(self, wave_order: WaveOrder) -> None:
         """소싱처가 없고 상품명으로 추정도 못 한 주문 — 판매자상품코드 읽기를 한 번 요청한다."""
         if self._on_unlinked is None or (wave_order.source_site or '').strip():
@@ -179,6 +233,28 @@ class Intake:
                 wave_order.order_number,
                 target,
             )
+
+    def _link_prefix(self, wave_order: WaveOrder) -> None:
+        """상품명이 잘려 롯데온 상품번호 뒷자리가 없는 주문 — 접두어로 수집상품에 연결만 한다.
+
+        삼바웨이브가 접두어에 맞는 수집상품이 정확히 하나일 때만 잇는다(없거나 여럿이면 409). 실패는 근거만
+        남긴다 — 이 주문은 소싱처가 비어 있어 어차피 범위 밖이고, 판매자상품코드 읽기(_ask_lookup)가 따로 돈다.
+        """
+        prefix = wave_order.inferred_product_prefix or ''
+        key = (wave_order.id or '').strip() or wave_order.order_number
+        try:
+            out = self._wave.link_product(key, prefix, 'LOTTEON')
+        except WaveError as e:
+            log.info(
+                '잘린 상품번호 연결 실패 %s LOTTEON %s*: %s', wave_order.order_number, prefix, e
+            )
+            return
+        log.info(
+            '잘린 상품번호 연결 %s → LOTTEON %s* 상품관리 상품에 연결(주문 %s건)',
+            wave_order.order_number,
+            prefix,
+            out.get('linked_orders', 1),
+        )
 
     def _link_inferred(self, wave_order: WaveOrder, job_id: int | None, ts: str | None) -> bool:
         """소싱처 미등록 주문(상품명 숫자로 무신사·ABC마트 추정)을 수집상품에 연결한다. 이행을 이어 가면 True.
@@ -247,6 +323,60 @@ class Intake:
         막되 done 이면 막지 않는다(이미 기입한 다른 행 — 실기 20261005DFA7D9 230 done 뒤 210 이 안 들어갔다).
         """
         return self._queue.find(order.order_no, order.wave_id) is not None
+
+    def _settle_market_cancelled(self) -> None:
+        """마켓이 이미 취소로 돌린 미이행 주문을 취소중으로 넘겨 정리한다(삼바웨이브가 마켓 취소완료와 맞춰 마감한다).
+
+        /pending-orders 는 이런 주문을 일부러 빼서 주문접수로 영영 남는다(실기 2026-10-06 탑텐 청자켓 20시간+).
+        소싱처에서 산 게 없는 주문(목록이 소싱번호 없는 것만 준다)이고, 하네스가 지금 그 주문을 처리 중이면 건너뛴다.
+        """
+        fetch = getattr(self._wave, 'market_cancelled_pending', None)
+        if fetch is None:
+            return
+        try:
+            items = fetch(self._days)
+        except WaveError as e:
+            log.info('마켓 취소 주문 조회 실패 — 다음 주기에 다시: %s', e)
+            return
+        for item in items:
+            key = item['id']
+            if key in self._cancel_settled:
+                continue
+            job = self._queue.find(item['order_number'], key)
+            if job is not None and job.state in ('running', 'queued'):
+                continue
+            try:
+                changed = self._wave.set_cancel_requested(
+                    key,
+                    f'마켓 배송상태 {item["shipping_status"] or "취소"} — 미이행(소싱처 구매 없음) 상태로 남아 취소중으로 정리',
+                )
+            except WaveError as e:
+                log.info('마켓 취소 주문 정리 실패 %s: %s', item['order_number'], e)
+                continue
+            self._cancel_settled.add(key)
+            if changed:
+                line = f'{item["order_number"]} 마켓 {item["shipping_status"] or "취소"} — 미이행 주문을 취소중으로 정리'
+                log.info(line)
+                self._post_new(line)
+
+    def _retry_bridge_down(self, order: OrderRef) -> None:
+        """bridge_down 으로 사람에게 넘어간 작업을 5분 뒤 한 번 다시 넣는다(결제 단계 진입 전 끊김만 — 결제 중 끊김은 pay_interrupted)."""
+        job = self._queue.find(order.order_no, order.wave_id)
+        if job is None or job.state != 'needs_human' or (job.error or '') != 'bridge_down':
+            return
+        if job.attempts >= 1:
+            return
+        try:
+            idle = datetime.now(UTC) - datetime.fromisoformat(job.updated_at)
+        except ValueError:
+            return
+        if idle < timedelta(minutes=5):
+            return
+        try:
+            self._queue.retry(job.id)
+        except ValueError:
+            return
+        log.info('bridge_down 으로 멈춘 작업을 다시 넣었다: %s', order.order_no)
 
     def _supported(self, order: OrderRef) -> bool:
         """이 소싱처를 맡을 구매 에이전트가 있는가.

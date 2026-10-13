@@ -4,8 +4,8 @@
 得物 검색(품번) → 상품 → 立即购买 → EU 사이즈 칸 → '再领¥N' 쿠폰 → 하단 결제 → 알리페이 결제창('CVV를 입력하세요' =
 6자리 결제 비밀번호) → phone_approve_payment(provider='alipay') → '支付成功' → 완료 → 我·订单의 주문 상세 '订单编号'.
 
-원가 = 알리페이 청구 위안(상품 + 국제카드 수수료 3%) × CNY/KRW 환율(크림 엔진과 같은 frankfurter), 배송비 8,500원 고정.
-판매처가 得物이 아니면(唯品会·淘宝 …) 사람에게 넘긴다 — 그 앱 흐름은 아직 없다.
+원가 = 알리페이 청구 위안(상품 + 국제카드 수수료 3%) × CNY/KRW 환율(크림 엔진과 같은 frankfurter) × 현대카드 청구할인 0.973, 배송비 8,500원 고정.
+판매처가 淘宝·唯品会 이면 得物을 열지 않고 사람에게 넘긴다(식화 링크로 들어가는 흐름이 생기기 전까지).
 """
 
 import json
@@ -15,6 +15,7 @@ import time
 import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Any
 
 from samba_agent.ops.ssg_gift_accept import PHONE_BUSY, Node, Phone, find_text, has_text
 
@@ -23,20 +24,25 @@ log = logging.getLogger(__name__)
 DEWU = 'com.shizhuang.duapp'
 ALIPAY = 'com.eg.android.AlipayGphone'
 CN_SHIPPING_FEE = 8500
+# 알리페이 국제카드 = 현대카드(Mastercard 8503) — 원가 공식의 카드 청구할인 ×0.973 (사용자 지시, 전 소싱처 공통 [cost-formula-all-sources])
+HYUNDAI_BILLING_FACTOR = 0.973
 # 크림 판매 수수료 — 삼바 정산금(revenue)이 판매가와 같으면(수수료 미계산) 이 비율을 빼고 마진을 본다
 KREAM_FEE_RATE = 0.08
 FX_URL = 'https://api.frankfurter.dev/v1/latest?base=CNY&symbols=KRW'
 FX_FALLBACK_URL = 'https://open.er-api.com/v6/latest/CNY'
 _PRICE = re.compile(r'^¥\s*(\d+(?:\.\d+)?)$')
+LINE_BREAK = chr(10)
 _ORDER_NO = re.compile(r'^\d{15,22}$')
 
 
 class DewuOrderError(Exception):
     """사람에게 넘길 사유(개인정보 없음). paid=True 면 결제는 끝났다(재결제 금지)."""
 
-    def __init__(self, reason: str, paid: bool = False) -> None:
+    def __init__(self, reason: str, paid: bool = False, out_of_stock: bool = False) -> None:
         super().__init__(reason)
         self.paid = paid
+        # 得物 화면에서 품절을 직접 확인했다 — 재고X·취소중 으로 마감해도 되는 사유
+        self.out_of_stock = out_of_stock
 
 
 @dataclass
@@ -45,10 +51,13 @@ class DewuResult:
     paid_cny: float
     item_cny: float
     rate: float
+    # 웨이신페이로 결제됨(국제카드 수수료 면제 — 원가에 ×1.03 을 붙이지 않는다, 2026-10-09)
+    fee_free: bool = False
 
     @property
     def cost_krw(self) -> int:
-        return round(self.paid_cny * self.rate)
+        # 원가 = 알리페이 최종 청구 위안 × 환율 × 카드 청구할인(현대 ×0.973)
+        return round(self.paid_cny * self.rate * HYUNDAI_BILLING_FACTOR)
 
 
 def cny_krw_rate() -> float:
@@ -96,11 +105,14 @@ def header_price(nodes: list[Node]) -> float | None:
         m = _PRICE.match(n.text.replace(' ', ''))
         if m and n.y < 330:
             return float(m.group(1))
-    # 아래 줄에 배송 선택지가 둘이면(¥378 顺丰 / ¥348 일반) 왼쪽이 기본 선택이다
-    for n in sorted(nodes, key=lambda n: (-n.y, n.x)):
-        m = _PRICE.match(n.text.replace(' ', ''))
-        if m and n.y >= 1300:
-            return float(m.group(1))
+    # 아래 줄에 결제 버튼이 둘이면(품牌官方 ¥1090 / 일반배송 ¥631, 실기 2026-10-08) 가장 싼 쪽이 일반배송이다
+    prices = [
+        float(m.group(1))
+        for n in new_buy_buttons(nodes)
+        if n.y >= 1300 and (m := _PRICE.match(n.text.replace(' ', '')))
+    ]
+    if prices:
+        return min(prices)
     return None
 
 
@@ -138,6 +150,100 @@ def order_no_after_label(nodes: list[Node]) -> str | None:
         if seen and _ORDER_NO.match(n.text):
             return n.text
     return None
+
+
+_LABELED_AMOUNT = re.compile(r'(?:订单金额|주문금액)[,，:：\s]*[¥￥]\s*(\d+(?:,\d{3})*(?:\.\d+)?)')
+_AMOUNT = re.compile(r'^[¥￥]?\s*(\d+(?:,\d{3})*(?:\.\d+)?)$')
+
+
+def alipay_order_amount(nodes: list[Node]) -> float | None:
+    """알리페이 결제창의 '주문금액(订单金额)' 위안 값. 못 읽으면 None.
+
+    구매창 머리글 가격(¥674)과 실제 결제 금액(¥1090)이 달랐던 사고(2026-10-08 아식스 카야노 14)를 막으려고,
+    비밀번호를 넣기 전에 결제창이 청구하려는 금액을 직접 읽는다. 수수료(3%)는 따로 줄에 붙으므로 뺀 값이다.
+    """
+    labels = ('订单金额', '주문금액', 'Order total')
+
+    def shown(n: Node) -> str:
+        # 淘宝 앱 안 결제창은 글자가 접근성 설명(content-desc)에만 있다 — '订单金额,¥ 549.00' 한 덩어리로 온다(실기 2026-10-08)
+        return (n.text or n.desc or '').strip()
+
+    for n in nodes:
+        combined = _LABELED_AMOUNT.search(shown(n))
+        if combined:
+            try:
+                return float(combined.group(1).replace(',', ''))
+            except ValueError:
+                return None
+    ordered = sorted(nodes, key=lambda n: (n.y, n.x))
+    for i, n in enumerate(ordered):
+        if any(label in shown(n) for label in labels):
+            # 같은 줄 오른쪽이나 바로 다음 요소에서 금액을 찾는다
+            for m in ordered[i : i + 4]:
+                found = _AMOUNT.match(shown(m).replace('¥ ', '¥').replace('￥ ', '￥'))
+                if found:
+                    try:
+                        return float(found.group(1).replace(',', ''))
+                    except ValueError:
+                        return None
+    return None
+    return None
+
+
+# 득물 안의 중고 매장(95分) 표시 — 실기 2026-10-08 A-SN242815440: 검색 결과에서 95分 중고(SS级) 카드를 골라 결제했다.
+# 크림은 새상품만 판다 — 이 표시가 보이면 결제하지 않는다
+# 실기 2026-10-09 A-SW242585599: 의류 구매창 ¥278 버튼에 '仅包装瑕疵'(포장 하자만) 표시 — 실제 주문은 95分 SS级 중고였다.
+# '瑕'(하자) 가 들어간 표시는 모두 중고로 본다
+# 실기 2026-10-09 A-SN242628053: 신발 구매창 ¥200 버튼에 '轻微使用'(가볍게 사용) — 누르면 95分 闲置 목록(A级·B级)이 떴다
+USED_MARKERS = ('95分', 'SS级', '闲置', '二手', '全新微瑕', '微瑕', '瑕疵', '瑕', '轻微使用', '日常使用', 'A级', 'B级', 'C级')
+
+
+def used_marker(nodes: list[Node]) -> str | None:
+    """화면에 중고 표시가 있으면 그 글자, 없으면 None."""
+    for n in nodes:
+        t = f'{n.text or ""} {n.desc or ""}'
+        for m in USED_MARKERS:
+            if m in t:
+                return m
+    return None
+
+
+def new_buy_buttons(nodes: list[Node]) -> list[Node]:
+    """구매창 하단(y>1380)의 가격 버튼 중 95分 중고 버튼을 뺀 것.
+
+    실기 2026-10-08(삼바 JP 44⅔): 버튼 ¥458(2~3일)·¥447(5~6일)·¥426 — ¥426 에는 95 배지와 '全新微瑕' 가 붙는다(y 1397,
+    x 711). 가장 싼 버튼을 고르면 중고를 산다. 배지·표시는 버튼 오른쪽 위(같은 줄 ±70px, 오른쪽 0~200px)에 있다
+    """
+    tags = [
+        n
+        for n in nodes
+        if n.y > 1300 and any(m in f'{n.text or ""} {n.desc or ""}' for m in USED_MARKERS)
+    ]
+    out = []
+    for n in nodes:
+        if n.y <= 1380 or not _PRICE.match((n.text or '').replace(' ', '')):
+            continue
+        if any(abs(t.y - n.y) <= 70 and 0 <= t.x - n.x <= 200 for t in tags):
+            continue
+        out.append(n)
+    return out
+
+
+def dismiss_subsidy_dialog(phone: Phone, sleep: Callable[[float], None]) -> bool:
+    """'领取补贴 — 실명인증(去实名)' 팝업이 떠 있으면 '再想想'(다시 생각)으로 닫는다. 닫았으면 True.
+
+    국가 보조금 안내 팝업이다 — 실명인증을 하지 않고 보조금 없이 그대로 결제한다(실기 2026-10-08: 이 팝업이 결제 단추를 막아
+    '알리페이 결제창이 안 떴다'로 6시간 멈췄다). 去实名 은 절대 누르지 않는다.
+    """
+    nodes = phone.nodes()
+    if not has_text(nodes, '去实名'):
+        return False
+    later = find_text(nodes, '再想想')
+    if later is None:
+        return False
+    phone.tap(later.x, later.y)
+    sleep(2)
+    return True
 
 
 def buy_on_dewu(
@@ -253,7 +359,14 @@ def buy_on_dewu(
         raise DewuOrderError('상품 화면에서 立即购买 를 못 찾았다')
     phone.tap(buy.x, buy.y)
     # 3) 사이즈 칸 — 글자가 EU 값과 똑같은 칸, 가격이 '¥--' 면 판매 없음
-    nodes = wait_for(lambda ns: size_cell(ns, eu_size) is not None, 10)
+    nodes = wait_for(lambda ns: size_cell(ns, eu_size) is not None or has_text(ns, '暂时缺货'), 10)
+    if has_text(nodes, '暂时缺货'):
+        # 상품 전체가 품절이면 사이즈 칸은 모두 '¥--' 이고 가격 글자가 칸과 따로 잡히지 않아 '가격을 못 읽었다'(unknown)로
+        # 끝났다(실기 2026-10-07 리복 클럽씨 85 EU 43: 네 번 같은 사유) — 화면 머리글 '暂时缺货' 로 품절을 확정한다
+        raise DewuOrderError(
+            f'得物 확정 품절 — 상품 머리글 暂时缺货(EU {eu_size} 포함 전 사이즈 ¥--)',
+            out_of_stock=True,
+        )
     cell = size_cell(nodes, eu_size)
     if cell is None:
         raise DewuOrderError(f'得物 사이즈 목록에 EU {eu_size} 가 없다')
@@ -268,7 +381,7 @@ def buy_on_dewu(
         None,
     )
     if below is not None and '--' in below.text:
-        raise DewuOrderError(f'得物 EU {eu_size} 판매 없음(¥--)')
+        raise DewuOrderError(f'得物 확정 품절 — EU {eu_size} 판매 없음(¥--)', out_of_stock=True)
     phone.tap(cell.x, cell.y)
     sleep(2)
     nodes = phone.nodes()
@@ -287,14 +400,16 @@ def buy_on_dewu(
         raise DewuOrderError(
             f'得物 가격 ¥{price:g} 가 상한 ¥{max_cny:.0f} 을 넘는다 — 결제하지 않음(마진)'
         )
+    # 구매창에는 95分 중고 버튼이 새상품 버튼과 나란히 뜬다 — 새상품 버튼이 하나도 없으면 사지 않는다
+    if not new_buy_buttons(nodes):
+        raise DewuOrderError('得物 구매창에 새상품 결제 버튼이 없다(95分 중고만) — 결제하지 않음')
     # 5) 하단 결제 버튼 → 바로 알리페이가 뜨거나, 먼저 '确认订单'(주문 확인) 화면이 뜬다
-    pay = next(
-        (
-            n
-            for n in sorted(nodes, key=lambda n: -n.y)
-            if n.y > 1380 and _PRICE.match(n.text.replace(' ', ''))
-        ),
-        None,
+    # 하단 버튼이 둘이면(品牌官方 ¥1090 / 일반배송 ¥631) 싼 일반배송을 누른다 — 왼쪽(비싼 쪽)을 눌러 ¥1090 을 결제한 사고(2026-10-08)
+    buttons = new_buy_buttons(nodes)
+    pay = min(
+        buttons,
+        key=lambda n: float(_PRICE.match(n.text.replace(' ', '')).group(1)),  # type: ignore[union-attr]
+        default=None,
     )
     if pay is None:
         raise DewuOrderError('得物 결제 버튼을 못 찾았다')
@@ -332,6 +447,9 @@ def buy_on_dewu(
     if phone.top_package() != ALIPAY:
         # 주문 확인 화면 — 결제수단이 알리페이가 아니면(云闪付) 바꾸고 '立即支付' 를 누른다
         # (실기 2026-10-03: 云闪付 가 골라져 있어 알리페이 창이 영영 안 떴다)
+        # 보조금 실명인증 팝업이 주문 확인 화면을 가리고 있으면 먼저 닫는다(가려진 동안은 确认订单·立即支付 가 안 보인다)
+        if dismiss_subsidy_dialog(phone, sleep):
+            sleep(1.5)
         nodes = phone.nodes()
         if find_text(nodes, '确认订单') is None and find_text(nodes, '立即支付') is None:
             raise DewuOrderError('알리페이 결제창이 안 떴다(결제 전)')
@@ -362,8 +480,44 @@ def buy_on_dewu(
         end = time.monotonic() + 20
         while phone.top_package() != ALIPAY and time.monotonic() < end:
             sleep(1.5)
+            # 보조금 실명인증 팝업이 가렸으면 닫고 立即支付 를 한 번 더 누른다
+            if phone.top_package() == DEWU and dismiss_subsidy_dialog(phone, sleep):
+                again = find_text(phone.nodes(), '立即支付')
+                if again is not None:
+                    phone.tap(again.x, again.y)
+            # 지난 시도가 남긴 같은 사이즈의 미결제 주문이 있으면 그 주문을 去支付 로 결제한다(새 주문을 또 만들지 않는다)
+            if phone.top_package() == DEWU:
+                waiting = phone.nodes()
+                if has_text(waiting, '未支付的订单'):
+                    if not has_text(waiting, eu_size):
+                        raise DewuOrderError(
+                            f'得物에 다른 사이즈의 미결제 주문이 남아 있다 — 사람이 취소해야 한다(EU {eu_size} 아님)'
+                        )
+                    go_pay = find_text(waiting, '去支付')
+                    if go_pay is not None:
+                        phone.tap(go_pay.x, go_pay.y)
+                        sleep(2)
         if phone.top_package() != ALIPAY:
             raise DewuOrderError('알리페이 결제창이 안 떴다(결제 전)')
+    # 결제창이 실제로 청구하려는 금액을 비밀번호 전에 확인한다 — 구매창에서 읽은 가격과 다르거나 상한을 넘으면 멈춘다
+    # 결제창이 뜬 직후에는 금액 글자가 아직 그려지지 않는다(실기 2026-10-08 A-SW242583238: 바로 읽어 '못 읽었다'로 멈춤)
+    # — 금액이 보일 때까지 최대 10초 다시 읽는다
+    charge = alipay_order_amount(phone.nodes())
+    for _ in range(6):
+        if charge is not None:
+            break
+        sleep(1.7)
+        charge = alipay_order_amount(phone.nodes())
+    if charge is None:
+        raise DewuOrderError('알리페이 결제창의 주문금액을 못 읽었다 — 결제하지 않음')
+    if charge > max_cny:
+        raise DewuOrderError(
+            f'알리페이 결제창 금액 ¥{charge:g} 이 상한 ¥{max_cny:.0f} 을 넘는다(구매창 가격 ¥{price:g}) — 결제하지 않음(마진)'
+        )
+    if charge > price * 1.02 + 1:
+        raise DewuOrderError(
+            f'알리페이 결제창 금액 ¥{charge:g} 이 구매창 가격 ¥{price:g} 과 다르다 — 결제하지 않음'
+        )
     paid_hint = round(price * 1.03 * rate)
     out = approve(paid_hint).strip()
     if not out.startswith('ok'):
@@ -371,16 +525,22 @@ def buy_on_dewu(
     # 6) 支付成功 + 청구 위안 → 완료
     nodes = wait_for(lambda ns: has_text(ns, '支付成功'), 20)
     if not has_text(nodes, '支付成功'):
-        raise DewuOrderError(
-            '알리페이 완료 화면(支付成功)이 안 보인다 — 得物 주문내역 확인(재결제 금지)', paid=True
-        )
+        # 완료 화면을 놓쳐도 결제는 됐을 수 있다 — 주문 목록에서 같은 금액 주문을 찾아 바로 기입한다
+        # (실기 2026-10-09 A-SW242585599: 결제됐는데 여기서 멈춰 9시간 기입 안 됨. 사용자: 구매하면 즉시 입력이 최우선)
+        found = _latest_order_no(phone, sleep, price)
+        if found is None:
+            raise DewuOrderError(
+                '알리페이 완료 화면(支付成功)이 안 보이고 주문 목록에서도 못 찾았다 — 得物 주문내역 확인(재결제 금지)',
+                paid=True,
+            )
+        return DewuResult(order_no=found, paid_cny=round(price * 1.03, 2), item_cny=price, rate=rate)
     amounts = [float(n.text) for n in nodes if re.fullmatch(r'\d+\.\d{2}', n.text)]
     paid_cny = amounts[0] if amounts else round(price * 1.03, 2)
     done = find_text(nodes, '완료') or find_text(nodes, '完成')
     if done is not None:
         phone.tap(done.x, done.y)
         sleep(3)
-    order_no = _latest_order_no(phone, sleep)
+    order_no = _latest_order_no(phone, sleep, price)
     if order_no is None:
         raise DewuOrderError(
             f'결제는 됐는데(¥{paid_cny}) 得物 주문번호를 못 읽었다 — 주문내역 확인', paid=True
@@ -388,8 +548,43 @@ def buy_on_dewu(
     return DewuResult(order_no=order_no, paid_cny=paid_cny, item_cny=price, rate=rate)
 
 
-def _latest_order_no(phone: Phone, sleep: Callable[[float], None]) -> str | None:
-    """我 → 待发货 첫 주문 → 상세의 '订单编号'. 화면 이동은 실기 순서를 따른다."""
+def _latest_order_no(
+    phone: Phone, sleep: Callable[[float], None], price: float | None = None
+) -> str | None:
+    """我 → 订单 全部 → 방금 산 주문(실付款 이 price 와 같은 첫 주문) → 상세의 '订单编号'.
+
+    실기 2026-10-09: '待发货' 첫 주문을 읽었더니, 판매자가 곧바로 발송해 방금 산 조던(¥659)은 '商家已发出' 로 빠지고
+    전에 산 야니스(¥295)의 번호가 기입됐다. '全部' 는 최신순이고, 실付款 금액으로 방금 산 주문을 고른다.
+    같은 날 A-SW242585599·A-SN242628053 은 번호를 못 읽어 사람이 기입했다 — 앱을 껐다 켜서 홈부터 시작하고,
+    '¥ 4 8 8' 처럼 띄어 쓴 금액도 읽고, 못 찾으면 한 번 더 처음부터 한다.
+    """
+    for attempt in range(2):
+        found = _read_order_no_once(phone, sleep, price, fresh=attempt > 0)
+        if found:
+            return found
+    return None
+
+
+def _price_of(text: str | None) -> float | None:
+    """'¥488'·'¥ 4 8 8'·'￥ 659.00' → 숫자. 금액 글자가 아니면 None."""
+    m = re.match(r'^[¥￥]\s*([\d\s]+(?:\.\d+)?)$', (text or '').strip())
+    if not m:
+        return None
+    try:
+        return float(re.sub(r'\s+', '', m.group(1)))
+    except ValueError:
+        return None
+
+
+def _read_order_no_once(
+    phone: Phone, sleep: Callable[[float], None], price: float | None, *, fresh: bool
+) -> str | None:
+    if fresh:
+        # 지난 시도가 남긴 화면에 갇혔다 — 앱을 껐다 켜서 홈부터 다시 한다
+        phone._run('shell', 'am', 'force-stop', DEWU)
+        sleep(1)
+        phone.launch(DEWU)
+        sleep(7)
     for _ in range(6):
         nodes = phone.nodes()
         tab = find_text(nodes, '我')
@@ -404,18 +599,31 @@ def _latest_order_no(phone: Phone, sleep: Callable[[float], None]) -> str | None
         phone.key('4')
         sleep(1.5)
     nodes = phone.nodes()
-    # 건수가 붙는다('待发货 1')
-    pending = next((n for n in nodes if n.text.strip().startswith('待发货')), None)
-    if pending is None:
-        return None
-    phone.tap(pending.x, pending.y)
-    sleep(3)
+    # 我 화면의 '订单 … 全部 >' — 없으면 실측 위치(616,491)
+    whole = next((n for n in nodes if n.text.strip() == '全部' and 400 < n.y < 560), None)
+    phone.tap(*((whole.x, whole.y) if whole is not None else (616, 491)))
+    sleep(4)
     nodes = phone.nodes()
-    first = next((n for n in sorted(nodes, key=lambda n: n.y) if '实付款' in n.text), None)
-    if first is None:
+    # 주문 목록이 아니면(홈·상품 화면으로 빠짐) 이번 시도는 접는다 — 호출부가 처음부터 다시 한다
+    if not any('实付款' in (n.text or '') for n in nodes):
         return None
-    phone.tap(360, max(first.y - 40, 300))
-    sleep(3)
+    target = None
+    if price:
+        # 같은 줄의 ¥ 금액이 price 와 같은 첫 주문 — 목록은 최신순이라 위에서 첫 번째가 방금 산 것이다
+        for n in sorted(nodes, key=lambda n: n.y):
+            got = _price_of(n.text)
+            if got is not None and abs(got - price) < 0.6:
+                target = n
+                break
+        if target is None:
+            return None  # 방금 산 주문을 금액으로 찾지 못했다 — 엉뚱한 번호를 쓰지 않는다
+    else:
+        target = next((n for n in sorted(nodes, key=lambda n: n.y) if '实付款' in n.text), None)
+        if target is None:
+            return None
+    # 금액 줄의 카드(실付款 글자 바로 위)를 누른다 — 카드 한가운데 x 로
+    phone.tap(450, max(target.y - 60, 300))
+    sleep(3.5)
     for _ in range(8):
         found = order_no_after_label(phone.nodes())
         if found:
@@ -425,6 +633,71 @@ def _latest_order_no(phone: Phone, sleep: Callable[[float], None]) -> str | None
         sleep(1)
     return None
 
+def _buy_taobao_pc(
+    pc_call: Callable[[str, dict[str, object]], str],
+    detail: object,
+    *,
+    eu: str,
+    max_cny: float,
+    rate: float,
+) -> tuple[str, ...] | None:
+    """식화 판매처 목록 → 화이트리스트 淘宝 가게(싼 순) → PC 샵백 경유 구매.
+
+    돌려주는 값: ('done', 주문번호, 청구위안, 가게, 상품위안) · ('paid?', 사유) · ('fail', 사유)
+    """
+    import os
+
+    from samba_agent.ops.shihuo_link import ShihuoLinkError, fetch_suppliers, whitelisted_taobao
+    from samba_agent.ops.taobao_pc import TaobaoPcError, buy_on_taobao_pc
+    from samba_agent.repair.agent import _run_sync
+
+    expiry = os.environ.get('SAMBA_TAOBAO_CARD_EXPIRY', '').strip()
+    if not expiry:
+        # 하네스는 .env 를 설정 객체로만 읽고 환경변수로 올리지 않는다(실기 2026-10-09: 그래서 PC 경로가 건너뛰어졌다)
+        from pathlib import Path
+
+        env = Path('.env')
+        if env.exists():
+            found = re.search(
+                r'^SAMBA_TAOBAO_CARD_EXPIRY="?(\d{2}/\d{2})', env.read_text(encoding='utf-8'), re.M
+            )
+            expiry = found.group(1) if found else ''
+    if not re.fullmatch(r'\d{2}/\d{2}', expiry):
+        return ('fail', '카드 유효기간(SAMBA_TAOBAO_CARD_EXPIRY)이 없다 — 淘宝 PC 구매 안 함')
+    source_url = str(getattr(detail, 'source_url', '') or '')
+    try:
+        rows = _run_sync(fetch_suppliers(source_url, eu))
+    except (ShihuoLinkError, Exception) as e:  # noqa: BLE001 — 식화 접속 실패는 다음 순위로
+        return ('fail', f'식화 판매처 목록을 못 읽었다: {type(e).__name__}: {str(e)[:80]}')
+    reasons: list[str] = []
+    for cand in whitelisted_taobao(rows):
+        if cand.price_cny > max_cny:
+            reasons.append(f'{cand.name} ¥{cand.price_cny:g} > 상한 ¥{max_cny:.0f}')
+            continue
+        try:
+            res = buy_on_taobao_pc(pc_call, cand.url, max_cny=max_cny, expiry=expiry, eu_size=eu)
+        except TaobaoPcError as e:
+            if e.paid:
+                return ('paid?', str(e))
+            reasons.append(f'{cand.name}: {e}')
+            continue
+        return ('done', res.order_no, res.charge_cny, cand.name, res.item_cny)
+    return (
+        'fail',
+        ' / '.join(reasons) or '식화에 화이트리스트 淘宝 가게(상품 주소 있는 행)가 없다',
+    )
+
+
+def _pc_toast(title: str, body: str) -> object:
+    """PC 알림창 — 웨이신페이 비밀번호처럼 사람이 폰에서 해야 할 일을 알린다. 못 띄우면 False."""
+    try:
+        from samba_agent.export.desktop import toast
+
+        return toast.show(title, body)
+    except Exception:  # noqa: BLE001 — 알림은 부가 기능이다
+        log.warning('PC 알림 실패: %s', title)
+        return False
+
 
 def make_shihuo_handler(
     wave: object,
@@ -433,6 +706,10 @@ def make_shihuo_handler(
     adb: str | None = None,
     phone_serial: str | None = None,
     rate_of: Callable[[], float] = cny_krw_rate,
+    buyer_factory: Callable[[], Any] | None = None,
+    approve_other: Callable[[int], str] | None = None,
+    phone_buyer_enabled: bool = False,
+    pc_call: Callable[[str, dict[str, object]], str] | None = None,
 ) -> Callable[[object, object], tuple[str, str | None, str]]:
     """워커가 SHIHUO 주문에 부르는 처리기 — (작업, 주문) → (결과 'done'|'needs_human', 오류 코드, 보고 한 줄)."""
     import os
@@ -473,29 +750,202 @@ def make_shihuo_handler(
             # 삼바 정산금이 판매가 그대로면 수수료가 안 빠진 값이다 — 크림 수수료(8%)를 빼고 본다
             # (실기 2026-10-06 뉴발란스 880: 92,000 그대로 보고 사서 실제 정산 84,640 < 원가 90,883 역마진)
             revenue = round(sale * (1 - KREAM_FEE_RATE))
-        # 마진 > 0: 청구 위안(상품 × 1.03) × 환율 + 배송비 8,500 < 정산금
-        max_cny = (revenue - CN_SHIPPING_FEE) / rate / 1.03 if revenue > 0 else 0
+        # 마진 > 0: 청구 위안(상품 × 1.03) × 환율 × 청구할인 0.973 + 배송비 8,500 < 정산금
+        max_cny = (
+            (revenue - CN_SHIPPING_FEE) / (rate * HYUNDAI_BILLING_FACTOR) / 1.03
+            if revenue > 0
+            else 0
+        )
         if max_cny <= 0:
             return 'needs_human', 'margin', '정산금을 몰라 마진을 볼 수 없다 — 결제하지 않음'
+        seller_name = str(getattr(detail, 'source_seller', '') or '').strip()
         serial = find_phone_serial(adb_path, want)
         if serial is None:
             return 'needs_human', 'unknown', '결제 폰(임성희폰)이 연결돼 있지 않다'
-        try:
-            # 폰을 쓰는 주기 작업(롯데ON 선물 송장·得物 송장)과 겹치지 않게 — 겹치면 카카오톡이 앞으로 와 화면을 못 읽는다
-            with PHONE_BUSY:
-                res = buy_on_dewu(
-                    Phone(adb_path, serial), model, eu, max_cny=max_cny, approve=approve, rate=rate
+        # 식화 화이트리스트 판매처 중 최저가에서 산다. 최저가가 淘宝·唯品会 이면 폰 구매 AI 가 식화 앱 링크로 들어가 사고
+        # (淘宝 검색으로 사면 블랙리스트 가게를 고른다 — 사용자 2026-10-08), 거기서 못 사면(품절·상한 초과) 다음 순위인 得物로
+        # 넘어간다. 어디서든 마진이 남는 가격(max_cny 이내)일 때만 결제한다
+        res = None
+        shop = '得物'
+        failures: list[str] = []
+        if seller_name and ('淘宝' in seller_name or '天猫' in seller_name) and pc_call is not None:
+            pc = _buy_taobao_pc(
+                pc_call,
+                detail,
+                eu=eu,
+                max_cny=max_cny,
+                rate=rate,
+            )
+            if pc is not None and pc[0] == 'done':
+                order_no, charge_cny = pc[1], pc[2]
+                cost = round(charge_cny * rate * HYUNDAI_BILLING_FACTOR)
+                wave.record_sourcing(  # type: ignore[attr-defined]
+                    wave_key,
+                    sourcing_order_number=order_no,
+                    cost=cost,
+                    shipping_fee=CN_SHIPPING_FEE,
+                    sourcing_account_id=wave.only_sourcing_account_id('TAOBAO'),  # type: ignore[attr-defined]
+                    notes=(
+                        f'淘宝 {pc[3]}(식화 화이트리스트) PC 샵백 경유 결제 ¥{charge_cny:g}(상품 ¥{pc[4]:g}+카드수수료 3%)'
+                        f' × {rate:g} × 현대카드 청구할인 {HYUNDAI_BILLING_FACTOR} · 중국 배송비 {CN_SHIPPING_FEE:,} 고정'
+                    ),
                 )
-        except DewuOrderError as e:
-            fail = 'margin' if '마진' in str(e) else ('pay_interrupted' if e.paid else 'unknown')
-            return 'needs_human', fail, str(e)
+                margin = (revenue - cost - CN_SHIPPING_FEE) / revenue * 100
+                return (
+                    'done',
+                    None,
+                    f'淘宝 {order_no} 원가 {cost:,}원 + 배송비 {CN_SHIPPING_FEE:,} · 마진 {margin:.1f}%',
+                )
+            if pc is not None and pc[0] == 'paid?':
+                return 'needs_human', 'pay_interrupted', pc[1]
+            # 淘宝 에서 못 샀다(품절·상한·화면) — 다음 순위 得物 로 넘어간다(마진 상한은 得物 쪽도 그대로)
+            log.info('淘宝 PC 구매 실패 — 다음 순위 得物: %s', pc[1] if pc else '')
+            seller_name = '得物'
+        if seller_name and '唯品会' in seller_name:
+            # 唯品会 최저가 — 임성희폰 唯品会 앱으로 산다(10/6 실기 성공 절차 이식, 사용자 2026-10-08)
+            # 唯品会 앱 상품 화면은 버튼·사이즈가 화면 요소로 읽히지 않는다(실기 2026-10-08 U509BC) — 고정 스크립트 대신
+            # 화면을 이미지로 보는 폰 구매 AI 가 산다. 결제는 pay 도구(결제창 금액·상한 확인)로만 나간다
+            from samba_agent.operator.phone_buyer import PhoneBuyer, PhoneToolbox
+
+            vip_ctx = LINE_BREAK.join(
+                [
+                    '# 唯品会 구매(식화 최저가 판매처가 唯品会)',
+                    f'품번 {model} · EU 사이즈 {eu} · 상품 {getattr(detail, "product_name", "")}',
+                    f'결제 상한(마진 > 0): 상품가 ¥{max_cny:.0f} 이하',
+                    '순서: launch com.achievo.vipshop → 위 검색칸(360,95)에 품번 type_text → 搜索(642,93) → 같은 품번 상품을 연다',
+                    f'→ 검색 결과·상품 화면에서 품번 {model} 이 정확히 같은 상품만 연다. 같은 품번이 없으면 give_up — 비슷한 다른 품번(예 MW880·U509BC)을 사면 안 된다',
+                    '→ 아래쪽 사이즈 줄에서 EU 사이즈를 고른다 → 오른쪽 아래 「特卖价 抢」 → 购物车(장바구니)',
+                    '→ 장바구니에 다른 상품이 있으면 그 상품들의 체크를 모두 끄고 이 상품·이 사이즈 1개만 체크한다(다른 상품을 같이 사면 안 된다)',
+                    f'→ 结算 → 确认订单: 배송지 HUBNET·상품 1개·사이즈와 상품 규격 글자의 품번({model})을 확인한다. 결제 도구에는 model_seen=확인 화면에서 읽은 규격 글자를 넣는다.'
+                    ' 버튼이 「支付宝免密支付」면 화면의 실付 금액으로 pay_free(shop="唯品会", total_cny=실付, x, y) 를 부른다(버튼을 tap 으로 직접 누르지 않는다)',
+                    '  버튼이 일반 支付宝支付 면 눌러 알리페이 결제창이 뜬 뒤 pay(shop="唯品会", price_cny=상품가)',
+                    '→ 알리페이가 현대카드 3D 인증(Cruise API Step Up · V3 백신 설치)에 막히면(pay 가 그렇게 알려 준다) 알리페이를 닫고 '
+                    '결제수단을 微信支付 로 바꿔 결제 버튼을 누르고, 웨이신 결제창이 뜨면 pay_wechat(shop="唯品会", total_cny=실付) — 비밀번호는 사람이 넣는다(사용자 2026-10-09)',
+                    '→ 결제 뒤 查看订单 의 订单编号 로 finish. 식화 앱은 쓰지 않는다(판매처가 이미 唯品会로 정해졌다)',
+                ]
+            )
+            try:
+                with PHONE_BUSY:
+                    tb = PhoneToolbox(
+                        Phone(adb_path, serial),
+                        approve,
+                        max_cny=max_cny,
+                        rate=rate,
+                        notify=_pc_toast,
+                        expected_model=model,
+                    )
+                    vip = (buyer_factory() if buyer_factory else PhoneBuyer()).buy(tb, vip_ctx)
+            except DewuOrderError as e:
+                if e.paid:
+                    return 'needs_human', 'pay_interrupted', f'唯品会: {e}'
+                log.info('唯品会 구매 실패 — 다음 순위 得物: %s', e)
+                seller_name = '得物'
+            else:
+                # 폰 AI 의 paid_cny 는 결제창 주문금액(수수료 전)이다 — 알리페이 국제카드 수수료 3% 를 더해 원가를 낸다.
+                # 웨이신페이는 수수료 면제(Fee Waived, 실기 2026-10-09 A-SW242586471)
+                vip_paid = vip.paid_cny if vip.fee_free else round(vip.paid_cny * 1.03, 2)
+                pay_note = (
+                    f'웨이신페이 결제 ¥{vip_paid:g}(국제카드 수수료 면제)'
+                    if vip.fee_free
+                    else f'결제 ¥{vip_paid:g}(상품 ¥{vip.paid_cny:g}+알리페이 카드수수료 3%)'
+                )
+                cost = round(vip_paid * rate * HYUNDAI_BILLING_FACTOR)
+                wave.record_sourcing(  # type: ignore[attr-defined]
+                    wave_key,
+                    sourcing_order_number=vip.order_no,
+                    cost=cost,
+                    shipping_fee=CN_SHIPPING_FEE,
+                    sourcing_account_id=wave.only_sourcing_account_id('VIPSHOP'),  # type: ignore[attr-defined]
+                    notes=(
+                        f'唯品会 앱(임성희폰, 폰 AI) {pay_note} × {rate:g}'
+                        f' × 현대카드 청구할인 {HYUNDAI_BILLING_FACTOR} · 중국 배송비 {CN_SHIPPING_FEE:,} 고정'
+                    ),
+                )
+                margin = (revenue - cost - CN_SHIPPING_FEE) / revenue * 100
+                return (
+                    'done',
+                    None,
+                    f'唯品会 {vip.order_no} 원가 {cost:,}원 + 배송비 {CN_SHIPPING_FEE:,} · 마진 {margin:.1f}%',
+                )
+        if seller_name and '得物' not in seller_name and not phone_buyer_enabled:
+            # 淘宝는 샵백(PC 브라우저)을 켜고 사야 한다 — 폰 앱 구매는 샵백 적립이 빠진다(사용자 2026-10-08 반복 지적).
+            # PC 샵백 구매 흐름이 생기기 전까지 득물도 열지 않고 사람에게 넘긴다
+            price = float(getattr(detail, 'source_price_cny', 0) or 0)
+            return (
+                'needs_human',
+                'unknown',
+                f'식화 최저가 판매처가 {seller_name}{f" ¥{price:g}" if price else ""} 이다 — 샵백을 켠 PC 구매 흐름이 '
+                '아직 없어 폰 앱·得物으로 사지 않았다. 사람이 샵백 경유로 구매',
+            )
+        if seller_name and '得物' not in seller_name:
+            from samba_agent.operator.phone_buyer import PhoneBuyer, PhoneToolbox
+
+            price_hint = float(getattr(detail, 'source_price_cny', 0) or 0)
+            product_name = getattr(detail, 'product_name', '')
+            seller_line = seller_name + (f' ¥{price_hint:g}' if price_hint else '')
+            ctx = LINE_BREAK.join(
+                [
+                    '# 구매 대상',
+                    f'품번 {model} · EU 사이즈 {eu} · 상품 {product_name}',
+                    f'식화 최저가 판매처: {seller_line}',
+                    f'결제 상한(마진 > 0): 상품가 ¥{max_cny:.0f} 이하 · 환율 {rate:g}',
+                ]
+            )
+            try:
+                with PHONE_BUSY:
+                    tb = PhoneToolbox(
+                        Phone(adb_path, serial),
+                        approve_other or approve,
+                        max_cny=max_cny,
+                        rate=rate,
+                    )
+                    res = (buyer_factory() if buyer_factory else PhoneBuyer()).buy(tb, ctx)
+                shop = f'{seller_name}(식화 링크, 폰 AI)'
+            except DewuOrderError as e:
+                if e.paid:
+                    return 'needs_human', 'pay_interrupted', str(e)
+                failures.append(f'{seller_name}: {e}')
+        if res is None:
+            try:
+                # 폰을 쓰는 주기 작업(롯데ON 선물 송장·得物 송장)과 겹치지 않게 — 겹치면 카카오톡이 앞으로 와 화면을 못 읽는다
+                with PHONE_BUSY:
+                    res = buy_on_dewu(
+                        Phone(adb_path, serial),
+                        model,
+                        eu,
+                        max_cny=max_cny,
+                        approve=approve,
+                        rate=rate,
+                    )
+            except DewuOrderError as e:
+                if e.paid:
+                    return 'needs_human', 'pay_interrupted', str(e)
+                reasons = ' / '.join([*failures, f'得物: {e}'])
+                if e.out_of_stock and not failures:
+                    # 得物 화면에서 확인한 품절 — 재고X·취소중 으로 마감하고 근거를 메모에 남긴다(사용자 2026-10-07)
+                    flagged = ''
+                    try:
+                        from samba_agent.wave.flags import FlagMarker
+
+                        flagged = (
+                            FlagMarker(wave).mark(  # type: ignore[arg-type]
+                                wave_key, 'out_of_stock', f'{e} (임성희폰 得物 앱 직접 확인)'
+                            )
+                            or ''
+                        )
+                    except Exception as exc:  # noqa: BLE001 — 표시 실패가 보고를 막으면 안 된다
+                        flagged = f'재고X 표시 실패: {type(exc).__name__}'
+                    return 'needs_human', 'out_of_stock', f'{e} · {flagged}'.strip(' ·')
+                fail = 'margin' if '마진' in reasons else 'unknown'
+                return 'needs_human', fail, reasons
         note = (
-            f'得物 앱(임성희폰) 결제 ¥{res.paid_cny:g}(상품 ¥{res.item_cny:g}+알리페이 카드수수료) × {res.rate:g}'
+            f'{shop} 앱(임성희폰) 결제 ¥{res.paid_cny:g}(상품 ¥{res.item_cny:g}+알리페이 카드수수료) × {res.rate:g} × 현대카드 청구할인 {HYUNDAI_BILLING_FACTOR}'
             f' · 중국 배송비 {CN_SHIPPING_FEE:,} 고정'
         )
         # 주문계정(得物 계정)을 같이 넣어야 삼바 상태가 배송대기중으로 넘어간다(사용자 2026-10-01: 계정을 안 골라
         # 주문접수로 남았다)
-        account_id = wave.only_sourcing_account_id('DEWU')  # type: ignore[attr-defined]
+        site_key = 'TAOBAO' if '淘宝' in shop else ('VIPSHOP' if '唯品会' in shop else 'DEWU')
+        account_id = wave.only_sourcing_account_id(site_key)  # type: ignore[attr-defined]
         wave.record_sourcing(  # type: ignore[attr-defined]
             wave_key,
             sourcing_order_number=res.order_no,
@@ -508,7 +958,7 @@ def make_shihuo_handler(
         return (
             'done',
             None,
-            f'得物 {res.order_no} 원가 {res.cost_krw:,}원 + 배송비 {CN_SHIPPING_FEE:,} · 마진 {margin:.1f}%',
+            f'{shop} {res.order_no} 원가 {res.cost_krw:,}원 + 배송비 {CN_SHIPPING_FEE:,} · 마진 {margin:.1f}%',
         )
 
     return handle

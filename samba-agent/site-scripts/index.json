@@ -720,6 +720,16 @@
     ]
   },
   {
+    "name": "lotteon_wizard_ship",
+    "host": "lotteon.com",
+    "description": "롯데온 직배 주문서 1단계(/orders/N)에서 받는 곳을 먼저 골라 계속하기로 결제 단계에 들어가 견적 값을 읽는다",
+    "params": [
+      "ship_name",
+      "ship_address",
+      "profile"
+    ]
+  },
+  {
     "name": "musinsa_confirm_shipping",
     "host": "",
     "description": "배송지 팝업 폼 저장 → 배송지 선택 → 주문서 되읽기(무신사)",
@@ -990,6 +1000,14 @@
       "qty — 선택, 기본 1",
       "account — 선택, 쿠폰 키로 쓸 계정 표시 이름",
       "profile — 선택, 계정별 탭 프로필 이름"
+    ]
+  },
+  {
+    "name": "snkrdunk_access_check",
+    "host": "snkrdunk.com",
+    "description": "스니덩 접근 가능 여부 확인(읽기만). 取引中 목록(기본 /orders/trading/)과 홈(/)을 차례로 열어 403 봇차단인지, 로그인 필요인지, 정상 목록인지 판정하고 연 탭은 모두 닫는다. {ok, blocked, needs_login, checked:[{url,title,blocked,sample}], note} 반환. 스니덩 점검 시작 전에 먼저 호출해 blocked 면 전수 확인을 건너뛰고 사용자에게 보고한다.",
+    "params": [
+      "path — 선택, 확인할 경로(기본 /orders/trading/)"
     ]
   },
   {

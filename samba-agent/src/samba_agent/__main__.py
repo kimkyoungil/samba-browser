@@ -51,6 +51,7 @@ from samba_agent.ops.source_audit import (
     SourceAudit,
     SourceDetail,
     parse_detail,
+    personal_source_orders,
     run_js_json,
 )
 from samba_agent.ops.ssg_gift_accept import make_after_done
@@ -134,7 +135,7 @@ def make_export(settings: 'Settings') -> tuple[ExportQueue, ExportFn] | None:
     )
 
 
-def _alipay_approve(bridge: BridgeClient) -> Callable[[int], str]:
+def _alipay_approve(bridge: BridgeClient, merchant: str = '得物') -> Callable[[int], str]:
     """알리페이 결제창 비밀번호 — 앱의 phone_approve_payment(provider='alipay')가 키마스터에서 넣는다."""
 
     def approve(amount_krw: int) -> str:
@@ -143,13 +144,26 @@ def _alipay_approve(bridge: BridgeClient) -> Callable[[int], str]:
                 'phone_approve_payment',
                 provider='alipay',
                 amountKrw=max(int(amount_krw), 1),
-                merchant='得物',
+                merchant=merchant,
                 methodLabel='알리페이',
             ).result
         except BridgeError as e:
             return f'refused: {e}'
 
     return approve
+
+
+def _pc_call(bridge: BridgeClient) -> Callable[[str, dict[str, object]], str]:
+    """淘宝 PC 구매용 브릿지 호출(레인 taobao) — 결과 글자만 돌려준다."""
+    scoped = bridge.scoped(['new_tab', 'run_js', 'fill_secret']).with_lane('taobao')
+
+    def call(tool: str, args: dict[str, object]) -> str:
+        try:
+            return scoped.call(tool, **args).result
+        except BridgeError as e:
+            return f'error: {e}'
+
+    return call
 
 
 def make_cancel_export(
@@ -371,6 +385,40 @@ def main() -> None:
 
     _report, _approval_report = make_reporters(lambda: bot)
 
+    operator_service = None
+    if settings.operator_enabled and app_supports_pay_guard(bridge.scoped(['run_js'])):
+        # AI 대행 — 결제 전에 막힌 작업을 AI 가 읽기 전용으로 보고 retry·cancel·human 을 고른다(사용자 2026-10-08)
+        from samba_agent.operator.agent import OperatorAgent
+        from samba_agent.operator.service import OperatorService
+
+        def _describe(job: Job) -> tuple[str, str]:
+            order = _parse_order(job.order_no, job.options, job.wave_id)
+            option = getattr(order, 'option', '') or ''
+            return order.source, f'{order.source} · {order.sku} · 옵션 {option}'.strip()
+
+        operator_bridge = bridge.scoped(['run_js']).with_lane('operator')
+
+        def _operator_call(tool: str, args: dict[str, object]) -> str:
+            try:
+                return operator_bridge.call(tool, **args).result
+            except BridgeError as e:
+                return f'Error: {e}'
+
+        operator_service = OperatorService(
+            OperatorAgent(model=settings.operator_model, timeout_s=settings.operator_timeout_s),
+            call=_operator_call,
+            queue=queue,
+            flag_order=flagger.mark if flagger is not None else None,
+            report=_report,
+            describe=_describe,
+            events_path=settings.root / 'events.sqlite',
+        )
+        log.info('AI 대행을 켠다 — 결제 전에 막힌 작업의 상황 판단')
+    elif settings.operator_enabled:
+        log.warning(
+            '앱이 결제 버튼 차단(safety no_pay)을 지원하지 않아 AI 대행을 끈다 — 앱 재시작 필요'
+        )
+
     worker = Worker(
         WorkerDeps(
             queue=queue,
@@ -403,11 +451,17 @@ def main() -> None:
             add_memo=wave.add_memo if wave is not None else None,
             # SSG 선물 주문은 결제 뒤 폰 카카오톡에서 선물을 받아야 발송된다(사용자 2026-10-01 하네스 이식)
             after_done=make_after_done(_source_sku_of),
+            operator=operator_service.submit if operator_service is not None else None,
             # 중국 크림(식화) 주문은 폰 得物 앱으로 산다 — 알리페이 비밀번호는 앱 폰 결제 도구가 키마스터에서 넣는다
             phone_sources=(
                 {
                     'SHIHUO': make_shihuo_handler(
-                        wave, _alipay_approve(bridge.scoped(['phone_approve_payment']))
+                        wave,
+                        _alipay_approve(bridge.scoped(['phone_approve_payment'])),
+                        approve_other=_alipay_approve(
+                            bridge.scoped(['phone_approve_payment']), merchant='淘宝'
+                        ),
+                        pc_call=_pc_call(bridge),
                     )
                 }
                 if wave is not None
@@ -558,9 +612,11 @@ def main() -> None:
 
         def _known_numbers() -> set[str] | None:
             try:
-                return wave.sourcing_numbers(14) | {
-                    r.source_order_no for r in crosscheck_ledger.recent(14)
-                }
+                return (
+                    wave.sourcing_numbers(14)
+                    | {r.source_order_no for r in crosscheck_ledger.recent(14)}
+                    | personal_source_orders()
+                )
             except WaveError:
                 return None
 

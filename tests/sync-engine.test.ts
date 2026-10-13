@@ -7,7 +7,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { openDatabase, type Db } from '../src/main/db/client'
 import { VaultService } from '../src/main/vault/service'
 import { SyncOutbox, createOutboxRecorder } from '../src/main/sync/outbox'
-import { SyncEngine, SyncEngineHolder, SYNC_POLL_INTERVAL_MS } from '../src/main/sync/engine'
+import { SyncEngine, SyncEngineHolder, SYNC_POLL_INTERVAL_MS, REALTIME_DEBOUNCE_MS, LIVE_FULL_PULL_INTERVAL_MS, EGRESS_DAILY_BUDGET_BYTES } from '../src/main/sync/engine'
 import type { SettingsAccess } from '../src/main/sync/push'
 import { createFakeBackend, FAKE_USER_ID, type FakeBackend } from './stubs/fake-backend'
 import { SYNC_TABLES, type SyncStatus } from '../src/shared/sync'
@@ -91,24 +91,39 @@ describe('SyncEngine', () => {
     expect(backend.calls.select).toBeGreaterThan(second)
   })
 
-  it('Realtime 구독이 전부 살아 있으면 주기 폴링은 당기지 않고, 끊겼다 다시 붙으면 한 번 당긴다', async () => {
+  it('Realtime 이 살아 있으면 폴링은 30분마다만 전체를 당긴다(전송량 절약 + 놓친 알림 보험)', async () => {
     engine.start()
     await vi.advanceTimersByTimeAsync(0)
     for (const t of SYNC_TABLES) backend.realtime(remoteTableOf(t), true)
-    await vi.advanceTimersByTimeAsync(0)
+    await vi.advanceTimersByTimeAsync(REALTIME_DEBOUNCE_MS)
     const live = backend.calls.select
     await vi.advanceTimersByTimeAsync(SYNC_POLL_INTERVAL_MS * 2)
-    expect(backend.calls.select).toBe(live) // 폴링 두 번 지나도 당기지 않았다
     expect(engine.realtimeLive()).toBe(true)
+    // 5분 폴링 두 번은 당기지 않는다
+    expect(backend.calls.select).toBe(live)
+    // 30분이 지나면 한 번 당긴다 — 놓친 삭제를 폴링이 받는다
+    await vi.advanceTimersByTimeAsync(LIVE_FULL_PULL_INTERVAL_MS)
+    expect(backend.calls.select).toBeGreaterThan(live)
 
+    const before = backend.calls.select
     backend.realtime('accounts_sync', false)
-    await vi.advanceTimersByTimeAsync(SYNC_POLL_INTERVAL_MS)
-    const afterDrop = backend.calls.select
-    expect(afterDrop).toBeGreaterThan(live) // 하나라도 끊기면 폴링이 다시 당긴다
-
+    await vi.advanceTimersByTimeAsync(0)
     backend.realtime('accounts_sync', true)
     await vi.advanceTimersByTimeAsync(0)
-    expect(backend.calls.select).toBeGreaterThan(afterDrop) // 다시 붙는 순간 놓친 것을 한 번 당긴다
+    expect(backend.calls.select).toBeGreaterThan(before) // 끊겼다 다시 붙는 순간에도 한 번 당긴다
+  })
+
+  it('하루 전송량 상한을 넘으면 Realtime 알림으로는 당기지 않는다', async () => {
+    engine.start()
+    await vi.advanceTimersByTimeAsync(0)
+    // 큰 알림 본문이 상한을 넘겼다
+    backend.fire('accounts_sync', EGRESS_DAILY_BUDGET_BYTES + 1)
+    await vi.advanceTimersByTimeAsync(REALTIME_DEBOUNCE_MS)
+    expect(engine.overBudget()).toBe(true)
+    const after = backend.calls.select
+    backend.fire('accounts_sync')
+    await vi.advanceTimersByTimeAsync(REALTIME_DEBOUNCE_MS)
+    expect(backend.calls.select).toBe(after)
   })
 
   it('stop() 뒤에는 더 돌지 않는다', async () => {
@@ -169,15 +184,24 @@ describe('SyncEngine', () => {
     warn.mockRestore()
   })
 
-  it('Realtime 알림이 오면 즉시 한 번 동기화한다', async () => {
+  it('Realtime 알림은 잠깐 모았다가 한 번만 동기화한다(전송량 절약)', async () => {
     engine.start()
     await vi.advanceTimersByTimeAsync(0)
     const before = backend.calls.select
 
     backend.fire('accounts_sync')
+    backend.fire('accounts_sync')
+    backend.fire('accounts_sync')
     await vi.advanceTimersByTimeAsync(0)
+    expect(backend.calls.select).toBe(before)
 
-    expect(backend.calls.select).toBeGreaterThan(before)
+    await vi.advanceTimersByTimeAsync(REALTIME_DEBOUNCE_MS)
+    const once = backend.calls.select
+    expect(once).toBeGreaterThan(before)
+
+    // 세 번 알림이 와도 한 주기만 돈다
+    await vi.advanceTimersByTimeAsync(REALTIME_DEBOUNCE_MS)
+    expect(backend.calls.select).toBe(once)
   })
 
   it('상태가 바뀌면 구독자에게 알린다(비밀값 없음)', async () => {

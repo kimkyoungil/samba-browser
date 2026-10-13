@@ -6,7 +6,13 @@ import pytest
 import respx
 
 from samba_agent.agents.base import AgentFailure
-from samba_agent.agents.buyer import BuyerAgent, shipping_matches, snapshot_args
+from samba_agent.agents.buyer import (
+    OFFICE_SHIPPING,
+    BuyerAgent,
+    road_key,
+    shipping_matches,
+    snapshot_args,
+)
 from samba_agent.agents.contracts import Assignment, OrderRef
 from samba_agent.agents.registry import Registry
 from samba_agent.bridge.client import BridgeClient
@@ -788,6 +794,8 @@ def test_ABC마트는_항상_까대기로_기본_배송지를_유지한다(reg):
     assert applied == {}  # 배송지 스크립트를 부르지 않았다
     assert not wave.called and not fill.called
     assert any(e.detail == '사무실 수령(기본 배송지 유지)' for e in out.evidence)
+    # 까대기는 사무실 도로명이 결제 직전 대조 열쇠다(기본 배송지 유지 경로도 열쇠를 만든다)
+    assert out.payload.get('ship_key') == road_key(OFFICE_SHIPPING['address'])
 
 
 @respx.mock
@@ -1458,6 +1466,7 @@ def test_까대기_사무실_배송지가_목록에_있으면_골라서_쓴다(r
     mock_accounts()
     out = abc(_abc_assignment(reg, spec))
     assert out.status == 'ok', out.reason
+    assert out.payload.get('ship_key') == road_key(OFFICE_SHIPPING['address'])
     assert 'abc_order_prep' in calls
     assert 'abc_select_shipping' in calls and 'abc_set_shipping' not in calls
     assert any('목록의 기존 배송지' in e.detail for e in out.evidence)
@@ -2113,3 +2122,89 @@ def test_한_자리_사이즈는_세_자리_코드_선택지와_맞춘다():
     # 두 자리 이상 사이즈(95·260)나 소수(7.5)는 이 규칙 밖
     assert single_digit_code_options(opts, '블랙 95') == []
     assert single_digit_code_options(opts, '7.5') == []
+
+
+def test_롯데온이_거절한_선물_불가_지역은_기억해_다음부터_직배로_본다(tmp_path, monkeypatch):
+    """실기 2026-10-07 경북 문경시 동로면 — 제주·도서가 아닌 산간 읍면도 '선물 보내기 불가'로 거절된다."""
+    from samba_agent.agents import buyer as b
+
+    monkeypatch.setattr(b, 'GIFT_BLOCKED_FILE', tmp_path / 'gift_blocked_regions.json')
+    addr = '경상북도 문경시 동로면 노은리 155-2 동로초등학교 행정실'
+    assert not b.gift_blocked_address(addr)
+    assert b.region_key(addr) == '문경시 동로면'
+    assert b.learn_gift_blocked(addr) == '문경시 동로면'
+    assert b.gift_blocked_address(addr)
+    assert b.gift_blocked_address('경북 문경시 동로면 노은2길 4')  # 표기가 달라도 같은 지역
+    assert not b.gift_blocked_address('경북 문경시 문경읍 새재로 1')  # 다른 읍면은 그대로
+    assert b.learn_gift_blocked(addr) == '문경시 동로면'  # 두 번 넣어도 한 줄
+    assert len(b._learned_gift_blocked()) == 1
+    assert b.gift_blocked_address('제주특별자치도 제주시 1')  # 기존 규칙도 그대로
+
+
+def test_롯데온_배송_불가_지역은_학습해_다음에_건너뛴다(tmp_path, monkeypatch):
+    """실기 2026-10-07 경북 문경시 동로면 — 받는 곳을 골라도 계속하기가 안 넘어간다(성남 주소로 바꾸면 넘어간다)."""
+    from samba_agent.agents import buyer as b
+
+    monkeypatch.setattr(b, 'UNDELIVERABLE_FILE', tmp_path / 'lotteon_undeliverable_regions.json')
+    addr = '경상북도 문경시 동로면 노은리 155-2 동로초등학교'
+    assert not b.lotteon_undeliverable(addr)
+    assert b.learn_undeliverable(addr) == '문경시 동로면'
+    assert b.lotteon_undeliverable('경북 문경시 동로면 노은2길 4(동로면, 동로초등학교)')
+    assert not b.lotteon_undeliverable('경기 성남시 수정구 성남대로 1254')
+
+
+def test_기존_배송지를_골라_통과해도_결제_직전_주소_대조_열쇠가_만들어진다(reg, monkeypatch):
+    """오배송 구멍(2026-10-08): 기존 항목 선택 경로가 열쇠를 안 만들어 엉뚱한 줄이 골라져도 대조 없이 결제됐다."""
+    a = agent(reg, lambda p, m: m(choice='260', reason='일치'))
+    shipping = {
+        'name': '홍길동',
+        'address': '인천광역시 서구 연희로28번길 9-12',
+        'address_detail': '303호',
+    }
+    monkeypatch.setattr(a, 'order_type_of', lambda order, snap=None: 'gift')
+    monkeypatch.setattr(a, '_fetch_shipping', lambda asg, snap: shipping)
+    monkeypatch.setattr(a, '_select_existing_shipping', lambda ship, account: True)
+    a._ship_key = '지난주문의열쇠99'  # 앞 주문 것이 남아 있어도
+    a._set_shipping(assignment(reg), {}, 'acct')
+    assert a._ship_key == road_key(shipping['address']) and a._ship_key != '지난주문의열쇠99'
+
+
+def test_스케쳐스는_소싱처와_상관없이_까대기로_고정된다(reg):
+    from samba_agent.agents.buyer import is_fixed_kkadaegi
+
+    skx = OrderRef(
+        order_no='S1',
+        source='LOTTEON',
+        seller='쿠팡',
+        sku='매장정품 스케쳐스USA 여성 브리드 이지 슬립인스 SC0WFCFX011 BBK / 240',
+        qty=1,
+    )
+    other = OrderRef(
+        order_no='S2', source='LOTTEON', seller='쿠팡', sku='매장정품 나이키 덩크', qty=1
+    )
+    assert is_fixed_kkadaegi(skx) and not is_fixed_kkadaegi(other)
+    assert is_fixed_kkadaegi(skx.model_copy(update={'sku': 'SKECHERS Go Walk'}))
+    # 일반 소싱처(무신사)에서도 스케쳐스는 정가 비교 없이 까대기
+    a = agent(reg, lambda p, m: m(choice='260', reason='일치'))
+    assert a.order_type_of(skx, {'normal_price': 0}) == 'kkadaegi'
+
+
+def test_나이키_옛_품번은_공백으로_띄어_써도_모델코드로_읽는다():
+    from samba_agent.agents.buyer import model_code_of
+
+    assert (
+        model_code_of('매장정품 나이키 여성 MD 러너 2 749869 018 1000772401752 [240]')
+        == '749869-018'
+    )
+    assert model_code_of('나이키 덩크 로우 HF5441-100') == 'HF5441-100'
+    assert model_code_of('상품 1000772401752') != '1000772401-752'
+
+
+def test_숫자_조각은_숫자_경계로만_맞춘다_EU44_는_44_5_가_아니다():
+    """실기 2026-10-09 롯데온 라코스테: 주문 'EU 화이트-407 EU 44' 에 '290(44.5/UK10)' 을 골랐다."""
+    from samba_agent.agents.buyer import matching_options
+
+    opts = ['250(39.5/UK6) 98,100', '280(43/UK9) 98,100', '290(44.5/UK10) 98,100']
+    assert matching_options(opts, 'EU 화이트-407 EU 44') == []
+    with_44 = opts + ['285(44/UK9.5) 98,100']
+    assert matching_options(with_44, 'EU 화이트-407 EU 44') == ['285(44/UK9.5) 98,100']

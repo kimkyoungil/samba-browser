@@ -1,3 +1,4 @@
+import { loadLocalDevice } from '../schedule/device'
 import { isSupabaseAnonKey, isSupabaseProjectUrl, type AuthState } from '../../shared/sync'
 import type { SyncBackend } from '../sync/backend'
 import {
@@ -263,7 +264,12 @@ export function registerIpc(
     chats.append({ chatId, role: 'assistant', content: entry.text, steps: entry.steps })
   })
   // 자동화 플레이북. 사용자 문장에 트리거가 들어 있으면 러너가 절차를 시스템 프롬프트에 덧붙인다
-  const playbooks = new PlaybookStore(settings)
+  // 이 PC 의 식별자 — 같은 계정의 여러 PC 가 같은 예약을 동시에 돌려 중복 실행하지 않게 실행 주체를 가른다
+  const scheduleDevice = loadLocalDevice(
+    join(app.getPath('userData'), 'device-id.json'),
+    os.hostname()
+  )
+  const playbooks = new PlaybookStore(settings, undefined, undefined, scheduleDevice)
   agent.setPlaybooks(() => playbooks.list())
   // AI 가 배운 절차를 플레이북에 덧붙일 수 있게 한다(저장 전 확인 카드는 도구가 띄운다)
   agent.setPlaybookEditor(playbooks)
@@ -311,6 +317,7 @@ export function registerIpc(
   const scheduler = new PlaybookScheduler({
     playbooks,
     runs: scheduleRuns,
+    device: scheduleDevice,
     isRunning: () => agent.isRunning(),
     aiConnected: () => agentBackend() !== 'none',
     // 렌더러가 이 문구를 평소 채팅과 똑같이 보낸다 — 진행 상황이 AI 패널에 그대로 보인다
@@ -1060,6 +1067,10 @@ export function registerIpc(
     : null
   // 동기화 연결부는 아래에서 만들어진다 — 데이터 백엔드가 바뀌면 여기로 알린다
   let onDataBackend: (backend: SyncBackend | null) => void = () => {}
+  // 계정 ↔ 작업공간 대응(이 PC 파일) — 서버가 정지됐을 때의 로컬 로그인도 이것으로 계정을 안다
+  const accountWorkspaces = new AccountWorkspaceStore(
+    join(app.getPath('userData'), 'account-workspaces.json')
+  )
   const account = new AccountService({
     directory: directoryBackend,
     directoryAuth,
@@ -1073,7 +1084,12 @@ export function registerIpc(
     applyEnv: setSupabaseEnvFromSettings,
     directoryUrl: directoryConfigured ? readDirectoryEnv().url : undefined,
     // 계정 비밀번호가 곧 키마스터 열쇠 — 로그인되면 이 PC 금고를 그 비밀번호에 맞춘다
-    vault: { adoptAccountPassword: (password) => vault.adoptAccountPassword(password) }
+    vault: { adoptAccountPassword: (password) => vault.adoptAccountPassword(password) },
+    offline: {
+      userId: () => accountWorkspaces.onlyUserId(),
+      email: () => undefined,
+      verifyPassword: (password) => vault.verifyMaster(password)
+    }
   })
   // 렌더러에는 데이터 인증 상태 + 디렉터리 상태를 한 덩어리로 보낸다(토큰·비밀번호 없음)
   // 계정 로그인 전(게이트)에는 이 PC 에 남은 데이터 세션의 이메일을 화면에 내보내지 않는다 —
@@ -1108,6 +1124,9 @@ export function registerIpc(
   )
   handleFromRenderer(IPC.authSignIn, (email: string, password: string) =>
     logged('로그인', () => account.signIn(email, password))
+  )
+  handleFromRenderer(IPC.authSignInOffline, (password: string) =>
+    logged('로컬 로그인', () => account.offlineSignIn(password))
   )
   // 브라우저에서 구글 로그인을 마칠 때까지(최대 5분) 응답이 늦게 온다
   handleFromRenderer(IPC.authSignInGoogle, () =>
@@ -1152,9 +1171,6 @@ export function registerIpc(
   workspace.onChanged(() => applyWorkspace(true))
   // 계정별 로컬 공간: 계정이 로그인하면 그 계정의 작업공간으로 전환한다(첫 계정은 기존 공간을 물려받는다).
   // 로그인 전에는 탭 뷰를 숨겨 로그인 화면만 보인다(북마크·대화는 렌더러 게이트가 가린다)
-  const accountWorkspaces = new AccountWorkspaceStore(
-    join(app.getPath('userData'), 'account-workspaces.json')
-  )
   const applyAccountGate = (state: {
     configured: boolean
     signedIn: boolean

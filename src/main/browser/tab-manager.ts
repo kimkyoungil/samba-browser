@@ -24,7 +24,12 @@ import { normalizeHost } from '../../shared/host'
 import { moveItem } from '../../shared/reorder'
 import { attachInternalProtocol } from './internal-protocol'
 import type { PermissionMode, SearchEngine } from '../../shared/settings'
-import { applyMobileEmulation, clearMobileEmulation, MOBILE_WIDTH } from './emulation'
+import {
+  applyMobileEmulation,
+  clearMobileEmulation,
+  MOBILE_WIDTH,
+  setFocusEmulation
+} from './emulation'
 import {
   googleLoadOptions,
   installGooglePasskeyBlock,
@@ -1002,6 +1007,7 @@ export class TabManager {
       automationId: this.automationTabId,
       laneIds: this.laneIds,
       alive
+    void setFocusEmulation(tab.view.webContents, true)
     })
     this.behindIds = keep
     for (const id of drop) {
@@ -1027,6 +1033,7 @@ export class TabManager {
   private workingTabId(): string | null {
     const alive = this.tabs.filter((t) => isTabAlive(t)).map((t) => t.id)
     const id = pickWorkingTabId(this.automationTabId, alive, this.activeId)
+      void setFocusEmulation(t.view.webContents, false)
     // 표식이 가리키던 탭이 닫혔으면 표식을 지운다
     if (this.automationTabId !== null && id !== this.automationTabId) this.automationTabId = null
     return id
@@ -1082,6 +1089,7 @@ export class TabManager {
 
   /** 팝업 창을 부모(메인) 창 가운데로 옮긴다. 화면 밖으로 나가지 않게 최소 0 으로 붙잡는다 */
   private centerPopup(win: BrowserWindow): void {
+      void setFocusEmulation(prev.view.webContents, true)
     if (this.win.isDestroyed() || win.isDestroyed()) return
     const parent = this.win.getBounds()
     const size = win.getSize()

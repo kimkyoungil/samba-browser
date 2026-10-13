@@ -51,6 +51,16 @@ export function ensureDebuggerAttached(wc: WebContents): boolean {
   return attach(wc)
 }
 
+/**
+ * 뒤에서 도는 자동화 탭이 '포커스된 보이는 화면'이라고 믿게 한다(CDP Emulation.setFocusEmulationEnabled).
+ * 가려진 뷰는 visibilityState 가 hidden 이라 인스타 릴스 격자 같은 지연 렌더링 영역이 그려지지 않아
+ * 영상 목록이 0개로 읽혔다(실기 2026-10-13). 사람 화면은 바뀌지 않는다
+ */
+export async function setFocusEmulation(wc: WebContents, enabled: boolean): Promise<void> {
+  if (enabled && !attach(wc)) return
+  await send(wc, 'Emulation.setFocusEmulationEnabled', { enabled })
+}
+
 function attach(wc: WebContents): boolean {
   try {
     if (!isUsable(wc)) return false

@@ -27,7 +27,7 @@ export function electronUserAgent(chromeUa: string, electronVersion: string): st
 }
 
 /**
- * wc 가 구글 로그인 호스트로 이동하면(요청이 나가기 전: will-navigate·will-redirect) Electron 표기 UA 를 걸고,
+ * wc 가 구글 로그인 호스트로 이동하면(요청이 나가기 전: will-navigate) Electron 표기 UA 를 걸고,
  * 벗어나면 원래 UA 로 되돌린다. eager 면(구글 로그인 주소로 열린 팝업) 바로 건다.
  * 항해가 시작된 뒤(did-start-navigation) 에 UA 를 바꾸면 그 항해가 취소(ERR_ABORTED)되므로 쓰지 않는다.
  * 코드로 여는 첫 항해(loadURL)는 이 이벤트가 안 나므로 googleLoadOptions 로 따로 UA 를 준다.
@@ -51,8 +51,9 @@ export function installGoogleSigninUserAgent(
     }
   }
   if (opts.eager === true) apply(true)
+  // will-redirect 에서는 UA 를 바꾸지 않는다 — 리다이렉트는 요청이 이미 나간 뒤라 바꾸면 그 항해가 취소된다
+  // (실기 2026-10-13: 계정 선택 주소 /AccountChooser 가 v3 주소로 넘어가다 ERR_ABORTED 로 끊겼다)
   wc.on('will-navigate', (event) => apply(isGoogleSigninUrl(event.url)))
-  wc.on('will-redirect', (event) => apply(isGoogleSigninUrl(event.url)))
 }
 
 /** loadURL 에 줄 옵션 — 구글 로그인 주소면 Electron 표기 UA 를, 아니면 undefined */

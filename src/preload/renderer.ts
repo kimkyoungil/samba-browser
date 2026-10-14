@@ -160,6 +160,11 @@ const api = {
     /** 탭을 toIndex 자리로 옮긴다(탭 바 끌어 옮기기) */
     move: (id: string, toIndex: number): Promise<IpcResult<void>> =>
       invoke(IPC.tabMove, id, toIndex),
+    /** 탭 바 밖으로 끌어낸 탭을 새 창으로 뗀다. 뗐으면 true(마지막 탭·자동화 탭은 false) */
+    detach: (id: string): Promise<IpcResult<boolean>> => invoke(IPC.tabDetach, id),
+    /** 다른 창의 탭을 이 창의 탭 바 toIndex 자리로 옮긴다 */
+    adopt: (id: string, toIndex?: number): Promise<IpcResult<boolean>> =>
+      invoke(IPC.tabAdopt, id, toIndex),
     /** 이 작업공간에서 쓴 프로필(계정별 세션) 이름 목록 — 기본 프로필은 빠져 있다 */
     profiles: (): Promise<IpcResult<string[]>> => invoke(IPC.profileList),
     onUpdated: (cb: (tabs: TabInfo[]) => void): (() => void) => {
@@ -170,6 +175,10 @@ const api = {
   },
   layout: {
     set: (l: Layout): Promise<IpcResult<void>> => invoke(IPC.layoutSet, l)
+  },
+  windows: {
+    /** 같은 계정·같은 데이터로 새 창(크롬의 '새 창') */
+    create: (): Promise<IpcResult<void>> => invoke(IPC.windowNew)
   },
   agent: {
     // 반환은 "시작 접수" ack 뿐. 완료·실패는 onEvent 의 status 이벤트로 온다

@@ -11,21 +11,35 @@ export interface RendererWindowLike {
   webContents: { id: number; isDestroyed: () => boolean }
 }
 
+/** 렌더러 창 여러 개(다중 창). 지금 살아 있는 창 목록을 돌려주면 된다 */
+export interface RendererWindowSet {
+  windows: () => RendererWindowLike[]
+}
+
+/** 창 하나 또는 창 묶음 — 둘 다 받는다(단일 창 호출부와 다중 창 호출부가 같은 함수를 쓴다) */
+export type RendererScope = RendererWindowLike | RendererWindowSet
+
 /** WebContents 중 식별에 필요한 부분만 좁힌 인터페이스 */
 export interface SenderLike {
   id: number
 }
 
-/** 이 요청이 렌더러 창의 webContents 에서 왔는가 */
-export function isFromRenderer(win: RendererWindowLike, sender: SenderLike | null): boolean {
+function windowsOf(scope: RendererScope): RendererWindowLike[] {
+  return 'windows' in scope ? scope.windows() : [scope]
+}
+
+/** 이 요청이 렌더러 창(여럿이면 그중 하나)의 webContents 에서 왔는가 */
+export function isFromRenderer(scope: RendererScope, sender: SenderLike | null): boolean {
   if (!sender) return false
-  if (win.isDestroyed() || win.webContents.isDestroyed()) return false
-  return sender.id === win.webContents.id
+  return windowsOf(scope).some(
+    (win) =>
+      !win.isDestroyed() && !win.webContents.isDestroyed() && sender.id === win.webContents.id
+  )
 }
 
 /** 렌더러 전용 채널에서 발신자를 강제한다. 아니면 던진다({ok:false,error}로 응답됨) */
-export function assertFromRenderer(win: RendererWindowLike, sender: SenderLike | null): void {
-  if (!isFromRenderer(win, sender)) throw new Error('forbidden: renderer-only channel')
+export function assertFromRenderer(scope: RendererScope, sender: SenderLike | null): void {
+  if (!isFromRenderer(scope, sender)) throw new Error('forbidden: renderer-only channel')
 }
 
 /**
@@ -36,8 +50,8 @@ export function assertFromRenderer(win: RendererWindowLike, sender: SenderLike |
  */
 export function settingsForSender<S extends { language: unknown }>(
   full: S,
-  win: RendererWindowLike,
+  scope: RendererScope,
   sender: SenderLike | null
 ): S | { language: S['language'] } {
-  return isFromRenderer(win, sender) ? full : { language: full.language }
+  return isFromRenderer(scope, sender) ? full : { language: full.language }
 }

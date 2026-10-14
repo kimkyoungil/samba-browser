@@ -14,8 +14,11 @@ import time
 from collections.abc import Callable
 
 from samba_agent.ops.ssg_gift_accept import (
+    ACCEPT,
     CHANNEL,
+    CHECK_BTN,
     DONE,
+    DOOR,
     GO_LABELS,
     KAKAO,
     SSG_APP,
@@ -23,21 +26,37 @@ from samba_agent.ops.ssg_gift_accept import (
     Node,
     Phone,
     _close_browser,
+    LATER,
+    CONSENT,
     find_text,
     has_text,
+    same_product,
     wait_foreground,
 )
 
 # 720×1600 기준 좌표
 SEARCH_ICON = (588, 104)
-CHECK_BTN_XY = (360, 1460)  # '옵션/배송지 확인'(웹뷰 맨 아래 고정 버튼)
-DOOR_XY = (200, 875)  # '부재 시 문앞에 놓아주세요'(폼을 끝까지 내렸을 때)
+CHAT_TAB_XY = (220, 1435)
+GLOBAL_SEARCH_XY = (512, 104)
+GLOBAL_SEARCH_INPUT_XY = (160, 105)
+SSG_SEARCH_WORD = 'SSG'
+DOOR_XY = (55, 1060)  # '부재 시 문앞에 놓아주세요'
 ACCEPT_XY = (360, 1375)  # '선물 받기'
 LATER_XY = (200, 1092)  # 리뷰 팝업 '다음에 할게요!'
 MAX_PAGES = 10
+BUBBLE_BUTTON_GAP_Y = 310
+
+
+class UserPhoneScreenInUse(OSError):
+    """사용자 화면 보호 중단은 검색 실패의 옛 수락 경로로 재시도하지 않는다."""
 
 _RECIPIENT_RE = re.compile(r'(\S+?)님에게')
 _NOTICE_TITLE = '보내신 선물을 확인해'
+_ARRIVAL_TITLE = '도착했어요'
+_DETAIL_LABEL = '선물 자세히 보기'
+_GENERIC_PRODUCT_WORDS = frozenset(
+    {'매장정품', '정품', '남성', '여성', '공용', '아동', '키즈', '신발', '의류', '선물'}
+)
 
 
 def order_code_of(order_no: str) -> str:
@@ -52,16 +71,79 @@ def recipient_of(text: str) -> str | None:
     return m.group(1) if m else None
 
 
+def product_words_of(text: str) -> set[str]:
+    """카톡 알림 상품명에서 비교에 쓸 낱말을 뽑는다."""
+    m = re.search(r'상품명\s*[:：]\s*([^\n]+)', text or '')
+    if not m:
+        return set()
+    return {
+        w
+        for w in re.split(r'[^0-9A-Za-z가-힣]+', m.group(1))
+        if len(w) >= 2 and w not in _GENERIC_PRODUCT_WORDS
+    }
+
+
+def same_bubble_button(nodes: list[Node], target: Node, labels: tuple[str, ...]) -> Node | None:
+    """대상 알림 바로 아래 같은 말풍선 버튼만 고른다. 멀리 떨어진 다른 주문 버튼은 누르지 않는다."""
+    buttons = [
+        n
+        for n in nodes
+        if n.text in labels
+        and 0 < n.y - target.y <= BUBBLE_BUTTON_GAP_Y
+        and abs(n.x - target.x) <= 180
+    ]
+    return min(buttons, key=lambda n: n.y) if buttons else None
+
+
+def room_node(nodes: list[Node]) -> Node | None:
+    """카카오 검색 결과의 SSG닷컴 방. 행 전체 글자에 대화 미리보기가 붙어도 잡는다."""
+    exact = find_text(nodes, CHANNEL)
+    if exact is not None:
+        return exact
+    return next((n for n in nodes if CHANNEL in n.text and n.y > 200), None)
+
+
+def in_ssg_room(nodes: list[Node]) -> bool:
+    return any(n.text == '알림톡 차단' for n in nodes) and any(
+        n.text == CHANNEL
+        or (n.desc == CHANNEL and n.rid.endswith(':id/toolbar_default_title_text'))
+        for n in nodes
+    )
+
+
+def matching_notice(nodes: list[Node], who: str, words: set[str]) -> Node | None:
+    notices = [
+        n
+        for n in nodes
+        if (_NOTICE_TITLE in n.text or _ARRIVAL_TITLE in n.text)
+        and f'{who}님에게' in n.text
+        and _DETAIL_LABEL not in n.text
+    ]
+    if not words:
+        return notices[0] if notices else None
+    for n in notices:
+        if product_words_of(n.text) & words:
+            return n
+    return None
+
+
 def accept_ssg_gift_by_search(
     phone: Phone,
     order_no: str,
     *,
+    sku: str = '',
+    model_code: str = '',
     sleep: Callable[[float], None] = time.sleep,
 ) -> str:
     """주문번호로 SSG 선물 수락 알림을 찾아 받는다. 성공하면 결과 한 줄, 실패하면 GiftAcceptError."""
     code = order_code_of(order_no)
     if not code:
         raise GiftAcceptError('SSG 주문번호를 몰라 카카오톡에서 검색할 수 없다')
+    foreground = phone.top_package()
+    if 'alipay' in foreground.lower():
+        raise UserPhoneScreenInUse('알리페이 복구 화면 사용 중 — 폰 조작 중단')
+    if foreground not in (KAKAO, SSG_APP, 'com.sec.android.app.launcher', 'com.android.launcher', 'com.android.launcher3', 'launcher'):
+        raise UserPhoneScreenInUse('사용자 폰 화면 사용 중 — 선물 수락 조작 중단')
 
     def wait_for(
         check: Callable[[list[Node]], bool], seconds: float, step: float = 1.5
@@ -76,21 +158,58 @@ def accept_ssg_gift_by_search(
     def has_any_text(ns: list[Node]) -> bool:
         return any(n.text for n in ns)
 
-    def in_ssg_room(ns: list[Node]) -> bool:
-        # 방 안은 위 막대의 '알림톡 차단'이 있고 말풍선 보낸 이 이름이 'SSG닷컴'이다(방 제목은 덤프에 안 나온다, 실기 2026-10-06)
-        return any(n.text == '알림톡 차단' for n in ns) and any(n.text == CHANNEL for n in ns)
+    def require_kakao() -> None:
+        if phone.top_package() != KAKAO:
+            raise GiftAcceptError('폰이 다른 앱으로 전환됨 — 추가 조작 중단')
+
+    def find_part(ns: list[Node], part: str) -> Node | None:
+        return next((n for n in ns if part in n.text), None)
+
+    def open_ssg_room_from_chat_list() -> list[Node]:
+        # 카카오가 친구 탭에서 뜨면 SSG 방을 못 찾는다. 채팅 탭에서 보이는 방을 먼저 누르고,
+        # 안 보이면 카카오 검색에 SSG 를 입력해 SSG닷컴 방을 연다.
+        require_kakao()
+        phone.tap(*CHAT_TAB_XY)
+        sleep(1.5)
+        ns = wait_for(has_any_text, 8)
+        room = room_node(ns)
+        if room is not None and room.y > 200:
+            phone.tap(room.x, room.y)
+            sleep(2.5)
+            return wait_for(has_any_text, 8)
+        require_kakao()
+        phone.tap(*GLOBAL_SEARCH_XY)
+        sleep(1)
+        phone.tap(*GLOBAL_SEARCH_INPUT_XY)
+        sleep(0.3)
+        phone.input_text(SSG_SEARCH_WORD)
+        sleep(2)
+        ns = wait_for(lambda ns: room_node(ns) is not None, 12)
+        room = room_node(ns)
+        if room is not None:
+            phone.tap(room.x, room.y)
+            sleep(2.5)
+        return wait_for(has_any_text, 8)
 
     # 1) 카카오톡 → SSG닷컴 방(다른 방·검색창이 열려 있으면 뒤로 나온다). 앞에 SSG 앱·토스 같은 다른 앱이 있으면
     # 카카오톡이 앞으로 안 올 수 있어 홈으로 나간 뒤 연다(실기 2026-10-06)
     phone.key('3')  # HOME
     sleep(1)
-    phone.launch(KAKAO)
-    wait_foreground(phone, KAKAO, 25, sleep)
+    phone.wake()
+    phone._run('shell', 'am', 'start', '-n', KAKAO + '/.activity.SplashActivity')
+    if not wait_foreground(phone, KAKAO, 25, sleep):
+        phone.launch(KAKAO)
+        if not wait_foreground(phone, KAKAO, 25, sleep):
+            _leave(phone, sleep)
+            raise GiftAcceptError('카카오톡을 앞으로 열지 못했다 — 다른 앱에서 수락하지 않음')
     nodes = wait_for(has_any_text, 25)
+    if not in_ssg_room(nodes):
+        nodes = open_ssg_room_from_chat_list()
     for _ in range(5):
         if in_ssg_room(nodes):
             break
-        room = find_text(nodes, CHANNEL)
+        require_kakao()
+        room = room_node(nodes)
         if room is not None and room.y > 200:
             phone.tap(room.x, room.y)
             sleep(3)
@@ -102,6 +221,7 @@ def accept_ssg_gift_by_search(
         raise GiftAcceptError('카카오톡에서 SSG닷컴 방을 열지 못했다')
 
     # 2) 방 안 검색 — 주문번호가 들어 있는 '전달해드릴게요' 알림으로 간다
+    require_kakao()
     phone.tap(*SEARCH_ICON)
     sleep(1.5)
     phone.input_text(code)
@@ -123,50 +243,97 @@ def accept_ssg_gift_by_search(
     if not who:
         _leave(phone, sleep)
         raise GiftAcceptError('알림에서 받는 분을 읽지 못했다')
+    product_words = product_words_of(hit.text)
 
     # 3) 더 최근 알림에서 그 받는 분의 수락 알림('선물 받으러 가기')을 찾는다 — 아래(최근) 쪽으로 넘기며 본다
     button: Node | None = None
     for _ in range(MAX_PAGES):
         screen = phone.nodes()
-        target = next(
-            (n for n in screen if _NOTICE_TITLE in n.text and f'{who}님에게' in n.text), None
-        )
+        target = matching_notice(screen, who, product_words)
         if target is not None:
-            below = [b for b in screen if b.text in GO_LABELS and b.y > target.y]
-            if below:
-                button = min(below, key=lambda b: b.y)
+            button = same_bubble_button(screen, target, GO_LABELS)
+            if button is not None:
                 break
         phone.swipe_up()
         sleep(1.2)
     if button is None:
+        detail = same_bubble_button(phone.nodes(), hit, (_DETAIL_LABEL,))
         _leave(phone, sleep)
+        if detail is not None:
+            raise GiftAcceptError('받는 사람 수락 알림 없음 — 현재 보이는 건 보낸 사람 주문상세 버튼뿐이다')
         raise GiftAcceptError('이 받는 분의 수락 알림(선물 받으러 가기)을 못 찾았다')
 
     # 4) 수락 화면 — 웹뷰 버튼은 좌표로 누른다
+    require_kakao()
     phone.tap(button.x, button.y)
     sleep(4)
-    if phone.top_package() == SSG_APP:
-        # '선물 확인하기'류는 SSG 앱으로 열린다 — 이 화면은 좌표로 받지 않고 사람에게 넘긴다(받았다고 하지 않는다)
-        phone.key('3')
-        raise GiftAcceptError(
-            '수락 알림이 SSG 앱으로 열렸다 — 이미 받았거나 앱 화면이라 사람이 확인'
-        )
-    nodes = wait_for(lambda ns: any('선물 받기' in n.text or '배송정보' in n.text for n in ns), 40)
+    nodes = wait_for(
+        lambda ns: any(
+            '선물 받기' in n.text or '배송정보' in n.text or n.text.strip() == LATER for n in ns
+        ),
+        40,
+    )
+    # '선물 받기 완료' 화면 위에 "SSG닷컴의 선물도 받아보세요 … 다음에 할게요! / 선물함 담기" 안내가 덮여
+    # 완료 글자가 안 읽힌다 — 안내를 닫고 다시 읽는다(실기 2026-10-14 E746D6: 이미 받은 선물을 '버튼 없음'으로 오판)
+    later = next((n for n in nodes if n.text.strip() == LATER and n.y > 0), None)
+    if later is not None:
+        phone.tap(later.x, later.y)
+        sleep(2)
+        nodes = phone.nodes()
+    if sku and not same_product(model_code, sku, [n.text for n in nodes]):
+        _close_browser(phone, sleep)
+        raise GiftAcceptError('열린 선물 화면의 상품이 이 주문 상품과 다르다 — 수락 중단')
     if has_text(nodes, DONE):
         _close_browser(phone, sleep)
-        return '이미 받은 선물(완료 화면) — 브라우저 닫음'
+        return '이미 받은 선물(상품 대조·완료 화면) — 브라우저 닫음'
     sleep(3)
-    phone.tap(*CHECK_BTN_XY)
-    nodes = wait_for(lambda ns: any('배송정보' in n.text for n in ns), 25)
-    if not any('배송정보' in n.text for n in nodes):
+    # 버튼 글자 뒤에 기한 안내가 붙고('옵션/배송지 확인 10/18(일) 23:59까지 …') 화면이 늦게 그려진다 —
+    # 다시 읽으며 기다리고, 화면 아래라 좌표가 0 이면 올려서 찾는다(실기 2026-10-14: 3일째 미수락 F3E61B)
+    check = None
+    for _ in range(5):
+        nodes = phone.nodes()
+        check = next((n for n in nodes if CHECK_BTN in n.text and n.y > 0), None)
+        if check is not None:
+            break
+        if any(CHECK_BTN in n.text for n in nodes):
+            phone.swipe_up()
+        sleep(2)
+    if check is None:
+        raise GiftAcceptError('"옵션/배송지 확인" 버튼 미확인 — 배송지와 수락 버튼을 임의로 누르지 않음')
+    phone.tap(check.x, check.y)
+    # 배송지가 저장된 받는 분은 '배송정보 입력' 제목 없이 '선물을 쓱-배송해 드릴게요 … 배송지 : 우리집' 화면이 뜬다
+    # (실기 2026-10-14: 000D89·0A6DEC 가 이 화면에서 멈춤) — 선물 받기 버튼이 있는 화면이면 같은 단계로 본다
+    on_form = lambda ns: any(
+        '배송정보' in n.text or '선물을 쓱-배송해' in n.text or n.text.strip() == ACCEPT for n in ns
+    )
+    nodes = wait_for(on_form, 25)
+    if not on_form(nodes):
         _close_browser(phone, sleep)
         raise GiftAcceptError('옵션/배송지 확인 뒤 배송정보 입력 화면이 안 떴다')
     sleep(2)
-    phone.swipe_up()
+    # 문앞 배송·개인정보 동의·'선물 받기' 는 화면 아래에 있어 좌표가 0 으로 읽힌다 — 보일 때까지 올린다
+    visible = lambda ns, part: next((n for n in ns if part in n.text and n.y > 0), None)
+    for _ in range(4):
+        nodes = phone.nodes()
+        if visible(nodes, DOOR) is not None and visible(nodes, ACCEPT) is not None:
+            break
+        phone.swipe_up()
+        sleep(1.5)
+    nodes = phone.nodes()
+    door = visible(nodes, DOOR)
+    if door is not None:
+        phone.tap(door.x, door.y)
+    else:
+        phone.tap(*DOOR_XY)
     sleep(1.5)
-    phone.tap(*DOOR_XY)
-    sleep(1.2)
-    phone.tap(*ACCEPT_XY)
+    # 개인정보 수집 동의가 안 찍혀 있으면 '선물 받기' 를 눌러도 완료 화면이 안 뜬다(실기 2026-10-14)
+    consent = visible(phone.nodes(), CONSENT)
+    if consent is not None:
+        phone.tap(consent.x, consent.y)
+        sleep(1.2)
+    nodes = phone.nodes()
+    accept = next((n for n in nodes if n.text.strip() == ACCEPT and n.y > 0), None) or visible(nodes, ACCEPT)
+    phone.tap(accept.x, accept.y) if accept else phone.tap(*ACCEPT_XY)
     nodes = wait_for(lambda ns: has_text(ns, DONE), 25)
     if not has_text(nodes, DONE):
         _close_browser(phone, sleep)

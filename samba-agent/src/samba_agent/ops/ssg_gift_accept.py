@@ -27,8 +27,6 @@ DEFAULT_ADB = os.path.expanduser(r'~\Downloads\pt\platform-tools\adb.exe')
 DEFAULT_PHONE = 'R5CR30LFATY'
 KAKAO = 'com.kakao.talk'
 # 폰을 쓰는 모든 작업(得物 구매·송장, 롯데ON 선물 송장, SSG 선물 수락)이 서로 겹치지 않게 잡는 자물쇠 — 아래 PhoneLock
-# 사람이(또는 다른 세션이) 폰을 직접 만지는 동안 samba-agent 폴더에 만들어 두는 파일 — 있으면 주기 작업이 폰에 손대지 않는다
-PHONE_HOLD_FILE = 'PHONE_HOLD'
 _AGENT_ROOT = os.path.dirname(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 )
@@ -106,17 +104,13 @@ class PhoneLock:
 PHONE_BUSY = PhoneLock(os.path.join(_AGENT_ROOT, 'phone.lock'))
 
 
-def phone_on_hold() -> bool:
-    """PHONE_HOLD 파일이 있으면 True(2026-10-03: 得物 송장 루프가 앱 결제 중인 폰을 가로채 결제가 끊겼다)."""
-    return os.path.exists(os.path.join(_AGENT_ROOT, PHONE_HOLD_FILE))
-
-
 CHANNEL = 'SSG닷컴'
 GO_GIFT = '선물 받으러 가기'
 CHECK_BTN = '옵션/배송지 확인'
 DOOR = '부재 시 문앞에 놓아주세요'
 ACCEPT = '선물 받기'
 DONE = '선물 받기 완료'
+CONSENT = '배송에 필요한 개인정보수집에 모두 동의'
 LATER = '다음에 할게요!'
 CLOSE_ID = 'com.kakao.talk:id/webview_navi_close_button'
 # 알림톡 버튼 글자는 주문 방식에 따라 다르다 — 배송지를 대신 넣은 주문은 '선물 확인하기'로 온다(실기 2026-10-02)
@@ -598,13 +592,21 @@ def make_after_done(
         # 득물 구매·롯데ON 선물 송장과 폰 화면을 두고 부딪치지 않게 자물쇠를 잡고 한다
         with PHONE_BUSY:
             try:
+                foreground = phone.top_package()
+                if foreground not in (KAKAO, SSG_APP, 'com.sec.android.app.launcher', 'com.android.launcher', 'com.android.launcher3', 'launcher'):
+                    return 'SSG 선물 수락 실패 — 사용자 폰 화면 사용 중, 폰 조작하지 않음'
                 # 주문번호로 카톡 검색해 받는다(스크롤 탐색은 알림이 쌓이면 못 찾는다) — 번호를 모르거나 실패하면 옛 방식으로
                 order_no = source_order_no_of(out)
                 if order_no:
                     from samba_agent.ops.ssg_gift_search import accept_ssg_gift_by_search
 
                     try:
-                        return 'SSG ' + accept_ssg_gift_by_search(phone, order_no)
+                        return 'SSG ' + accept_ssg_gift_by_search(
+                            phone,
+                            order_no,
+                            sku=sku,
+                            model_code=model_code_of(sku) or '',
+                        )
                     except GiftAcceptError as e:
                         log.warning('선물 수락(카톡 검색) 실패 — 옛 방식으로 다시: %s', e)
                 return 'SSG ' + accept_ssg_gift(phone, model_code_of(sku) or '', sku=sku)

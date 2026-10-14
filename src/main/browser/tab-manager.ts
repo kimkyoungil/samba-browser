@@ -985,6 +985,8 @@ export class TabManager {
     this.win.contentView.addChildView(tab.view, 0)
     // 보이는 탭에 가려진 뷰도 타이머·requestAnimationFrame 이 늦춰지지 않게 한다(가려짐 판정 스로틀링 방지)
     tab.view.webContents.setBackgroundThrottling(false)
+    // 가려진 뷰도 '포커스된 보이는 화면'으로 믿게 해 지연 렌더링 영역(인스타 릴스 격자)이 그려지게 한다
+    void setFocusEmulation(tab.view.webContents, true)
   }
 
   /** 뒤 탭 크기 — 보이는 탭과 같다. 로그인 게이트 중이면 0(게이트 화면 위로 비치지 않게) */
@@ -1007,7 +1009,6 @@ export class TabManager {
       automationId: this.automationTabId,
       laneIds: this.laneIds,
       alive
-    void setFocusEmulation(tab.view.webContents, true)
     })
     this.behindIds = keep
     for (const id of drop) {
@@ -1015,6 +1016,7 @@ export class TabManager {
       if (!t || !isTabAlive(t)) continue
       if (id !== this.activeId) this.win.contentView.removeChildView(t.view)
       t.view.webContents.setBackgroundThrottling(true)
+      void setFocusEmulation(t.view.webContents, false)
     }
   }
 
@@ -1033,7 +1035,6 @@ export class TabManager {
   private workingTabId(): string | null {
     const alive = this.tabs.filter((t) => isTabAlive(t)).map((t) => t.id)
     const id = pickWorkingTabId(this.automationTabId, alive, this.activeId)
-      void setFocusEmulation(t.view.webContents, false)
     // 표식이 가리키던 탭이 닫혔으면 표식을 지운다
     if (this.automationTabId !== null && id !== this.automationTabId) this.automationTabId = null
     return id
@@ -1071,6 +1072,7 @@ export class TabManager {
     ) {
       this.behindIds.push(prev.id)
       prev.view.webContents.setBackgroundThrottling(false)
+      void setFocusEmulation(prev.view.webContents, true)
     }
     this.activeId = id
     // 보이는 탭이 된 뒤 탭은 뒤 목록에서 빠지며 스로틀링이 원래대로(true) 돌아온다
@@ -1089,7 +1091,6 @@ export class TabManager {
 
   /** 팝업 창을 부모(메인) 창 가운데로 옮긴다. 화면 밖으로 나가지 않게 최소 0 으로 붙잡는다 */
   private centerPopup(win: BrowserWindow): void {
-      void setFocusEmulation(prev.view.webContents, true)
     if (this.win.isDestroyed() || win.isDestroyed()) return
     const parent = this.win.getBounds()
     const size = win.getSize()

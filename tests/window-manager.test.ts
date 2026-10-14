@@ -3,7 +3,11 @@ import { describe, expect, it, vi } from 'vitest'
 import { EventEmitter } from 'node:events'
 import type { BrowserWindow } from 'electron'
 import type { ExportedTab, TabManager } from '../src/main/browser/tab-manager'
-import { CASCADE_OFFSET, WindowManager } from '../src/main/browser/window-manager'
+import {
+  CASCADE_OFFSET,
+  WindowManager,
+  isNewWindowShortcut
+} from '../src/main/browser/window-manager'
 
 /** 가짜 창 — 이벤트·파괴·포커스·webContents.id 만 흉내 낸다 */
 class FakeWindow extends EventEmitter {
@@ -70,7 +74,10 @@ class FakeTabs {
       dialogMessage: null
     }
   }
-  adoptTab = (exported: ExportedTab, opts: { index?: number; background?: boolean } = {}): object => {
+  adoptTab = (
+    exported: ExportedTab,
+    opts: { index?: number; background?: boolean } = {}
+  ): object => {
     const tab = { id: exported.tab.id, user: exported.user }
     const index = opts.index ?? this.tabs.length
     this.tabs.splice(index, 0, tab)
@@ -240,7 +247,7 @@ describe('WindowManager — 탭 떼기·옮기기', () => {
 
   it('다른 창의 탭 바 자리로 옮기고, 비게 된 창은 닫는다', () => {
     const { wm, windows, tabsOf } = setup()
-    const a = wm.create({ openTab: true })
+    wm.create({ openTab: true })
     const b = wm.create({ openTab: true })
     b.tabs.create({ user: true })
     expect(wm.moveTab('w1-1', b, 1)).toBe(true)
@@ -324,5 +331,31 @@ describe('WindowManager — 탭 관리자 겉모양(facade)', () => {
     // 기본 창이 닫히면 겉모양은 다음 창을 따라간다
     windows[0].close()
     expect(primary.list().map((t) => t.id)).toEqual(['w2-1', 'w2-2'])
+  })
+})
+
+describe('isNewWindowShortcut', () => {
+  const key = (over: Partial<Parameters<typeof isNewWindowShortcut>[0]>): boolean =>
+    isNewWindowShortcut({
+      type: 'keyDown',
+      key: 'n',
+      control: true,
+      alt: false,
+      shift: false,
+      meta: false,
+      ...over
+    })
+
+  it('Ctrl+N(대소문자 무관, keyDown)만 새 창이다', () => {
+    expect(key({})).toBe(true)
+    expect(key({ key: 'N' })).toBe(true)
+  })
+
+  it('다른 조합키·다른 키·keyUp 은 아니다', () => {
+    expect(key({ shift: true })).toBe(false)
+    expect(key({ alt: true })).toBe(false)
+    expect(key({ control: false })).toBe(false)
+    expect(key({ key: 't' })).toBe(false)
+    expect(key({ type: 'keyUp' })).toBe(false)
   })
 })

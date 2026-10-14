@@ -65,7 +65,8 @@ export interface CaptureIpcDeps {
   settings: () => Settings
   /** 설정 저장(저장 폴더 선택 결과 반영) */
   setSettings: (patch: Partial<Settings>) => void
-  win: BrowserWindow
+  /** 캡처할 창(사람이 보는 창) — 창이 여럿이라 부를 때마다 고른다 */
+  win: () => BrowserWindow
   tabs: TabManager
   /** 다운로드 폴더 경로 */
   downloadsDir: () => string
@@ -283,7 +284,7 @@ export function registerCaptureIpc(deps: CaptureIpcDeps): CaptureIpc {
         scaleFactor: source.scaleFactor
       }
     }
-    const content = deps.win.getContentBounds()
+    const content = deps.win().getContentBounds()
     const view = webviewRect()
     const wanted: CaptureRect = {
       x: content.x + view.x - source.bounds.x,
@@ -328,7 +329,8 @@ export function registerCaptureIpc(deps: CaptureIpcDeps): CaptureIpc {
   // 렌더러는 웹뷰에 가려 '보이지 않는 창' 으로 취급되어 타이머·rAF 가 초당 한두 번으로
   // 묶인다. 녹화 중에는 크롭 캔버스를 그 속도로 그리면 영상이 뚝뚝 끊기므로 잠시 풀어 준다
   const setThrottling = (allowed: boolean): void => {
-    if (!deps.win.isDestroyed()) deps.win.webContents.setBackgroundThrottling(allowed)
+    const win = deps.win()
+    if (!win.isDestroyed()) win.webContents.setBackgroundThrottling(allowed)
   }
 
   /** 열려 있는 파일 핸들을 닫고 슬롯을 비운다(어느 경로로 끝나든 이 함수만 쓴다) */
@@ -452,7 +454,7 @@ export function registerCaptureIpc(deps: CaptureIpcDeps): CaptureIpc {
   })
 
   deps.handle(IPC.capturePickDir, async (): Promise<string | null> => {
-    const picked = await dialog.showOpenDialog(deps.win, { properties: ['openDirectory'] })
+    const picked = await dialog.showOpenDialog(deps.win(), { properties: ['openDirectory'] })
     if (picked.canceled || picked.filePaths.length === 0) return null
     deps.setSettings({ captureDir: picked.filePaths[0] })
     return picked.filePaths[0]

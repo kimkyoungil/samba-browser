@@ -40,10 +40,10 @@ function setup(): void {
     send: (channel, payload) => sent.push({ channel, payload }),
     settings: () => ({ captureDir: dir, captureFormat: 'png' }) as never,
     setSettings: () => undefined,
-    win: {
+    win: (() => ({
       isDestroyed: () => false,
       webContents: { setBackgroundThrottling: () => undefined }
-    } as never,
+    })) as never,
     tabs: {
       active: () => null,
       hasWebContents: () => false,

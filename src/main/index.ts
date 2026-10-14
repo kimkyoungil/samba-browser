@@ -1,9 +1,10 @@
 import { join } from 'node:path'
-import { app, BrowserWindow, crashReporter } from 'electron'
+import { app, crashReporter } from 'electron'
 import { electronApp, is, optimizer } from '@electron-toolkit/utils'
 import { createMainWindow } from './window'
 import { TabManager } from './browser/tab-manager'
-import { loadSavedTabs, savedTabsOf, writeSavedTabs } from './browser/user-tabs-store'
+import { loadSavedWindows, savedTabsOf, writeSavedWindows } from './browser/user-tabs-store'
+import { WindowManager, type WindowEntry } from './browser/window-manager'
 import { setExtensionTabsProvider } from './extensions/tabs-bridge'
 import { installExtensionPageApi } from './extensions/page-api'
 import { markQuitting } from './browser/popups'
@@ -55,14 +56,18 @@ app.userAgentFallback = chromeUserAgent(app.userAgentFallback)
 if (!app.requestSingleInstanceLock()) {
   app.quit()
 } else {
+  // 바탕화면 아이콘 재실행 = 크롬처럼 같은 계정·같은 데이터로 새 창을 연다
+  let lastSecondInstanceAt = 0
   app.on('second-instance', () => {
-    const win = BrowserWindow.getAllWindows()[0]
-    if (!win) return
-    // 사람이 방금(HUMAN_BUSY_MS 안) 이 창에 입력 중이면 앞으로 끌어오지 않는다 — 그 사이의 두 번째 실행은
+    if (!windows || windows.all().length === 0) return
+    // 사람이 방금(HUMAN_BUSY_MS 안) 어느 창에든 입력 중이면 새 창을 띄우지 않는다 — 그 사이의 두 번째 실행은
     // 사람이 아니라 스크립트(워치독·하네스)가 띄운 것이라, 로그인하던 창의 포커스를 빼앗으면 안 된다
-    if (humanBusyInWindow(win)) return
-    if (win.isMinimized()) win.restore()
-    win.focus()
+    if (windows.all().some((e) => humanBusyInWindow(e.win))) return
+    // 더블클릭이 두 번 들어오거나 스크립트가 연달아 띄워도 창이 줄줄이 생기지 않게 잠깐 막는다
+    const now = Date.now()
+    if (now - lastSecondInstanceAt < SECOND_INSTANCE_THROTTLE_MS) return
+    lastSecondInstanceAt = now
+    windows.create({ openTab: true })
   })
 }
 
@@ -74,7 +79,11 @@ process.on('unhandledRejection', (reason) => {
   console.error('처리되지 않은 Promise 거부', reason)
 })
 
-// 종료 정리(shutdown)에서 써야 하므로 모듈 스코프로 올려둔다
+/** 연달아 들어온 second-instance 를 새 창으로 받지 않는 간격 */
+const SECOND_INSTANCE_THROTTLE_MS = 1500
+
+// second-instance(새 창)·종료 정리에서 써야 하므로 모듈 스코프로 올려둔다
+let windows: WindowManager | undefined
 let db: Db | undefined
 let vault: VaultService | undefined
 let sync: SyncEngineHolder | undefined
@@ -119,18 +128,25 @@ app
         ? { devServerUrl: process.env['ELECTRON_RENDERER_URL'] }
         : {})
     })
-    const win = createMainWindow()
+    // 창 여러 개(크롬처럼 새 창·탭 분리). 첫 창을 먼저 만들고, IPC 배선은 창을 모르는 WindowManager 에 건다
+    windows = new WindowManager({
+      createWindow: (position) => createMainWindow(position),
+      createTabs: (win) => new TabManager(win)
+    })
+    const wm = windows
     // 파비콘은 사이트 자체에서만 받아온다(제3자 전송 없음). 탭 생성 전에 등록해야
     // 첫 탭의 page-favicon-updated 도 캐시에 들어간다
-    registerFaviconIpc(win)
-    const tabs = new TabManager(win)
-    // 확장 팝업·서비스워커의 탭·창 API(tabs.create·windows 등)를 이 창의 탭으로 처리한다
-    setExtensionTabsProvider(tabs.extensionTabsProvider())
+    registerFaviconIpc(wm)
+    const first = wm.create()
+    // 확장 팝업·서비스워커의 탭·창 API(tabs.create·windows 등)를 사람이 쓰는 창의 탭으로 처리한다
+    setExtensionTabsProvider(wm.extensionTabsProvider())
     installExtensionPageApi()
     db = await openDatabase(join(app.getPath('userData'), 'data.db'))
-    const ipc = registerIpc(win, tabs, db)
+    const ipc = registerIpc(wm, db)
     vault = ipc.vault
     sync = ipc.sync
+    // 하네스 브릿지·AI 가 쓰는 기본 창의 탭 관리자(E2E 하네스도 같은 것을 쓴다)
+    const tabs = first.tabs
     // 하네스 모드: 저장된 사이트를 순회하며 자동 로그인을 검증하고 끝나면 앱을 종료한다.
     // 환경변수 스위치는 개발 빌드에서만 인정한다 — 패키징된 앱에서는 무시한다
     const e2eTarget = app.isPackaged ? undefined : process.env.SAMBA_E2E_LOGIN
@@ -163,46 +179,68 @@ app
       app.quit()
       return
     }
-    // 지난번에 사람이 열어 둔 탭을 되살린다(프로필·순서·보던 탭 그대로). 없으면 기본 탭 하나.
+    // 지난번에 사람이 열어 둔 탭을 창별로 되살린다(프로필·순서·보던 탭 그대로). 없으면 기본 탭 하나.
     // url 을 주지 않으면 설정에서 계산된 기본 주소(새 탭 페이지/홈/빈 페이지)로 연다
     const savedTabsFile = join(app.getPath('userData'), 'user-tabs.json')
-    let restored = 0
-    let activeId: string | null = null
-    for (const t of loadSavedTabs(savedTabsFile)) {
-      try {
-        const info = tabs.create({
-          url: t.url,
-          profile: t.profile,
-          mobile: t.mobile,
-          user: true,
-          background: restored > 0
-        })
-        if (t.active) activeId = info.id
-        restored += 1
-      } catch (e: unknown) {
-        console.warn('탭 되살리기 실패', t.url, e instanceof Error ? e.message : String(e))
+    const restoreInto = (
+      entry: WindowEntry,
+      saved: ReturnType<typeof loadSavedWindows>[number]
+    ): void => {
+      let restored = 0
+      let activeId: string | null = null
+      for (const t of saved) {
+        try {
+          const info = entry.tabs.create({
+            url: t.url,
+            profile: t.profile,
+            mobile: t.mobile,
+            user: true,
+            background: restored > 0
+          })
+          if (t.active) activeId = info.id
+          restored += 1
+        } catch (e: unknown) {
+          console.warn('탭 되살리기 실패', t.url, e instanceof Error ? e.message : String(e))
+        }
       }
+      if (activeId) entry.tabs.activate(activeId)
     }
-    if (restored === 0) tabs.create({ user: true })
-    else if (activeId) tabs.activate(activeId)
-    // 사람 탭이 바뀔 때마다(열기·닫기·이동·자리 바꿈) 잠깐 모았다가 저장한다.
-    // 창을 닫기 시작한 뒤에는 저장하지 않는다 — 종료 중 탭이 하나씩 사라지는 목록을 저장하면 다음에 빈 창이 뜬다
+    loadSavedWindows(savedTabsFile).forEach((saved, i) => {
+      restoreInto(i === 0 ? first : wm.create(), saved)
+    })
+    // 되살린 탭이 하나도 없는 창(첫 실행·전부 실패)은 빈 창으로 두지 않는다
+    for (const entry of wm.all()) {
+      if (entry.tabs.list().length === 0) entry.tabs.create({ user: true })
+    }
+    // 사람 탭이 바뀔 때마다(열기·닫기·이동·자리 바꿈·창 닫힘) 잠깐 모았다가 창별 목록으로 저장한다.
+    // 마지막 창을 닫기 시작한 뒤에는 저장하지 않는다 — 종료 중 탭이 하나씩 사라지는 목록을 저장하면 다음에 빈 창이 뜬다
     let savingStopped = false
     let saveTimer: NodeJS.Timeout | null = null
     const stopSaving = (): void => {
       savingStopped = true
       if (saveTimer) clearTimeout(saveTimer)
     }
-    win.on('close', stopSaving)
-    app.on('before-quit', stopSaving)
-    tabs.onChange((list) => {
+    const scheduleSave = (): void => {
       if (savingStopped) return
-      const toSave = savedTabsOf(list, (id) => tabs.isUserTab(id))
       if (saveTimer) clearTimeout(saveTimer)
       saveTimer = setTimeout(() => {
-        if (!savingStopped) writeSavedTabs(savedTabsFile, toSave)
+        if (savingStopped) return
+        writeSavedWindows(
+          savedTabsFile,
+          wm.all().map((e) => savedTabsOf(e.tabs.listAll(), (id) => e.tabs.isUserTab(id)))
+        )
       }, 800)
+    }
+    app.on('before-quit', stopSaving)
+    wm.eachWindow((entry) => {
+      // 닫히는 창이 마지막 창이면 종료 — 그때부터 저장을 멈춘다
+      entry.win.on('close', () => {
+        if (wm.all().length <= 1) stopSaving()
+      })
+      entry.tabs.onChange(scheduleSave)
     })
+    // 창 하나가 닫히면(다른 창이 남아 있을 때) 남은 창 목록으로 다시 저장한다
+    wm.onClosed(scheduleSave)
     // macOS 의 activate 재생성은 1단계(Windows 전용) 범위 밖이라 배선하지 않는다
   })
   .catch((e: unknown) => {

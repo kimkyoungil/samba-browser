@@ -31,6 +31,25 @@ export interface WindowManagerDeps {
   createTabs: (win: BrowserWindow) => TabManager
 }
 
+/** 창 안 키 입력 중 '새 창'(Ctrl+N) 인가 — 다른 조합키가 섞이면 아니다(Ctrl+Shift+N 등은 다른 뜻) */
+export function isNewWindowShortcut(input: {
+  type: string
+  key: string
+  control: boolean
+  alt: boolean
+  shift: boolean
+  meta: boolean
+}): boolean {
+  return (
+    input.type === 'keyDown' &&
+    input.control &&
+    !input.alt &&
+    !input.shift &&
+    !input.meta &&
+    input.key.toLowerCase() === 'n'
+  )
+}
+
 /** 새 창을 띄울 때 앞 창에서 비켜 놓는 거리(px) */
 export const CASCADE_OFFSET = 32
 
@@ -104,8 +123,9 @@ export class WindowManager {
   forSender(sender: { id: number } | null | undefined): WindowEntry | null {
     if (!sender) return null
     return (
-      this.all().find((e) => !e.win.webContents.isDestroyed() && e.win.webContents.id === sender.id) ??
-      null
+      this.all().find(
+        (e) => !e.win.webContents.isDestroyed() && e.win.webContents.id === sender.id
+      ) ?? null
     )
   }
 

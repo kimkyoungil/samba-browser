@@ -11,6 +11,7 @@ import {
   type OAuthLoopback
 } from './oauth'
 import { tr } from '../i18n'
+import { isServerDownError } from './server-down'
 
 export interface AuthDeps {
   /** Supabase 설정이 없으면 null */
@@ -66,15 +67,33 @@ export class AuthService {
   /** 앱 시작 시 저장된 세션을 되살린다. 실패는 로그아웃으로 본다 */
   async restore(): Promise<AuthState> {
     if (!this.current.configured || !this.deps.backend) return this.state()
+    const backend = this.deps.backend
     try {
-      const user = await this.deps.backend.currentUser()
-      this.apply(user)
+      const user = await backend.currentUser()
+      // 서버가 막혀 확인이 안 됐어도(null) 이 PC 에 세션이 남아 있으면 그대로 로그인 상태로 둔다
+      // (실기 2026-10-14: Supabase 한도 정지 중 재시작마다 로그아웃돼 앱을 못 썼다)
+      this.apply(user ?? (await this.cachedUser(backend)))
     } catch (e: unknown) {
       // 사유만 남긴다 — 토큰·값은 절대 로그에 넣지 않는다
-      console.warn('세션 복구 실패', e instanceof Error ? e.message : String(e))
-      this.setSignedOut()
+      const message = e instanceof Error ? e.message : String(e)
+      console.warn('세션 복구 실패', message)
+      const cached = isServerDownError(message) ? await this.cachedUser(backend) : null
+      if (cached) this.apply(cached)
+      else this.setSignedOut()
     }
     return this.state()
+  }
+
+  /** 서버 없이 이 PC 에 저장된 세션의 사용자. 백엔드가 지원하지 않거나 실패하면 null */
+  private async cachedUser(
+    backend: SyncBackend
+  ): Promise<{ userId: string; email: string } | null> {
+    if (!backend.cachedUser) return null
+    try {
+      return await backend.cachedUser()
+    } catch {
+      return null
+    }
   }
 
   async signUp(email: string, password: string): Promise<AuthState> {

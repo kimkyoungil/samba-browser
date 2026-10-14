@@ -1055,6 +1055,7 @@
     "signInDesc": "Signing in syncs settings, bookmarks and KeyMaster across your devices",
     "email": "Email",
     "password": "Password",
+    "rememberEmail": "Remember email",
     "signIn": "Sign in",
     "signUp": "Sign up",
     "toSignUp": "Sign up",

@@ -1573,6 +1573,12 @@ const CAPTURE_MAX_PER_WINDOW = 3
 // 2단계 로그인(아이디 화면 → 비밀번호 화면)에서 앞 단계 아이디를 기억해 두는 시간
 export const CAPTURE_USERNAME_STEP_MS = 5 * 60_000
 
+/** 앞 단계에서 기억한 아이디를 쓸 수 있는가 — 기한(ms) 안이고 값이 있을 때만 그 아이디를 준다(순수 함수) */
+export function pickStepUsername(username: string, at: number, now: number, windowMs: number): string {
+  if (!username || !at) return ''
+  return now - at >= 0 && now - at < windowMs ? username : ''
+}
+
 export interface CapturedCredentials {
   username: string
   password: string
@@ -1661,9 +1667,30 @@ export function installCaptureListener(
   // 같은 제출이 submit 과 click·Enter 양쪽에서 잡혀 중복 전송되는 것을 짧게 막는다
   let lastSignature = ''
   let lastSentAt = 0
-  // 2단계 로그인의 앞 단계 아이디(같은 문서 안에서만 — SPA 로그인)
+  // 2단계 로그인의 앞 단계 아이디. 구글처럼 비밀번호 단계가 다른 문서(페이지 이동)면 변수는 사라지므로
+  // 같은 탭의 sessionStorage 에 둔다(탭을 닫으면 함께 사라진다). 저장소가 막히면 같은 문서 안에서만 기억한다
   let stepUsername = ''
   let stepUsernameAt = 0
+  const STEP_KEY = 'samba-capture-step'
+  const rememberStep = (username: string, at: number): void => {
+    stepUsername = username
+    stepUsernameAt = at
+    try {
+      sessionStorage.setItem(STEP_KEY, JSON.stringify({ username, at }))
+    } catch {
+      // 저장소를 못 쓰면 같은 문서 기억만 쓴다
+    }
+  }
+  const recalledStep = (now: number): string => {
+    let saved = { username: stepUsername, at: stepUsernameAt }
+    try {
+      const raw = sessionStorage.getItem(STEP_KEY)
+      if (raw) saved = JSON.parse(raw) as { username: string; at: number }
+    } catch {
+      // 읽기 실패면 메모리 값을 쓴다
+    }
+    return pickStepUsername(saved.username, saved.at, now, CAPTURE_USERNAME_STEP_MS)
+  }
 
   // 시그니처와 무관하게, 적대 페이지가 서로 다른 값을 반복 주입/제출해 플러딩하는 것을 막는다
   // (호스트당 30초 최대 3회)
@@ -1677,14 +1704,13 @@ export function installCaptureListener(
 
   const attempt = (form: HTMLFormElement | null): void => {
     const now = Date.now()
-    const remembered = now - stepUsernameAt < CAPTURE_USERNAME_STEP_MS ? stepUsername : ''
+    const remembered = recalledStep(now)
     const creds = readLoginCredentials(form, remembered)
     if (!creds) {
       // 비밀번호 칸이 없는 화면이면 아이디 단계일 수 있다 — 다음 단계에서 쓰려고 기억만 한다(보내지 않는다)
       const step = readUsernameStep()
       if (step) {
-        stepUsername = step
-        stepUsernameAt = now
+        rememberStep(step, now)
         trace('username-step')
       } else {
         trace('no-password-value')
@@ -1703,6 +1729,14 @@ export function installCaptureListener(
     lastSignature = signature
     lastSentAt = now
     sentTimestamps.push(now)
+    // 이 제출로 2단계 로그인이 끝났으므로 기억한 아이디는 지운다(다음 로그인에 섞이지 않게)
+    try {
+      sessionStorage.removeItem(STEP_KEY)
+    } catch {
+      // 저장소를 못 쓰면 무시한다
+    }
+    stepUsername = ''
+    stepUsernameAt = 0
     send({ host: location.host, username: creds.username, password: creds.password })
   }
 

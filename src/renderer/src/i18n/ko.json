@@ -1055,6 +1055,7 @@
     "signInDesc": "로그인하면 설정·북마크·키마스터가 기기 사이에서 동기화돼요",
     "email": "이메일",
     "password": "비밀번호",
+    "rememberEmail": "아이디 저장",
     "signIn": "로그인",
     "signUp": "가입하기",
     "toSignUp": "회원가입",

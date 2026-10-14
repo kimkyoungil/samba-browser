@@ -237,3 +237,34 @@ describe('AuthService — handleCallback', () => {
     await expect(spy.mock.results[0].value).resolves.toMatchObject({ userId: FAKE_USER_ID })
   })
 })
+
+describe('AuthService — 서버 정지 중 세션 복원', () => {
+  it('currentUser 가 서버 정지로 실패해도 저장된 세션이 있으면 로그인 상태를 유지한다', async () => {
+    const { auth, backend } = setup()
+    vi.spyOn(backend, 'currentUser').mockRejectedValue(new Error('exceed_egress_quota'))
+    Object.assign(backend, {
+      cachedUser: async () => ({ userId: 'u-1', email: 'saved@example.com' })
+    })
+    const state = await auth.restore()
+    expect(state.signedIn).toBe(true)
+    expect(state.email).toBe('saved@example.com')
+  })
+
+  it('currentUser 가 null 을 돌려줘도(서버가 거부) 저장된 세션이 있으면 유지한다', async () => {
+    const { auth, backend } = setup()
+    vi.spyOn(backend, 'currentUser').mockResolvedValue(null)
+    Object.assign(backend, {
+      cachedUser: async () => ({ userId: 'u-1', email: 'saved@example.com' })
+    })
+    const state = await auth.restore()
+    expect(state.signedIn).toBe(true)
+  })
+
+  it('저장된 세션이 없으면 서버 정지여도 로그아웃이다', async () => {
+    const { auth, backend } = setup()
+    vi.spyOn(backend, 'currentUser').mockRejectedValue(new Error('exceed_egress_quota'))
+    Object.assign(backend, { cachedUser: async () => null })
+    const state = await auth.restore()
+    expect(state.signedIn).toBe(false)
+  })
+})

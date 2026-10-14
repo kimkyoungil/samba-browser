@@ -506,3 +506,69 @@ describe('서버 정지·불통일 때의 로컬 로그인', () => {
     await expect(made.account.offlineSignIn('x')).rejects.toThrow('offline-no-account')
   })
 })
+
+describe('앱 시작: 서버 정지 중 계정 세션 복원', () => {
+  it('디렉터리 확인이 서버 정지로 실패해도 저장된 세션이 있으면 서버 없이 들어간다', async () => {
+    const h = setup({ seedConfig: true })
+    await h.directory?.signIn('me@example.com', 'pw')
+    vi.spyOn(h.directory!, 'currentUser').mockRejectedValue(new Error('exceed_egress_quota'))
+    Object.assign(h.directory!, {
+      cachedUser: async () => ({ userId: FAKE_USER_ID, email: 'me@example.com' })
+    })
+    await h.account.restore()
+    expect(h.account.accountState()).toMatchObject({
+      signedIn: true,
+      offline: true,
+      email: 'me@example.com'
+    })
+  })
+
+  it('디렉터리 확인이 null 이어도(서버 거부) 저장된 세션이 있으면 서버 없이 들어간다', async () => {
+    const h = setup({ seedConfig: true })
+    vi.spyOn(h.directory!, 'currentUser').mockResolvedValue(null)
+    Object.assign(h.directory!, {
+      cachedUser: async () => ({ userId: FAKE_USER_ID, email: 'me@example.com' })
+    })
+    await h.account.restore()
+    expect(h.account.accountState()).toMatchObject({ signedIn: true, offline: true })
+  })
+
+  it('저장된 세션이 없으면 그대로 로그아웃이다', async () => {
+    const h = setup({ seedConfig: true })
+    vi.spyOn(h.directory!, 'currentUser').mockResolvedValue(null)
+    Object.assign(h.directory!, { cachedUser: async () => null })
+    await h.account.restore()
+    expect(h.account.accountState().signedIn).toBe(false)
+  })
+})
+
+describe('서버 없이 로그인 — 앱 로그인 확인값(키마스터와 분리)', () => {
+  function offlineSetup(verifier: { save: ReturnType<typeof vi.fn>; check: ReturnType<typeof vi.fn> }, vaultOk: boolean) {
+    const h = setup({
+      seedConfig: true,
+      offline: { userId: () => 'user-1', email: () => undefined, verifyPassword: async () => vaultOk }
+    })
+    vi.spyOn(h.directory!, 'signIn').mockRejectedValue(new Error('exceed_egress_quota'))
+    Object.assign((h.account as unknown as { deps: Record<string, unknown> }).deps, { loginVerifier: verifier })
+    return h
+  }
+
+  it('확인값이 있으면 그것으로만 판정하고 키마스터는 보지 않는다', async () => {
+    const verifier = { save: vi.fn(), check: vi.fn(() => true) }
+    const h = offlineSetup(verifier, false)
+    await expect(h.account.signIn('me@example.com', 'pw')).rejects.toThrow('exceed_egress_quota')
+    await h.account.offlineSignIn('pw')
+    expect(h.account.accountState().offline).toBe(true)
+    verifier.check.mockReturnValue(false)
+    await expect(h.account.offlineSignIn('bad')).rejects.toThrow('offline-wrong-password')
+  })
+
+  it('확인값이 없고 키마스터도 안 맞으면 지금 비밀번호로 확인값을 처음 만든다', async () => {
+    const verifier = { save: vi.fn(), check: vi.fn(() => undefined) }
+    const h = offlineSetup(verifier, false)
+    await expect(h.account.signIn('me@example.com', 'pw')).rejects.toThrow('exceed_egress_quota')
+    await h.account.offlineSignIn('first-pw')
+    expect(h.account.accountState().offline).toBe(true)
+    expect(verifier.save).toHaveBeenCalledWith('first-pw')
+  })
+})

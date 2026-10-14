@@ -42,8 +42,14 @@ export function createSessionStore(
     }
   }
 
+  let warnedNoEncrypt = false
   const writeAll = (data: Record<string, string>): void => {
-    if (!canEncrypt()) return
+    if (!canEncrypt()) {
+      // 암호화를 못 쓰면 세션이 디스크에 남지 않아 재시작마다 로그아웃된다 — 사유를 한 번은 남긴다
+      if (!warnedNoEncrypt) console.warn('세션 저장 불가: 이 환경에서 safeStorage 암호화를 쓸 수 없다')
+      warnedNoEncrypt = true
+      return
+    }
     try {
       mkdirSync(dirname(filePath), { recursive: true })
       writeFileSync(filePath, safeStorage!.encryptString(JSON.stringify(data)))

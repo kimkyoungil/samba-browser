@@ -67,6 +67,8 @@ export interface SyncBackend {
   /** 서버를 부르지 않고 이 PC 에 저장된 세션(refresh token)만 지운다 — 토큰 만료·원격 취소용 */
   clearLocalSession(): Promise<void>
   currentUser(): Promise<{ userId: string; email: string } | null>
+  /** 서버를 부르지 않고 이 PC 에 저장된 세션의 사용자만 돌려준다(없으면 null). 서버 정지 때 복원용 */
+  cachedUser?(): Promise<{ userId: string; email: string } | null>
   /** 지금 로그인된 사용자의 비밀번호를 바꾼다(살아 있는 세션 필요). 메일 없이 이 PC 에서 재설정하는 길 */
   updatePassword(password: string): Promise<void>
   /**

@@ -25,3 +25,21 @@ describe('구글 로그인 UA', () => {
     expect(electronUserAgent(withToken, '39.8.10')).toBe(withToken)
   })
 })
+
+describe('구글 로그인 UA 적용 시점', () => {
+  it('리다이렉트 중에는 UA 를 바꾸지 않는다(바꾸면 그 항해가 ERR_ABORTED 로 끊긴다)', async () => {
+    const { installGoogleSigninUserAgent } = await import('../src/main/browser/google-signin-ua')
+    const handlers: string[] = []
+    const wc = {
+      getUserAgent: () => 'Mozilla/5.0 Chrome/130.0 Safari/537.36',
+      setUserAgent: () => undefined,
+      isDestroyed: () => false,
+      on: (name: string) => {
+        handlers.push(name)
+      }
+    }
+    installGoogleSigninUserAgent(wc as never)
+    expect(handlers).toContain('will-navigate')
+    expect(handlers).not.toContain('will-redirect')
+  })
+})

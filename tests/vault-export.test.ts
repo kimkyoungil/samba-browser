@@ -253,12 +253,13 @@ describe('VaultService.verifyMaster', () => {
     db.close()
   })
 
-  it('맞는 마스터 비밀번호는 true, 틀리면 false, 잠겨 있으면 false 다', async () => {
+  it('맞는 마스터 비밀번호는 true, 틀리면 false, 잠겨 있어도 맞으면 true 다', async () => {
     await vault.setup(MASTER)
     expect(await vault.verifyMaster(MASTER)).toBe(true)
     expect(await vault.verifyMaster('nope')).toBe(false)
     vault.lock()
-    expect(await vault.verifyMaster(MASTER)).toBe(false)
+    expect(await vault.verifyMaster(MASTER)).toBe(true)
+    expect(await vault.verifyMaster('nope')).toBe(false)
   })
 })
 

@@ -1630,7 +1630,7 @@ export class VaultService {
    * 마스터 키와 상수 시간으로 비교한다. 잠겨 있으면 항상 false 다
    */
   async verifyMaster(master: string): Promise<boolean> {
-    if (!this.key) return false
+    // 금고가 잠겨 있어도(재시작 직후) 검증자로 비밀번호를 확인한다 — 잠금 상태를 '틀림'으로 읽지 않는다
     const salt = this.repo.getMeta(META_SALT)
     const ct = this.repo.getMeta(META_VERIFIER_CT)
     const iv = this.repo.getMeta(META_VERIFIER_IV)
@@ -1644,8 +1644,10 @@ export class VaultService {
     })
     try {
       if (!checkVerifier(candidate, { ciphertext: ct, iv })) return false
-      if (candidate.length !== this.key.length) return false
-      return timingSafeEqual(candidate, this.key)
+      // 열려 있으면 메모리의 키와도 대조한다(검증자가 맞으면 같은 키다)
+      if (this.key && (candidate.length !== this.key.length || !timingSafeEqual(candidate, this.key)))
+        return false
+      return true
     } finally {
       zeroize(candidate)
     }

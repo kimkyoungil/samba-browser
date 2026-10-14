@@ -192,7 +192,9 @@ export class WindowManager {
     // 창 수명은 로그로 남긴다 — 창이 저절로 사라지는 문제를 앱 로그만으로 추적할 수 있게
     console.info(`[창] 열림 #${entry.id} (창 ${this.entries.length}개)`)
     win.webContents.on('render-process-gone', (_e, details) => {
-      console.error(`[창] #${entry.id} 렌더러 프로세스 종료: ${details.reason} (${details.exitCode})`)
+      console.error(
+        `[창] #${entry.id} 렌더러 프로세스 종료: ${details.reason} (${details.exitCode})`
+      )
     })
     win.on('focus', () => {
       this.lastFocusedId = entry.id

@@ -15,13 +15,20 @@ class FakeWindow extends EventEmitter {
   focused = false
   sent: Array<[string, unknown]> = []
   bounds = { x: 100, y: 50, width: 800, height: 600 }
-  webContents: { id: number; isDestroyed: () => boolean; send: (c: string, p: unknown) => void }
+  webContents: {
+    id: number
+    isDestroyed: () => boolean
+    send: (c: string, p: unknown) => void
+    on: () => void
+  }
   constructor(public readonly wcId: number) {
     super()
     this.webContents = {
       id: wcId,
       isDestroyed: () => this.destroyed,
-      send: (c, p) => this.sent.push([c, p])
+      send: (c, p) => this.sent.push([c, p]),
+      // 렌더러 프로세스 종료 로그 훅 — 가짜에서는 받기만 한다
+      on: () => undefined
     }
   }
   isDestroyed = (): boolean => this.destroyed

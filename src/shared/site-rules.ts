@@ -78,7 +78,7 @@ export const KNOWN_LOGIN_URLS: Record<string, string> = {
   // --- 국내 쇼핑/커머스 ---
   'coupang.com': 'https://login.coupang.com/login/login.pang',
   'kream.co.kr': 'https://kream.co.kr/login',
-  'musinsa.com': 'https://www.musinsa.com/auth/login',
+  'musinsa.com': 'https://member.one.musinsa.com/login',
   '11st.co.kr': 'https://login.11st.co.kr/auth/front/login.tmall',
   'gmarket.co.kr': 'https://member.gmarket.co.kr/login/login.asp',
   'auction.co.kr': 'https://signin.auction.co.kr/login/',

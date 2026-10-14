@@ -125,6 +125,28 @@ export function computeViewBounds(
   }
 }
 
+/** Keep background automation renderable without changing the visible browser layout. */
+export function computeBehindBounds(
+  layout: Layout,
+  width: number,
+  height: number,
+  mobile: boolean,
+  gateHidden: boolean
+): Layout {
+  const empty = computeViewBounds({ ...layout, width: 0, height: 0 }, width, height)
+  if (gateHidden || width <= 0 || height <= 0) return empty
+  const bounds = computeViewBounds(layout, width, height, mobile)
+  if (bounds.width > 0 && bounds.height > 0) return bounds
+  const fallback = computeViewBounds(
+    { x: 0, y: 0, width, height, viewportWidth: width, viewportHeight: height },
+    width,
+    height,
+    mobile
+  )
+  // Native views paint above the app shell, even at child index zero.
+  return { ...fallback, x: fallback.x - width }
+}
+
 // 이미 하드닝한 파티션 이름. session.fromPartition 은 같은 인스턴스를 돌려주므로 1회만 건다
 const hardenedPartitions = new Set<string>()
 
@@ -985,16 +1007,13 @@ export class TabManager {
     this.win.contentView.addChildView(tab.view, 0)
     // 보이는 탭에 가려진 뷰도 타이머·requestAnimationFrame 이 늦춰지지 않게 한다(가려짐 판정 스로틀링 방지)
     tab.view.webContents.setBackgroundThrottling(false)
+    void setFocusEmulation(tab.view.webContents, true)
   }
 
   /** 뒤 탭 크기 — 보이는 탭과 같다. 로그인 게이트 중이면 0(게이트 화면 위로 비치지 않게) */
   private setBehindBounds(tab: Tab): void {
-    if (this.gateHidden) {
-      tab.view.setBounds({ x: 0, y: 0, width: 0, height: 0 })
-      return
-    }
     const [w, h] = this.win.getContentSize()
-    tab.view.setBounds(computeViewBounds(this.layout, w, h, tab.mobile))
+    tab.view.setBounds(computeBehindBounds(this.layout, w, h, tab.mobile, this.gateHidden))
   }
 
   /** 더는 뒤에서 조작하지 않는 탭(자동화 대상도 레인도 아님)을 뒤 층에서 뗀다. 보이는 탭은 떼지 않는다 */
@@ -1007,7 +1026,6 @@ export class TabManager {
       automationId: this.automationTabId,
       laneIds: this.laneIds,
       alive
-    void setFocusEmulation(tab.view.webContents, true)
     })
     this.behindIds = keep
     for (const id of drop) {
@@ -1015,6 +1033,7 @@ export class TabManager {
       if (!t || !isTabAlive(t)) continue
       if (id !== this.activeId) this.win.contentView.removeChildView(t.view)
       t.view.webContents.setBackgroundThrottling(true)
+      void setFocusEmulation(t.view.webContents, false)
     }
   }
 
@@ -1033,7 +1052,6 @@ export class TabManager {
   private workingTabId(): string | null {
     const alive = this.tabs.filter((t) => isTabAlive(t)).map((t) => t.id)
     const id = pickWorkingTabId(this.automationTabId, alive, this.activeId)
-      void setFocusEmulation(t.view.webContents, false)
     // 표식이 가리키던 탭이 닫혔으면 표식을 지운다
     if (this.automationTabId !== null && id !== this.automationTabId) this.automationTabId = null
     return id
@@ -1071,6 +1089,7 @@ export class TabManager {
     ) {
       this.behindIds.push(prev.id)
       prev.view.webContents.setBackgroundThrottling(false)
+      void setFocusEmulation(prev.view.webContents, true)
     }
     this.activeId = id
     // 보이는 탭이 된 뒤 탭은 뒤 목록에서 빠지며 스로틀링이 원래대로(true) 돌아온다
@@ -1089,7 +1108,6 @@ export class TabManager {
 
   /** 팝업 창을 부모(메인) 창 가운데로 옮긴다. 화면 밖으로 나가지 않게 최소 0 으로 붙잡는다 */
   private centerPopup(win: BrowserWindow): void {
-      void setFocusEmulation(prev.view.webContents, true)
     if (this.win.isDestroyed() || win.isDestroyed()) return
     const parent = this.win.getBounds()
     const size = win.getSize()

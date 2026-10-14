@@ -14,6 +14,9 @@ import { isSupabaseAnonKey, isSupabaseProjectUrl, type AuthState } from '../../s
 import type { AuthService } from './auth'
 import type { SyncBackend } from './backend'
 import { readDirectoryConfig, writeDirectoryConfig, type DirectoryConfig } from './directory'
+import { isServerDownError } from './server-down'
+
+export { isServerDownError }
 
 export interface AccountDeps {
   /** 디렉터리 백엔드·인증. 내장 주소가 없으면 둘 다 null(예전 동작) */
@@ -51,6 +54,11 @@ export interface AccountDeps {
     email: () => string | undefined
     verifyPassword: (password: string) => Promise<boolean>
   }
+  /** 앱 계정 로그인 전용 확인값(키마스터와 분리). check 가 undefined 면 확인값이 없는 것이다 */
+  loginVerifier?: {
+    save: (password: string) => void
+    check: (password: string) => boolean | undefined
+  }
 }
 
 /** 디렉터리 쪽 상태. AuthState.account 로 렌더러에 나간다 — 토큰·비밀번호 없음 */
@@ -66,24 +74,6 @@ export interface AccountState {
   userCount?: number
   /** 서버 없이 이 PC 에서만 들어온 상태 — 동기화는 꺼져 있다(서버가 풀리면 다시 로그인한다) */
   offline?: boolean
-}
-
-/** 서버가 정지·불통이라 로그인 자체가 안 되는 오류 문구 — 비밀번호 문제가 아니다 */
-const SERVER_DOWN_PATTERNS = [
-  'service for this project is restricted',
-  'exceed_egress_quota',
-  'fetch failed',
-  'failed to fetch',
-  'network',
-  'econnrefused',
-  'enotfound',
-  'etimedout',
-  'timeout'
-]
-
-export function isServerDownError(message: string): boolean {
-  const m = message.toLowerCase()
-  return SERVER_DOWN_PATTERNS.some((p) => m.includes(p))
 }
 
 /** 디렉터리 서버의 관리자 전용 함수 이름(supabase/directory.sql). 없거나 권한 없으면 null */
@@ -128,6 +118,13 @@ export class AccountService {
       await dir.auth.restore()
       const user = await dir.backend.currentUser()
       if (!user) {
+        // 서버가 막혀 확인이 안 됐을 뿐 이 PC 에 세션이 남아 있으면 그 계정으로 서버 없이 들어간다
+        // (실기 2026-10-14: Supabase 한도 정지 중 재시작마다 로그인 화면으로 떨어졌다)
+        const cached = await this.cachedDirectoryUser()
+        if (cached) {
+          this.enterOffline(cached)
+          return this.deps.auth.restore()
+        }
         this.next({
           ...this.state,
           signedIn: false,
@@ -140,9 +137,38 @@ export class AccountService {
       await this.afterDirectorySignIn(user)
       return this.deps.auth.restore()
     } catch (e: unknown) {
-      console.warn('계정 세션 복구 실패', e instanceof Error ? e.message : String(e))
+      const message = e instanceof Error ? e.message : String(e)
+      console.warn('계정 세션 복구 실패', message)
+      if (isServerDownError(message)) {
+        const cached = await this.cachedDirectoryUser()
+        if (cached) this.enterOffline(cached)
+      }
       return this.deps.auth.restore()
     }
+  }
+
+  /** 이 PC 에 저장된 디렉터리 세션의 사용자(서버를 부르지 않는다). 없거나 읽기 실패면 null */
+  private async cachedDirectoryUser(): Promise<{ userId: string; email: string } | null> {
+    const dir = this.directory()
+    if (!dir?.backend.cachedUser) return null
+    try {
+      return await dir.backend.cachedUser()
+    } catch {
+      return null
+    }
+  }
+
+  /** 서버 없이 이 PC 의 계정 공간으로 들어간 상태로 표시한다 — 동기화는 꺼진다(서버가 풀리면 다시 로그인) */
+  private enterOffline(user: { userId: string; email: string }): void {
+    console.warn('계정 세션: 서버 확인 실패 — 저장된 세션으로 서버 없이 들어간다')
+    this.next({
+      configured: true,
+      signedIn: true,
+      userId: user.userId,
+      ...(user.email ? { email: user.email } : {}),
+      needsSupabase: false,
+      offline: true
+    })
   }
 
   async signIn(email: string, password: string): Promise<AuthState> {
@@ -176,7 +202,10 @@ export class AccountService {
     if (!this.lastEnterServerDown) throw new Error('offline-not-allowed')
     const userId = offline.userId()
     if (!userId) throw new Error('offline-no-account')
-    if (password.length === 0 || !(await offline.verifyPassword(password))) {
+    // 앱 로그인 확인값이 있으면 그것으로만 판정한다(키마스터와 무관). 없으면(예전 설치) 키마스터로 확인한다
+    const own = this.deps.loginVerifier?.check(password)
+    const ok = own !== undefined ? own : await offline.verifyPassword(password)
+    if (password.length === 0 || !ok) {
       throw new Error('offline-wrong-password')
     }
     this.accountPassword = password
@@ -306,6 +335,13 @@ export class AccountService {
   /** 데이터 프로젝트에 로그인된 뒤 이 PC 키마스터를 계정 비밀번호에 맞춘다. 실패해도 로그인은 그대로 둔다 */
   private async adoptVault(password: string): Promise<void> {
     this.accountPassword = password
+    if (this.deps.auth.state().signedIn) {
+      try {
+        this.deps.loginVerifier?.save(password)
+      } catch (e: unknown) {
+        console.warn('앱 로그인 확인값 저장 실패', e instanceof Error ? e.message : String(e))
+      }
+    }
     if (!this.deps.vault || !this.deps.auth.state().signedIn) return
     try {
       const r = await this.deps.vault.adoptAccountPassword(password)

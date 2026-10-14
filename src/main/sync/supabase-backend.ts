@@ -149,6 +149,16 @@ export function createSupabaseBackend(
       const { data } = await client.auth.getUser()
       return data.user ? { userId: data.user.id, email: data.user.email ?? '' } : null
     },
+    async cachedUser() {
+      // getSession 은 저장소의 세션을 읽는다(서버 확인 없음). 만료 갱신이 실패해도 세션 사용자는 남는다
+      try {
+        const { data } = await client.auth.getSession()
+        const u = data.session?.user
+        return u ? { userId: u.id, email: u.email ?? '' } : null
+      } catch {
+        return null
+      }
+    },
     async select(table, cursor, workspaceId, limit) {
       const c = toPullCursor(cursor)
       let query = whereAfterCursor(client.from(table).select('*'), c, 'id')

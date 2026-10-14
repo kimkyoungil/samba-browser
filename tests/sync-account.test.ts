@@ -506,3 +506,38 @@ describe('서버 정지·불통일 때의 로컬 로그인', () => {
     await expect(made.account.offlineSignIn('x')).rejects.toThrow('offline-no-account')
   })
 })
+
+describe('앱 시작: 서버 정지 중 계정 세션 복원', () => {
+  it('디렉터리 확인이 서버 정지로 실패해도 저장된 세션이 있으면 서버 없이 들어간다', async () => {
+    const h = setup({ seedConfig: true })
+    await h.directory?.signIn('me@example.com', 'pw')
+    vi.spyOn(h.directory!, 'currentUser').mockRejectedValue(new Error('exceed_egress_quota'))
+    Object.assign(h.directory!, {
+      cachedUser: async () => ({ userId: FAKE_USER_ID, email: 'me@example.com' })
+    })
+    await h.account.restore()
+    expect(h.account.accountState()).toMatchObject({
+      signedIn: true,
+      offline: true,
+      email: 'me@example.com'
+    })
+  })
+
+  it('디렉터리 확인이 null 이어도(서버 거부) 저장된 세션이 있으면 서버 없이 들어간다', async () => {
+    const h = setup({ seedConfig: true })
+    vi.spyOn(h.directory!, 'currentUser').mockResolvedValue(null)
+    Object.assign(h.directory!, {
+      cachedUser: async () => ({ userId: FAKE_USER_ID, email: 'me@example.com' })
+    })
+    await h.account.restore()
+    expect(h.account.accountState()).toMatchObject({ signedIn: true, offline: true })
+  })
+
+  it('저장된 세션이 없으면 그대로 로그아웃이다', async () => {
+    const h = setup({ seedConfig: true })
+    vi.spyOn(h.directory!, 'currentUser').mockResolvedValue(null)
+    Object.assign(h.directory!, { cachedUser: async () => null })
+    await h.account.restore()
+    expect(h.account.accountState().signedIn).toBe(false)
+  })
+})

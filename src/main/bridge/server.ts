@@ -11,8 +11,10 @@ import type { ToolSession } from '../agent/runner'
 
 /** 브릿지가 밖에 보여 주는 창 한 개(비밀값 없음) */
 export interface BridgeWindowInfo {
-  /** 앱 안 창 번호(앱 로그의 "[창] 열림 #n" 과 같다) */
+  /** 앱 안 창 번호(앱 로그의 "[창] 열림 #n" 과 같다). 재시작하면 바뀐다 */
   id: number
+  /** 별칭 — 재시작 뒤에도 같은 창을 가리키는 이름. X-Samba-Window 에 번호 대신 쓴다 */
+  name: string | null
   title: string
   /** 탭 수(팝업 제외) */
   tabs: number
@@ -22,10 +24,13 @@ export interface BridgeWindowInfo {
 
 /** X-Samba-Window 가 가리킨 창이 없을 때 openSession 이 던진다 → 404 */
 export class BridgeWindowNotFound extends Error {
-  constructor(id: number) {
-    super(`window not found: ${id}`)
+  constructor(ref: number | string) {
+    super(`window not found: ${ref}`)
   }
 }
+
+/** X-Samba-Window 값 — 창 번호(숫자) 또는 별칭(글자로 시작, 32자까지) */
+export const WINDOW_REF_RE = /^(?:[0-9]{1,6}|[A-Za-z][A-Za-z0-9_.-]{0,31})$/
 
 export interface BridgeDeps {
   /**
@@ -35,13 +40,13 @@ export interface BridgeDeps {
   openSession: (
     onStep: (label: string, ok: boolean) => void,
     lane?: string,
-    window?: number
+    window?: string
   ) => ToolSession
   token: () => string
   /** 창 목록(GET /windows). 없으면 404 */
   windows?: () => BridgeWindowInfo[]
-  /** 새 창 만들기(POST /windows) — 사람 탭 하나가 열린 빈 창. 없으면 404 */
-  createWindow?: () => BridgeWindowInfo
+  /** 새 창 만들기(POST /windows {name?}) — 사람 탭 하나가 열린 빈 창. 같은 이름이 있으면 그 창. 없으면 404 */
+  createWindow?: (name?: string) => BridgeWindowInfo
   toolTimeoutMs?: number
   /** 폰을 기다리는 긴 도구(결제 승인·인증번호)의 제한 시간. 없으면 LONG_TOOL_TIMEOUT_MS */
   longToolTimeoutMs?: number
@@ -148,8 +153,22 @@ export class BridgeServer {
     if (url.pathname === '/windows') {
       if (req.method === 'GET' && this.deps.windows)
         return json(res, 200, { ok: true, windows: this.deps.windows() })
-      if (req.method === 'POST' && this.deps.createWindow)
-        return json(res, 200, { ok: true, window: this.deps.createWindow() })
+      if (req.method === 'POST' && this.deps.createWindow) {
+        let name: string | undefined
+        try {
+          const body = await readBody(req)
+          const parsed: unknown = body.trim() === '' ? {} : JSON.parse(body)
+          const n = (parsed as { name?: unknown }).name
+          if (n !== undefined) {
+            if (typeof n !== 'string' || !WINDOW_REF_RE.test(n) || /^[0-9]+$/.test(n))
+              return json(res, 400, { error: 'invalid window name' })
+            name = n
+          }
+        } catch {
+          return json(res, 400, { error: 'invalid json' })
+        }
+        return json(res, 200, { ok: true, window: this.deps.createWindow(name) })
+      }
       return json(res, 404, { error: 'not found' })
     }
     const m = /^\/tool\/([a-z0-9_]{1,64})$/.exec(url.pathname)
@@ -176,13 +195,13 @@ export class BridgeServer {
     const rawLane = req.headers['x-samba-lane']
     const lane =
       typeof rawLane === 'string' && /^[A-Za-z0-9_.@-]{1,64}$/.test(rawLane) ? rawLane : undefined
-    // 창 번호(X-Samba-Window). 숫자가 아니면 400 — 조용히 기본 창에 보내면 주문처리 창에 탭이 생긴다
+    // 창 번호 또는 별칭(X-Samba-Window). 모양이 틀리면 400 — 조용히 기본 창에 보내면 주문처리 창에 탭이 생긴다
     const rawWindow = req.headers['x-samba-window']
-    let window: number | undefined
+    let window: string | undefined
     if (rawWindow !== undefined) {
-      if (typeof rawWindow !== 'string' || !/^[0-9]{1,6}$/.test(rawWindow))
+      if (typeof rawWindow !== 'string' || !WINDOW_REF_RE.test(rawWindow))
         return json(res, 400, { error: 'invalid window' })
-      window = Number(rawWindow)
+      window = rawWindow
     }
     // 레인 없는 요청은 단독(다른 요청·레인이 없어야 한다). 레인 요청은 같은 레인만 겹치지 않으면 된다
     if (this.busy) return json(res, 409, { error: 'busy' })
@@ -250,7 +269,9 @@ export class BridgeServer {
         result,
         steps,
         ...(lane ? { lane } : {}),
-        ...(window !== undefined ? { window } : {})
+        ...(window !== undefined
+          ? { window: /^[0-9]+$/.test(window) ? Number(window) : window }
+          : {})
       })
     } catch (e: unknown) {
       if (settledByTimer) {

@@ -3,6 +3,7 @@ import {
   MAX_SAVED_TABS,
   MAX_SAVED_WINDOWS,
   parseSavedTabs,
+  parseSavedWindowGroups,
   parseSavedWindows,
   savedTabsOf
 } from '../src/main/browser/user-tabs-store'
@@ -93,5 +94,34 @@ describe('parseSavedWindows — 창별 목록(v2)', () => {
     expect(parseSavedWindows(JSON.stringify({ version: 2, windows }))).toHaveLength(
       MAX_SAVED_WINDOWS
     )
+  })
+})
+
+describe('parseSavedWindowGroups — 창 별칭', () => {
+  const a = { url: 'https://a', profile: 'p', mobile: false, active: true }
+
+  it('{name, tabs} 와 탭 배열이 섞여 있어도 읽고, 이름 있는 빈 창은 남긴다', () => {
+    const raw = JSON.stringify({
+      version: 2,
+      windows: [[a], { name: 'video', tabs: [] }, { name: 'bad name!', tabs: [a] }, []]
+    })
+    expect(parseSavedWindowGroups(raw)).toEqual([
+      { name: null, tabs: [a] },
+      { name: 'video', tabs: [] },
+      { name: null, tabs: [a] }
+    ])
+    // 탭만 보는 옛 읽기는 빈 창을 뺀다
+    expect(parseSavedWindows(raw)).toEqual([[a], [a]])
+  })
+
+  it('같은 이름이 둘이면 뒤 것은 이름을 잃는다', () => {
+    const raw = JSON.stringify({
+      version: 2,
+      windows: [
+        { name: 'v', tabs: [a] },
+        { name: 'v', tabs: [a] }
+      ]
+    })
+    expect(parseSavedWindowGroups(raw).map((g) => g.name)).toEqual(['v', null])
   })
 })

@@ -13,8 +13,10 @@ import type { ExtensionTabsProvider } from '../extensions/tabs-bridge'
 import type { RendererWindowLike } from '../ipc/sender'
 
 export interface WindowEntry {
-  /** 앱 안에서만 쓰는 창 번호(1부터) */
+  /** 앱 안에서만 쓰는 창 번호(1부터). 재시작하면 바뀐다 */
   id: number
+  /** 별칭 — 브릿지가 재시작 뒤에도 같은 창을 찾는 안정된 이름(user-tabs.json 에 함께 저장). 없으면 null */
+  name: string | null
   win: BrowserWindow
   tabs: TabManager
 }
@@ -152,6 +154,11 @@ export class WindowManager {
     return this.all().find((e) => e.id === id) ?? null
   }
 
+  /** 별칭으로. 없으면 null */
+  byName(name: string): WindowEntry | null {
+    return this.all().find((e) => e.name === name) ?? null
+  }
+
   /**
    * 특정 창의 탭 관리자 겉모양(브릿지 X-Samba-Window). 창이 닫히면 이후 호출은 던진다 —
    * 조용히 다른 창으로 넘어가 엉뚱한 창(주문처리 창)에 탭을 만들지 않게
@@ -200,14 +207,16 @@ export class WindowManager {
    * 새 창. openTab 이면 설정 기본 주소로 사람 탭 하나를 연다(배선이 끝난 뒤라 홈 주소·프로필 접두사가 적용된다).
    * 위치를 주지 않으면 사람이 쓰던 창에서 조금 비켜 띄운다
    */
-  create(opts: { position?: WindowPosition; openTab?: boolean } = {}): WindowEntry {
+  create(opts: { position?: WindowPosition; openTab?: boolean; name?: string } = {}): WindowEntry {
     const position = opts.position ?? this.cascadePosition()
     const win = this.deps.createWindow(position)
     const tabs = this.deps.createTabs(win)
-    const entry: WindowEntry = { id: this.nextId++, win, tabs }
+    const entry: WindowEntry = { id: this.nextId++, name: opts.name ?? null, win, tabs }
     this.entries.push(entry)
     // 창 수명은 로그로 남긴다 — 창이 저절로 사라지는 문제를 앱 로그만으로 추적할 수 있게
-    console.info(`[창] 열림 #${entry.id} (창 ${this.entries.length}개)`)
+    console.info(
+      `[창] 열림 #${entry.id}${entry.name ? ` '${entry.name}'` : ''} (창 ${this.entries.length}개)`
+    )
     win.webContents.on('render-process-gone', (_e, details) => {
       console.error(
         `[창] #${entry.id} 렌더러 프로세스 종료: ${details.reason} (${details.exitCode})`

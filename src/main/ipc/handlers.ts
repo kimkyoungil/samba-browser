@@ -292,17 +292,25 @@ export function registerIpc(
   // 하네스 브릿지 — 밖의 LangGraph 하네스가 이 앱의 도구를 부르는 문. 설정으로 켜고 끈다
   const bridgeWindowInfo = (entry: WindowEntry): BridgeWindowInfo => ({
     id: entry.id,
+    name: entry.name,
     title: entry.win.isDestroyed() ? '' : entry.win.getTitle(),
     tabs: entry.tabs.list().length,
     primary: entry === windows.primary()
   })
   const bridge = new BridgeServer({
-    // X-Samba-Window 가 있으면 그 창의 탭 관리자로 세션을 연다(없는 창이면 404)
-    openSession: (onStep, lane, windowId) => {
+    // X-Samba-Window 가 있으면 그 창의 탭 관리자로 세션을 연다.
+    // 번호는 있어야 하고(없으면 404), 별칭은 없으면 그 이름으로 새 창을 만든다(재시작 뒤에도 같은 이름으로 이어 쓴다)
+    openSession: (onStep, lane, windowRef) => {
       let tabsFor: TabManager | undefined
-      if (windowId !== undefined) {
-        if (!windows.byId(windowId)) throw new BridgeWindowNotFound(windowId)
-        tabsFor = windows.tabsForWindow(windowId)
+      if (windowRef !== undefined) {
+        let entry: WindowEntry | null
+        if (/^[0-9]+$/.test(windowRef)) {
+          entry = windows.byId(Number(windowRef))
+          if (!entry) throw new BridgeWindowNotFound(windowRef)
+        } else {
+          entry = windows.byName(windowRef) ?? windows.create({ name: windowRef, openTab: true })
+        }
+        tabsFor = windows.tabsForWindow(entry.id)
       }
       return agent.createToolSession({
         onStep,
@@ -312,7 +320,11 @@ export function registerIpc(
     },
     token: () => settings.get().bridgeToken,
     windows: () => windows.all().map(bridgeWindowInfo),
-    createWindow: () => bridgeWindowInfo(windows.create({ openTab: true }))
+    createWindow: (name) =>
+      bridgeWindowInfo(
+        (name ? windows.byName(name) : null) ??
+          windows.create({ openTab: true, ...(name ? { name } : {}) })
+      )
   })
   const applyBridge = (): Promise<void> =>
     applyBridgeSettings(

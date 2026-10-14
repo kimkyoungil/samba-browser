@@ -20,11 +20,21 @@ export const MAX_SAVED_WINDOWS = 8
 /** 창 하나의 저장 탭 목록 */
 export type SavedWindow = SavedTab[]
 
-/** 파일 모양(v2). v1 은 탭 배열 하나(창 하나)였다 — 읽을 때 그대로 받아들인다 */
+/** 창 하나 — 별칭(브릿지 X-Samba-Window 가 쓰는 안정된 이름)과 탭 목록. 이름 있는 창은 탭이 없어도 되살린다 */
+export interface SavedWindowGroup {
+  name: string | null
+  tabs: SavedTab[]
+}
+
+/** 파일 모양(v2). v1 은 탭 배열 하나(창 하나)였다 — 읽을 때 그대로 받아들인다.
+ *  windows 원소는 탭 배열(이름 없는 창) 또는 {name, tabs}(이름 있는 창) 둘 다 읽는다 */
 interface SavedTabsFileV2 {
   version: 2
-  windows: SavedWindow[]
+  windows: Array<SavedWindow | { name: string | null; tabs: SavedWindow }>
 }
+
+/** 창 별칭 규칙 — 글자로 시작(숫자만인 창 번호와 섞이지 않게), 32자까지 */
+export const WINDOW_NAME_RE = /^[A-Za-z][A-Za-z0-9_.-]{0,31}$/
 
 /** 지금 탭 목록에서 저장할 것만 고른다(사람이 연 탭, 순서 그대로). 주소가 없는 탭은 뺀다 */
 export function savedTabsOf(list: readonly TabInfo[], isUser: (id: string) => boolean): SavedTab[] {
@@ -62,6 +72,13 @@ export function parseSavedTabs(raw: string): SavedTab[] {
  * v1(탭 배열 하나)은 창 하나로, v2({version:2, windows}) 는 창마다 하나씩. 빈 창·틀린 모양은 버린다
  */
 export function parseSavedWindows(raw: string): SavedWindow[] {
+  return parseSavedWindowGroups(raw)
+    .map((g) => g.tabs)
+    .filter((w) => w.length > 0)
+}
+
+/** 창별 목록 + 별칭. 이름 없는 빈 창은 버리고, 이름 있는 창은 빈 채로도 남긴다(브릿지가 이름으로 다시 찾는다) */
+export function parseSavedWindowGroups(raw: string): SavedWindowGroup[] {
   let parsed: unknown
   try {
     parsed = JSON.parse(raw)
@@ -70,15 +87,31 @@ export function parseSavedWindows(raw: string): SavedWindow[] {
   }
   if (Array.isArray(parsed)) {
     const one = parseTabList(parsed)
-    return one.length > 0 ? [one] : []
+    return one.length > 0 ? [{ name: null, tabs: one }] : []
   }
   if (typeof parsed !== 'object' || parsed === null) return []
   const file = parsed as Partial<SavedTabsFileV2>
   if (file.version !== 2 || !Array.isArray(file.windows)) return []
-  return file.windows
-    .map((w) => parseTabList(w))
-    .filter((w) => w.length > 0)
-    .slice(0, MAX_SAVED_WINDOWS)
+  const groups: SavedWindowGroup[] = []
+  const seen = new Set<string>()
+  for (const w of file.windows) {
+    let name: string | null = null
+    let tabs: SavedTab[]
+    if (Array.isArray(w)) tabs = parseTabList(w)
+    else if (typeof w === 'object' && w !== null) {
+      const o = w as { name?: unknown; tabs?: unknown }
+      name = typeof o.name === 'string' && WINDOW_NAME_RE.test(o.name) ? o.name : null
+      tabs = parseTabList(o.tabs)
+    } else continue
+    // 같은 이름이 둘이면 앞 것만
+    if (name !== null) {
+      if (seen.has(name)) name = null
+      else seen.add(name)
+    }
+    if (name === null && tabs.length === 0) continue
+    groups.push({ name, tabs })
+  }
+  return groups.slice(0, MAX_SAVED_WINDOWS)
 }
 
 export function loadSavedTabs(file: string): SavedTab[] {
@@ -86,8 +119,14 @@ export function loadSavedTabs(file: string): SavedTab[] {
 }
 
 export function loadSavedWindows(file: string): SavedWindow[] {
+  return loadSavedWindowGroups(file)
+    .map((g) => g.tabs)
+    .filter((w) => w.length > 0)
+}
+
+export function loadSavedWindowGroups(file: string): SavedWindowGroup[] {
   try {
-    return parseSavedWindows(readFileSync(file, 'utf-8'))
+    return parseSavedWindowGroups(readFileSync(file, 'utf-8'))
   } catch {
     // 처음 실행이면 파일이 없다
     return []
@@ -101,9 +140,20 @@ export function writeSavedTabs(file: string, tabs: readonly SavedTab[]): void {
 
 /** 창별 목록(v2 모양)으로 저장한다. 탭이 하나도 없는 창은 빼고 쓴다 */
 export function writeSavedWindows(file: string, windows: readonly SavedWindow[]): void {
+  writeSavedWindowGroups(
+    file,
+    windows.map((tabs) => ({ name: null, tabs }))
+  )
+}
+
+/** 창별 목록 + 별칭으로 저장한다. 이름 없는 빈 창만 뺀다 */
+export function writeSavedWindowGroups(file: string, groups: readonly SavedWindowGroup[]): void {
   const payload: SavedTabsFileV2 = {
     version: 2,
-    windows: windows.filter((w) => w.length > 0).slice(0, MAX_SAVED_WINDOWS)
+    windows: groups
+      .filter((g) => g.name !== null || g.tabs.length > 0)
+      .slice(0, MAX_SAVED_WINDOWS)
+      .map((g) => (g.name === null ? g.tabs : { name: g.name, tabs: g.tabs }))
   }
   try {
     writeFileSync(file, JSON.stringify(payload), 'utf-8')

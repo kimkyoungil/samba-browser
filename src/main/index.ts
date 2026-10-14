@@ -3,7 +3,11 @@ import { app, crashReporter } from 'electron'
 import { electronApp, is, optimizer } from '@electron-toolkit/utils'
 import { createMainWindow } from './window'
 import { TabManager } from './browser/tab-manager'
-import { loadSavedWindows, savedTabsOf, writeSavedWindows } from './browser/user-tabs-store'
+import {
+  loadSavedWindowGroups,
+  savedTabsOf,
+  writeSavedWindowGroups
+} from './browser/user-tabs-store'
 import { WindowManager, type WindowEntry } from './browser/window-manager'
 import { setExtensionTabsProvider } from './extensions/tabs-bridge'
 import { installExtensionPageApi } from './extensions/page-api'
@@ -184,7 +188,7 @@ app
     const savedTabsFile = join(app.getPath('userData'), 'user-tabs.json')
     const restoreInto = (
       entry: WindowEntry,
-      saved: ReturnType<typeof loadSavedWindows>[number]
+      saved: ReturnType<typeof loadSavedWindowGroups>[number]['tabs']
     ): void => {
       let restored = 0
       let activeId: string | null = null
@@ -205,8 +209,16 @@ app
       }
       if (activeId) entry.tabs.activate(activeId)
     }
-    loadSavedWindows(savedTabsFile).forEach((saved, i) => {
-      restoreInto(i === 0 ? first : wm.create(), saved)
+    // 창 별칭(브릿지가 이름으로 찾는 창)도 함께 되살린다 — 첫 창은 이미 만들어져 있으니 이름만 붙인다
+    loadSavedWindowGroups(savedTabsFile).forEach((group, i) => {
+      let entry: WindowEntry
+      if (i === 0) {
+        entry = first
+        first.name = group.name
+      } else {
+        entry = wm.create(group.name ? { name: group.name } : {})
+      }
+      restoreInto(entry, group.tabs)
     })
     // 되살린 탭이 하나도 없는 창(첫 실행·전부 실패)은 빈 창으로 두지 않는다
     for (const entry of wm.all()) {
@@ -225,9 +237,12 @@ app
       if (saveTimer) clearTimeout(saveTimer)
       saveTimer = setTimeout(() => {
         if (savingStopped) return
-        writeSavedWindows(
+        writeSavedWindowGroups(
           savedTabsFile,
-          wm.all().map((e) => savedTabsOf(e.tabs.listAll(), (id) => e.tabs.isUserTab(id)))
+          wm.all().map((e) => ({
+            name: e.name,
+            tabs: savedTabsOf(e.tabs.listAll(), (id) => e.tabs.isUserTab(id))
+          }))
         )
       }, 800)
     }

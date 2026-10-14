@@ -310,13 +310,57 @@ describe('BridgeServer — 창 단위 호출(X-Samba-Window)', () => {
       headers: H,
       body: '{}'
     })
-    expect(seen).toEqual([2, undefined])
+    expect(seen).toEqual(['2', undefined])
+  })
+
+  it('별칭도 받는다 — 응답의 window 는 그대로 이름', async () => {
+    const seen: Array<string | undefined> = []
+    const fs = fakeSession()
+    server = new BridgeServer({
+      openSession: (onStep, _lane, window) => {
+        seen.push(window)
+        return fs.make(onStep)
+      },
+      token: () => TOKEN
+    })
+    const port = await server.start(0)
+    const r = await fetch(`http://127.0.0.1:${port}/tool/get_page`, {
+      method: 'POST',
+      headers: { ...H, 'X-Samba-Window': 'video' },
+      body: '{}'
+    })
+    expect(await r.json()).toMatchObject({ ok: true, window: 'video' })
+    expect(seen).toEqual(['video'])
+  })
+
+  it('POST /windows 는 {name} 을 넘기고, 숫자만인 이름은 400', async () => {
+    const names: Array<string | undefined> = []
+    const base = await up({
+      createWindow: (name) => {
+        names.push(name)
+        return { id: 3, name: name ?? null, title: '', tabs: 1, primary: false }
+      }
+    })
+    const r = await fetch(`${base}/windows`, {
+      method: 'POST',
+      headers: H,
+      body: '{"name":"video"}'
+    })
+    expect(await r.json()).toEqual({
+      ok: true,
+      window: { id: 3, name: 'video', title: '', tabs: 1, primary: false }
+    })
+    await fetch(`${base}/windows`, { method: 'POST', headers: H })
+    expect(names).toEqual(['video', undefined])
+    expect(
+      (await fetch(`${base}/windows`, { method: 'POST', headers: H, body: '{"name":"12"}' })).status
+    ).toBe(400)
   })
 
   it('창 번호가 숫자가 아니면 400, 없는 창이면 404', async () => {
     server = new BridgeServer({
       openSession: (onStep, _lane, window) => {
-        if (window !== undefined) throw new BridgeWindowNotFound(window)
+        if (window !== undefined) throw new BridgeWindowNotFound(Number(window))
         return fakeSession().make(onStep)
       },
       token: () => TOKEN
@@ -324,7 +368,7 @@ describe('BridgeServer — 창 단위 호출(X-Samba-Window)', () => {
     const port = await server.start(0)
     const bad = await fetch(`http://127.0.0.1:${port}/tool/get_page`, {
       method: 'POST',
-      headers: { ...H, 'X-Samba-Window': 'new' },
+      headers: { ...H, 'X-Samba-Window': '!!bad' },
       body: '{}'
     })
     expect(bad.status).toBe(400)
@@ -338,17 +382,17 @@ describe('BridgeServer — 창 단위 호출(X-Samba-Window)', () => {
   })
 
   it('GET /windows 는 창 목록, POST /windows 는 새 창을 돌려준다(배선이 없으면 404)', async () => {
-    const list = [{ id: 1, title: '무신사', tabs: 2, primary: true }]
+    const list = [{ id: 1, name: null, title: '무신사', tabs: 2, primary: true }]
     const base = await up({
       windows: () => list,
-      createWindow: () => ({ id: 2, title: '', tabs: 1, primary: false })
+      createWindow: () => ({ id: 2, name: null, title: '', tabs: 1, primary: false })
     })
     const got = await fetch(`${base}/windows`, { headers: H })
     expect(await got.json()).toEqual({ ok: true, windows: list })
     const made = await fetch(`${base}/windows`, { method: 'POST', headers: H })
     expect(await made.json()).toEqual({
       ok: true,
-      window: { id: 2, title: '', tabs: 1, primary: false }
+      window: { id: 2, name: null, title: '', tabs: 1, primary: false }
     })
     await server?.stop()
     const plain = await up()

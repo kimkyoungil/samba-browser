@@ -10,6 +10,7 @@ import logging
 import os
 import re
 import time
+import unicodedata
 from collections.abc import Callable
 from pathlib import Path
 from urllib.parse import urlparse
@@ -46,7 +47,7 @@ def source_of(agent_name: str) -> Source:
     source = default_sources().by_agent(agent_name)
     if source is None:
         raise AgentFailure(
-            'needs_human', f'소싱처 표에 없는 에이전트: {agent_name}', FailReason.UNKNOWN
+            'needs_ai', f'소싱처 표에 없는 에이전트: {agent_name}', FailReason.UNKNOWN
         )
     return source
 
@@ -106,8 +107,11 @@ def _norm_address(text: str) -> str:
     return _ADDR_DROP.sub('', text).lower()
 
 
-# 소싱처와 상관없이 항상 까대기(사무실 수령)로 사는 브랜드 — 사용자 2026-10-08 "스케쳐스는 까대기로 고정"
-KKADAEGI_BRANDS = re.compile(r'스케[쳐처]스|skechers', re.IGNORECASE)
+# 소싱처와 무관하게 사무실 수령으로 고정한 브랜드 — 사용자 지시 2026-10-12
+KKADAEGI_BRANDS = re.compile(
+    r'스케[쳐처]스|skechers|르무통|\blemouton\b|데상트|\bdescente\b|휠라|\bfila\b',
+    re.IGNORECASE,
+)
 # 상품명에 브랜드 글자가 없어도 품번으로 안다 — 스케쳐스 품번은 S+영문+0+(W|M|G|K)+영문 4자+숫자 3자
 # (SL0WPCEX305·SP0MRCGY021·SC0WFCGY092·SC0MFCEY042). 실기 2026-10-09 20261009ECF62B: 상품명이
 # '매장정품 여성슬립온 … 플렉스 어필 5 0 SL0WPCEX305' 라 브랜드를 못 알아 선물하기(고객 직배)로 샀다
@@ -128,6 +132,18 @@ def road_key(address: object) -> str:
         r'([가-힣]+(?:동|리|가))\s+(\d+(?:-\d+)?)', text
     )
     return f'{m.group(1)}{m.group(2)}'.replace(' ', '') if m else ''
+
+
+def shipping_for_source(shipping: dict[str, object], source: str) -> dict[str, object]:
+    if source.lower() != 'ssg':
+        return shipping
+    name = str(shipping.get('name') or '')
+    normalized = ''.join(
+        c if c.isalnum() or c.isspace() or unicodedata.category(c).startswith('M')
+        else 'ㅇ' if c == '*' else ''
+        for c in name
+    )
+    return {**shipping, 'name': ' '.join(normalized.split())}
 
 
 def shipping_matches(expected: dict[str, object], applied: dict[str, object]) -> bool:
@@ -553,7 +569,7 @@ def blocked_failure(out: dict[str, object], what: str) -> AgentFailure | None:
     if out.get('error') != BLOCKED_ERROR:
         return None
     return AgentFailure(
-        'needs_human',
+        'needs_ai',
         mask_text(
             f'{BLOCKED_REASON}({what}) — 재시도하지 않는다: {str(out.get("note") or "")[:80]}'
         ),
@@ -1174,7 +1190,7 @@ def coupon_gap_failure(my_price: float | None, sheet_total: float, account: str)
     gap = sheet_total - my_price
     if coupon_gap(my_price, sheet_total) > 0:
         raise AgentFailure(
-            'needs_human',
+            'needs_ai',
             f'{account}: 쿠폰 미적용 의심 — 상품 화면 나의 할인가 {my_price:,.0f}원인데 주문서 {sheet_total:,.0f}원'
             f'(차이 {gap:,.0f}원). 결제하지 않음',
             # MARGIN 으로 두면 자동 취소중이 된다 — 쿠폰 문제지 마진 문제가 아니다
@@ -1684,7 +1700,7 @@ class BuyerAgent(AgentBase):
                 self.note('배송 종류', mask_text(f'{e.reason} — 직배 주문서로 다시 연다'))
                 return self._buy(assignment)
 
-        return run_agent(attempt, lambda: self.evidence)
+        return run_agent(attempt, lambda: self.evidence, self.failure_shot(assignment))
 
     def tool(self, name: str, /, **args: object) -> str:
         """dry_run 이면 부수효과 도구는 허용 목록에 있어도 아예 부르지 않는다(불변조건)."""
@@ -1701,7 +1717,7 @@ class BuyerAgent(AgentBase):
         home = source_of(self.spec.name).home
         if not home:
             raise AgentFailure(
-                'needs_human',
+                'needs_ai',
                 f'소싱처 첫 페이지 주소가 표에 없다: {self.spec.name}',
                 FailReason.UNKNOWN,
             )
@@ -1808,7 +1824,7 @@ class BuyerAgent(AgentBase):
             self.note('로그인', f'{account} — 사이트 로그인 확인 스크립트로 로그인됨 확인')
             return
         raise AgentFailure(
-            'needs_human',
+            'needs_ai',
             f'로그인 실패({account}): {mask_text(out[:120])}',
             FailReason.PERMISSION_DENIED,
         )
@@ -1875,7 +1891,7 @@ class BuyerAgent(AgentBase):
         labels, locked = parse_account_labels(listed)
         if locked or not labels:
             raise AgentFailure(
-                'needs_human',
+                'needs_ai',
                 f'소싱처 계정 없음/금고 잠김: {source.id}',
                 FailReason.PERMISSION_DENIED,
             )
@@ -1948,7 +1964,7 @@ class BuyerAgent(AgentBase):
         labels, locked = parse_account_labels(self.tool('list_accounts', host=host))
         if locked or not labels:
             raise AgentFailure(
-                'needs_human',
+                'needs_ai',
                 f'소싱처 계정 없음/금고 잠김: {source.id}',
                 FailReason.PERMISSION_DENIED,
             )
@@ -2047,7 +2063,7 @@ class BuyerAgent(AgentBase):
         why = self._unusable(a, again)
         if why:
             raise AgentFailure(
-                'needs_human',
+                'needs_ai',
                 mask_text(f'진입 경로로 다시 들어가 주문서를 못 만들었다: {why}'),
                 FailReason.UNKNOWN,
             )
@@ -2106,14 +2122,14 @@ class BuyerAgent(AgentBase):
             )
         except AgentFailure as e:
             raise AgentFailure(
-                'needs_human',
+                'needs_ai',
                 mask_text(f'{route} 진입 링크를 못 받았다 — 직접 진입하지 않는다: {e.reason[:80]}'),
                 FailReason.UNKNOWN,
             ) from e
         url = str(out.get('entry_url') or '')
         if not out.get('ok') or not url.startswith('https://'):
             raise AgentFailure(
-                'needs_human',
+                'needs_ai',
                 mask_text(
                     f'{route} 경유 링크 없음({out.get("error") or "-"}: {str(out.get("note") or "")[:80]}) — '
                     '직접 진입하지 않는다, 사람이 확인한다'
@@ -2272,16 +2288,22 @@ class BuyerAgent(AgentBase):
         if snap.get('error') == 'seller-not-allowed':
             # 판매자가 정해진 곳(롯데백화점)이 아니다 — 품절이 아니라 '여기서 못 사는 상품'이다. 근거(판매자)를 남기고 멈춘다
             raise AgentFailure(
-                'needs_human',
+                'needs_ai',
                 mask_text(
                     f'판매자가 {source.required_seller} 이(가) 아니다(읽은 판매자: {str(snap.get("seller") or "-")[:40]}) — 사지 않는다'
                 ),
                 FailReason.UNKNOWN,
             )
+        if snap.get('error') == 'seller-read-failed':
+            raise AgentFailure(
+                'needs_ai',
+                '판매자를 읽지 못했다 — 다른 판매자로 확정하지 않고 구매하지 않는다',
+                FailReason.UNKNOWN,
+            )
         if snap.get('error') in ENTRY_ERRORS:
             # 다나와 경유 도착에 제휴(ReferCode)가 없거나 다른 상품이 떴다 — 그대로 사면 규칙 위반이다(H몰 직접 진입 금지)
             raise AgentFailure(
-                'needs_human',
+                'needs_ai',
                 mask_text(
                     f'진입 경로 확인 실패({snap.get("error")}): {str(snap.get("note") or "")[:100]}'
                 ),
@@ -2306,7 +2328,7 @@ class BuyerAgent(AgentBase):
         if snapshot_login_required(snap):
             # 이 계정은 견적에서 빠진다(다른 계정 세션으로 대신 견적하지 않는다 — 실기 2026-09-25)
             raise AgentFailure(
-                'needs_human',
+                'needs_ai',
                 f'{account}: 로그인이 안 돼 있어 견적 못 함({snap.get("note") or snap.get("error")})',
                 FailReason.PERMISSION_DENIED,
             )
@@ -2355,7 +2377,7 @@ class BuyerAgent(AgentBase):
             if snap.get('error') == NOT_MALL_ERROR:
                 if not source.mall_item:
                     raise AgentFailure(
-                        'needs_human',
+                        'needs_ai',
                         '지정 몰 상품이 아니다(신세계몰 아님) — 사람이 같은 상품을 찾는다',
                         FailReason.UNKNOWN,
                     )
@@ -2390,7 +2412,7 @@ class BuyerAgent(AgentBase):
         model = model_code_of(a.order.sku)
         if not model:
             raise AgentFailure(
-                'needs_human',
+                'needs_ai',
                 mask_text(
                     f'주문 링크가 신세계몰 상품이 아닌데 상품명에서 모델코드를 못 찾았다: {a.order.sku[:60]}'
                 ),
@@ -2416,7 +2438,7 @@ class BuyerAgent(AgentBase):
         items = mall_candidates(out.get('items'))
         if not items:
             raise AgentFailure(
-                'needs_human',
+                'needs_ai',
                 f'신세계몰에 같은 모델({model}) 상품이 없다 — 사람이 확인한다',
                 FailReason.UNKNOWN,
             )
@@ -2439,7 +2461,7 @@ class BuyerAgent(AgentBase):
             misses.append(f'{item["item_id"]}: {why}')
             self.note('신세계몰 상품', mask_text(f'{item["item_id"]}: 불가({why})'))
         raise AgentFailure(
-            'needs_human',
+            'needs_ai',
             mask_text(
                 f'신세계몰 같은 모델({model}) 후보에 주문 옵션이 맞는 상품이 없다 — {"; ".join(misses)[:200]}'
             ),
@@ -2582,7 +2604,7 @@ class BuyerAgent(AgentBase):
             why = self._unusable(a, again)
             if why:
                 raise AgentFailure(
-                    'needs_human',
+                    'needs_ai',
                     mask_text(f'이긴 경로({route})로 다시 들어가 주문서를 못 만들었다: {why}'),
                     FailReason.UNKNOWN,
                 )
@@ -2806,13 +2828,13 @@ class BuyerAgent(AgentBase):
         ):
             # 쿠폰을 골랐다고 했는데 할인 0원 — 선택이 반영되지 않은 것이다(실기 2026-10-01). 그대로 사면 쿠폰을 버린다
             raise AgentFailure(
-                'needs_human',
+                'needs_ai',
                 f'{account}: 쿠폰을 골랐는데 할인이 0원이다 — 결제하지 않음({mask_text(str(out.get("note"))[:80])})',
                 FailReason.UNKNOWN,
             )
         if not out.get('ok'):
             raise AgentFailure(
-                'needs_human',
+                'needs_ai',
                 f'주문서 정돈 실패: {mask_text(str(out.get("note") or "")[:80])}',
                 FailReason.UNKNOWN,
             )
@@ -3035,7 +3057,7 @@ class BuyerAgent(AgentBase):
             # 결제 항목은 있는데 이 주문서의 수단과 겹치지 않는다 — 모델이 고르게 두면 실결제에서 어차피 막힌다
             offered = sorted({str(q.get('method')) for q in raw_quotes if isinstance(q, dict)})
             raise AgentFailure(
-                'needs_human',
+                'needs_ai',
                 f'결제 가능한 수단이 없다({account}): 키마스터 결제 항목 {sorted(payable) or "없음"}, '
                 f'주문서 결제수단 {offered} — 견적 {_quote_rows_brief(raw_quotes)}',
                 FailReason.CARD_MISSING,
@@ -3548,6 +3570,12 @@ class BuyerAgent(AgentBase):
                 out = json.loads(split_page_dialogs(raw)[0])
             except Exception:  # noqa: BLE001 — 빠른 비교 실패는 주문서 비교로 넘긴다
                 return account, None
+            finally:
+                if self.parallel_accounts:
+                    try:
+                        bridge.call('run_js', code=_CLOSE_LANE_TABS_JS, safety='no_pay')
+                    except Exception:  # noqa: BLE001 — 정리 실패가 주문서 비교를 막으면 안 된다
+                        logger.warning('빠른 비교 전용 레인 탭 정리 실패: %s', source.key)
             if not isinstance(out, dict) or out.get('logged_in') is False:
                 return account, None
             price = _as_float(out.get('my_price'))
@@ -3735,14 +3763,14 @@ class BuyerAgent(AgentBase):
         if not quotes:
             if unpayable:
                 raise AgentFailure(
-                    'needs_human', '결제 항목이 있는 계정이 없다(키마스터)', FailReason.CARD_MISSING
+                    'needs_ai', '결제 항목이 있는 계정이 없다(키마스터)', FailReason.CARD_MISSING
                 )
             # 어느 계정도 스냅샷까지 못 갔고 전부 사람 확인(로그인 실패·캡차)이면 그 사유가 맞다 — 품절이 아니다
             errors = self._quote_errors
-            if len(errors) == len(accounts) and all(e.status == 'needs_human' for e in errors):
+            if len(errors) == len(accounts) and all(e.status == 'needs_ai' for e in errors):
                 first = errors[0]
                 raise AgentFailure(
-                    'needs_human', f'모든 계정 불가 — {first.reason}', first.fail_reason
+                    'needs_ai', f'모든 계정 불가 — {first.reason}', first.fail_reason
                 )
             # 계정 사유로 빠진 계정 말고는 모두 '주문 옵션이 품절 표시로 떠 있다'면 확정 품절 — 다시 돌려도 같다
             if (
@@ -3765,7 +3793,7 @@ class BuyerAgent(AgentBase):
             # 품절 확증이 없는 실패는 품절이 아니다 — 사람 확인으로 넘긴다
             # (실기 2026-09-28: 옵션 목록을 못 읽은 건들이 out_of_stock 으로 나가 재고X·취소요청이 찍혔다)
             raise AgentFailure(
-                'needs_human',
+                'needs_ai',
                 mask_text(
                     f'모든 계정에서 살 수 없다(품절 미확인·실패): {", ".join(accounts)} — {why}'
                 ),
@@ -3800,7 +3828,7 @@ class BuyerAgent(AgentBase):
             self.note('로그인 계정', f'표시 이름이라 대조 불가: {seen} (주문 계정 {want})')
             return
         raise AgentFailure(
-            'needs_human',
+            'needs_ai',
             f'다른 계정으로 로그인돼 있다: {seen} (주문 계정 {want})',
             FailReason.PERMISSION_DENIED,
         )
@@ -3903,7 +3931,7 @@ class BuyerAgent(AgentBase):
             self._apply_payment_quotes(a, account, snap)
         if snap.get('_unpayable'):
             raise AgentFailure(
-                'needs_human',
+                'needs_ai',
                 f'{account}: 허용 결제수단으로 낼 수 없다(키마스터 결제 항목)',
                 FailReason.CARD_MISSING,
             )
@@ -3930,7 +3958,7 @@ class BuyerAgent(AgentBase):
                 )
             # 선택지를 하나도 못 읽었고 품절 표시도 없다 — 스크립트가 못 읽은 것이지 품절이 아니다
             raise AgentFailure(
-                'needs_human',
+                'needs_ai',
                 f'옵션 목록을 못 읽었다(품절 미확인): {a.order.sku}',
                 FailReason.UNKNOWN,
             )
@@ -3951,7 +3979,7 @@ class BuyerAgent(AgentBase):
                 )
             # 목록에 아예 없는 옵션은 품절 확증이 아니다 — 사람 확인
             raise AgentFailure(
-                'needs_human',
+                'needs_ai',
                 f'주문 옵션 [{a.order.option}] 이 선택지에 없다(품절 미확인): {options}',
                 FailReason.UNKNOWN,
             )
@@ -3978,7 +4006,7 @@ class BuyerAgent(AgentBase):
         if picked.choice not in candidates:
             # 후보 밖을 골랐다 — 품절 확증이 아니라 판정 실패다(사람 확인)
             raise AgentFailure(
-                'needs_human', f'고른 옵션이 후보에 없다: {picked.choice}', FailReason.UNKNOWN
+                'needs_ai', f'고른 옵션이 후보에 없다: {picked.choice}', FailReason.UNKNOWN
             )
         self.note('옵션 선택', f'{picked.choice} — {picked.reason}')
         reached_sheet = snap.get('cost') is not None or bool(snap.get('methods'))
@@ -4000,7 +4028,7 @@ class BuyerAgent(AgentBase):
             snap = self._snapshot(a, account)
             if snap.get('cost') is None and not snap.get('methods'):
                 raise AgentFailure(
-                    'needs_human',
+                    'needs_ai',
                     f'고른 선택지 [{picked.choice}] 로도 주문서를 못 열었다: {snap.get("note") or snap.get("error") or ""}',
                     FailReason.UNKNOWN,
                 )
@@ -4026,7 +4054,7 @@ class BuyerAgent(AgentBase):
             ]
             if not methods:
                 raise AgentFailure(
-                    'needs_human',
+                    'needs_ai',
                     f'허용 결제수단({sorted(allowed_now)})이 주문서에 없다',
                     FailReason.CARD_MISSING,
                 )
@@ -4055,7 +4083,7 @@ class BuyerAgent(AgentBase):
             # 결제수단이 정해진 계정(buyer02 = 무신사머니)인데 견적이 없고 그 수단이 주문서에 따로 없다 —
             # 모델에게 고르게 하면 간편결제 기본 카드로 결제될 수 있다(실기 2026-09-25 롯데카드 모자 주문)
             raise AgentFailure(
-                'needs_human',
+                'needs_ai',
                 f'{account} 는 {sorted(only)} 로만 결제하는데 견적이 없어 수단을 확정하지 못했다',
                 FailReason.CARD_MISSING,
             )
@@ -4202,7 +4230,7 @@ class BuyerAgent(AgentBase):
         source = source_of(self.spec.name)
         forced = source.order_type
         if not forced and is_fixed_kkadaegi(order):
-            # 스케쳐스는 어느 소싱처에서 사든 사무실로 받는다(선물하기·직배로 가지 않는다)
+            # 고정 브랜드는 어느 소싱처에서 사든 사무실로 받는다.
             forced = 'kkadaegi'
         if source.gift_unless_poison and not forced:
             # 롯데온·SSG: 포이즌·라자다 배대지는 사무실 수령(까대기), 그 밖은 전부 선물하기 — 정가 비교 없이 정해진다
@@ -4227,7 +4255,7 @@ class BuyerAgent(AgentBase):
         normal = _as_float(snap.get('normal_price')) if snap else 0.0
         kind, why = decide_order_type(order, normal if normal > 0 else None, forced, forwarder)
         if not kind:
-            raise AgentFailure('needs_human', f'직배/까대기 판정 불가 — {why}', FailReason.UNKNOWN)
+            raise AgentFailure('needs_ai', f'직배/까대기 판정 불가 — {why}', FailReason.UNKNOWN)
         if self._order_type_noted != (order.order_no, kind):
             self._order_type_noted = (order.order_no, kind)
             self.note(
@@ -4321,15 +4349,15 @@ class BuyerAgent(AgentBase):
             except WaveError as e:
                 raise AgentFailure('fail', f'배송지 조회 실패: {e}', e.reason) from e
             if fetched:
-                return fetched
+                return shipping_for_source(fetched, source_of(self.spec.name).key)
         embedded = snap.get('shipping')
         if isinstance(embedded, dict) and embedded:
-            return embedded
+            return shipping_for_source(embedded, source_of(self.spec.name).key)
         fetched = self.json_tool(
             'run_script', name=SHIPPING_SCRIPT, args=f'{{"order_no":"{a.order.order_no}"}}'
         )
         shipping = fetched.get('shipping')
-        return shipping if isinstance(shipping, dict) else fetched
+        return shipping_for_source(shipping if isinstance(shipping, dict) else fetched, source_of(self.spec.name).key)
 
     def _set_shipping(self, a: Assignment, snap: dict[str, object], account: str) -> None:
         """배송지 — 까대기면 기본 배송지를 유지하고, 직배·선물이면 고객 이름·주소를 새로 넣는다.
@@ -4377,7 +4405,7 @@ class BuyerAgent(AgentBase):
         shipping = self._fetch_shipping(a, snap)
         if not (shipping.get('name') and shipping.get('address')):
             raise AgentFailure(
-                'needs_human', '선물 받는 분 배송지를 받지 못했다', FailReason.UNKNOWN
+                'needs_ai', '선물 받는 분 배송지를 받지 못했다', FailReason.UNKNOWN
             )
         url = str(snap.get('product_url') or a.order.product_url or '')
         selected = re.sub(r'\s*쇼핑백 신청\s*$', '', str(snap.get('selected') or '')).strip()
@@ -4407,7 +4435,7 @@ class BuyerAgent(AgentBase):
                 else FailReason.UNKNOWN
             )
             raise AgentFailure(
-                'needs_human',
+                'needs_ai',
                 f'SSG 선물 진입 실패: {mask_text(str(entered.get("note"))[:100])}',
                 reason,
             )
@@ -4426,7 +4454,7 @@ class BuyerAgent(AgentBase):
             )
             if not applied.get('ok'):
                 raise AgentFailure(
-                    'needs_human',
+                    'needs_ai',
                     f'선물 받는 분 주소 저장 실패: {mask_text(str(applied.get("note") or "")[:80])}',
                     FailReason.UNKNOWN,
                 )
@@ -4434,14 +4462,14 @@ class BuyerAgent(AgentBase):
             saved = self.json_tool('run_script', name=SSG_GIFT_SAVE_SCRIPT, args='{}')
             if not saved.get('ok'):
                 raise AgentFailure(
-                    'needs_human',
+                    'needs_ai',
                     f'선물 받는 분 주소 저장 실패: {saved.get("note")}',
                     FailReason.UNKNOWN,
                 )
             placed = self.json_tool('run_script', name=SSG_GIFT_ADDRESS_SCRIPT, args=who_args)
         if not placed.get('ok') or not placed.get('gift') or not placed.get('order_tab'):
             raise AgentFailure(
-                'needs_human',
+                'needs_ai',
                 f'선물 받는 분 지정 실패: {mask_text(str(placed.get("note"))[:100])} '
                 f'(주소록 {placed.get("entries")}개, 일치 {placed.get("matched")}개)',
                 FailReason.UNKNOWN,
@@ -4451,7 +4479,7 @@ class BuyerAgent(AgentBase):
         if amount and cost and amount > cost + 1:
             # 견적(바로구매 주문서)보다 선물 주문서가 비싸다 — 마진 판단이 틀어지므로 결제하지 않는다
             raise AgentFailure(
-                'needs_human',
+                'needs_ai',
                 f'선물 주문서 금액 {amount:,.0f}원이 견적 {cost:,.0f}원보다 크다 — 결제하지 않음',
                 FailReason.MARGIN,
             )
@@ -4467,7 +4495,7 @@ class BuyerAgent(AgentBase):
             check = self.json_tool('run_script', name=SSG_LOGIN_CHECK_SCRIPT, args=check_args)
         if not check.get('logged_in'):
             raise AgentFailure(
-                'needs_human',
+                'needs_ai',
                 'SSG 로그인이 풀려 있다 — 선물 주문서까지 만들었지만 결제하지 않음',
                 FailReason.UNKNOWN,
             )
@@ -4533,7 +4561,7 @@ class BuyerAgent(AgentBase):
             if order_no:
                 self._gift_blocked_seen[order_no] = True
             raise GiftBlockedRegion(
-                'needs_human',
+                'needs_ai',
                 f'롯데온이 선물 보내기 불가 지역으로 거절({key or "지역 미상"})',
                 FailReason.UNKNOWN,
             )
@@ -4555,7 +4583,7 @@ class BuyerAgent(AgentBase):
             f: shipping[f] for f in SHIPPING_ARG_FIELDS if shipping.get(f) is not None
         }
         if not (args.get('name') and args.get('address')):
-            raise AgentFailure('needs_human', '배송지를 받지 못했다', FailReason.UNKNOWN)
+            raise AgentFailure('needs_ai', '배송지를 받지 못했다', FailReason.UNKNOWN)
         if account:
             args['profile'] = account
         if getattr(self, '_ship_tab', ''):
@@ -4578,7 +4606,7 @@ class BuyerAgent(AgentBase):
             # note 가 없으면 오류 코드(name-input-nf 등)라도 남긴다 — 사유 없는 실패는 원인을 못 가른다(실기 2026-09-29)
             note = str(applied.get('note') or applied.get('error') or '').strip()
             raise AgentFailure(
-                'needs_human',
+                'needs_ai',
                 '배송지 입력 검증에 실패했다' + (f': {mask_text(note[:80])}' if note else ''),
                 FailReason.UNKNOWN,
             )
@@ -4656,7 +4684,7 @@ class BuyerAgent(AgentBase):
                 self.note('배송지 확정', '저장 뒤 목록 확인을 놓쳐 기존 배송지 선택으로 반영')
                 return
             raise AgentFailure(
-                'needs_human',
+                'needs_ai',
                 f'배송지 확정 검증에 실패했다: {mask_text(str(confirmed.get("note", ""))[:80])}',
                 FailReason.UNKNOWN,
             )
@@ -4714,7 +4742,7 @@ class BuyerAgent(AgentBase):
             else _int_ids([applied.get('phone_field_id')])
         )
         if not ids or len(ids) > 3:
-            raise AgentFailure('needs_human', '전화 칸을 찾지 못함', FailReason.UNKNOWN)
+            raise AgentFailure('needs_ai', '전화 칸을 찾지 못함', FailReason.UNKNOWN)
         # 칸 하나면 앱이 저장된 번호 그대로 넣는다(format 없음). 둘·셋이면 부분 형식을 준다
         formats: list[str | None] = {
             1: [None],
@@ -4741,11 +4769,11 @@ class BuyerAgent(AgentBase):
                 )
             except AgentFailure as e:
                 raise AgentFailure(
-                    'needs_human', f'배송 연락처 입력 실패: {e.reason}', e.fail_reason
+                    'needs_ai', f'배송 연락처 입력 실패: {e.reason}', e.fail_reason
                 ) from e
             if not out.strip().lower().startswith('ok'):
                 raise AgentFailure(
-                    'needs_human',
+                    'needs_ai',
                     f'배송 연락처 입력 실패: {mask_text(out.strip()[:100])}',
                     FailReason.UNKNOWN,
                 )
@@ -4767,7 +4795,7 @@ class ScriptsPendingBuyer:
 
     def __call__(self, assignment: Assignment) -> AgentResult:
         return AgentResult(
-            status='needs_human',
+            status='needs_ai',
             reason=f'스크립트 미작성: {self.source.id}',
             fail_reason=FailReason.UNKNOWN,
         )

@@ -611,7 +611,13 @@ def make_after_done(
                         log.warning('선물 수락(카톡 검색) 실패 — 옛 방식으로 다시: %s', e)
                 return 'SSG ' + accept_ssg_gift(phone, model_code_of(sku) or '', sku=sku)
             except GiftAcceptError as e:
-                return f'SSG 선물 수락 실패 — {e}(카카오톡에서 직접 수락 필요)'
+                # 실패 순간의 폰 화면을 남긴다 — 글자 덤프만으로는 안내 팝업·완료 화면을 오판한다(2026-10-14)
+                from samba_agent.ops.evidence import save_phone_shot, tag
+
+                shot = save_phone_shot(
+                    adb_path, serial, source_order_no_of(out) or '', 'gift_accept', tuple(adb_server_args())
+                )
+                return f'SSG 선물 수락 실패 — {e}(카카오톡에서 직접 수락 필요){tag(shot)}'
             except (OSError, subprocess.TimeoutExpired) as e:
                 return f'SSG 선물 수락 실패 — 폰 명령 오류 {type(e).__name__}(카카오톡에서 직접 수락 필요)'
 

@@ -66,7 +66,9 @@ class VerifierAgent(AgentBase):
 
     def __call__(self, assignment: Assignment) -> AgentResult:
         self.reset_repairs()
-        return run_agent(lambda: self._verify(assignment), lambda: self.evidence)
+        return run_agent(
+            lambda: self._verify(assignment), lambda: self.evidence, self.failure_shot(assignment)
+        )
 
     def _verify(self, a: Assignment) -> AgentResult:
         self.evidence = []
@@ -81,7 +83,7 @@ class VerifierAgent(AgentBase):
         if not a.expected:
             # 대조할 값이 하나도 없으면 '다 맞았다' 가 아니라 '확인하지 못했다' 다(리뷰 지적 — Minor)
             return AgentResult(
-                status='needs_human',
+                status='needs_ai',
                 reason='대조할 기대값이 없다 — 앞 단계가 값을 넘기지 못했다',
                 fail_reason=FailReason.VERIFY_MISMATCH,
                 evidence=tuple(self.evidence),
@@ -100,7 +102,7 @@ class VerifierAgent(AgentBase):
             if 'no saved script' not in e.reason:
                 raise
             # 상세 스크립트가 아직 없는 소싱처(롯데온) — 결제·기입은 끝났다. 소싱처 쪽 대조만 건너뛰고 삼바웨이브
-            # 기입값은 그대로 대조한다(실기 2026-09-29: 결제·기록된 롯데온 주문이 매번 needs_human 으로 남았다)
+            # 기입값은 그대로 대조한다(실기 2026-09-29: 결제·기록된 롯데온 주문이 매번 needs_ai 으로 남았다)
             self.note('소싱처 대조 불가', f'주문 상세 스크립트 없음({detail_script(site_of(a))}) — 삼바웨이브 기입만 대조')
             source = {k: v for k, v in a.expected.items() if k in ('source_order_no', 'real_price')}
         # 원가는 결제 뒤 실제 상세로 다시 계산해 기록한다(기록 에이전트) — 견적 원가 대신 그 값으로 대조한다
@@ -166,7 +168,7 @@ class VerifierAgent(AgentBase):
         if len(unverified) == len(a.expected):
             # 소싱처 쪽만 맞고 SAMBA 쪽은 하나도 못 봤다 — '다 맞았다' 가 아니다
             return AgentResult(
-                status='needs_human',
+                status='needs_ai',
                 reason='삼바웨이브에서 대조할 수 있는 값이 없다 — 사람이 확인해야 한다',
                 fail_reason=FailReason.VERIFY_MISMATCH,
                 payload={'mismatches': [], 'unverified': list(unverified)},

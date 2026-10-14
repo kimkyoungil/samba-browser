@@ -13,6 +13,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from samba_agent.ops.evidence import host_of, is_secret_stage, save_browser_shots, save_text_shot
+from samba_agent.ops.evidence import tag as evidence_tag
 from samba_agent.agents.contracts import AgentResult, Evidence
 from samba_agent.agents.refusal import classify_refusal
 from samba_agent.agents.registry import AgentSpec
@@ -70,7 +72,7 @@ class AgentFailure(Exception):
     """에이전트 중단. 감독자가 보는 것은 이걸 바꾼 AgentResult 다."""
 
     def __init__(
-        self, status: Literal['fail', 'needs_human'], reason: str, fail_reason: FailReason
+        self, status: Literal['fail', 'needs_ai'], reason: str, fail_reason: FailReason
     ) -> None:
         super().__init__(reason)
         self.status = status
@@ -106,20 +108,42 @@ class AgentBase:
         # 진행 보고 횟수 — 앱 progress 도구는 done/total 정수가 필수다(실기: label 만 보내 거절당함)
         self._steps = 0
 
+    def failure_shot(self, assignment: object) -> Callable[[str], list[str]]:
+        """실패 순간 이 주문의 소싱처 탭을 찍는 함수. 사유에 비밀번호·키패드가 들면 찍지 않는다."""
+
+        def shot(reason: str) -> list[str]:
+            if is_secret_stage(reason):
+                return []
+            order = getattr(assignment, 'order', None)
+            order_no = str(getattr(order, 'order_no', '') or '')
+            host = host_of(str(getattr(order, 'product_url', '') or ''))
+            shots = save_browser_shots(order_no, self.spec.name, host_filter=host)
+            if shots:
+                return shots
+            # 숨은 탭은 화면 그림을 못 얻는다 — 그 탭의 글자 스냅샷이라도 그림으로 남긴다
+            try:
+                text = self.tool('get_page')
+            except Exception:  # noqa: BLE001 — 근거 수집 실패는 판정을 막지 않는다
+                return []
+            saved = save_text_shot(order_no, self.spec.name, f'{order_no} {reason[:60]}', text[:6000])
+            return [saved] if saved else []
+
+        return shot
+
     def tool(self, name: str, /, **args: object) -> str:
         """도구 1건. 캡차 표시는 사람에게, 브릿지 오류는 사유 그대로 실패로 바꾼다."""
         try:
             out = self.bridge.call(name, **args)
         except BridgeError as e:
             # 항상 fail 로 던진다. 권한 부족·중복은 감독자의 NO_RETRY_REASONS 가
-            # 재시도 없이 바로 needs_human 으로 넘긴다(스펙 §6) — 여기서 판단하지 않는다
+            # 재시도 없이 바로 needs_ai 으로 넘긴다(스펙 §6) — 여기서 판단하지 않는다
             raise AgentFailure('fail', str(e), e.reason) from e
         # 앱이 남긴 단계 기록(성공 여부 포함) — 실패 원인을 가를 때 호출부가 읽는다
         self.last_steps = out.steps
         if not out.result.lstrip().startswith(_MARKER_EXEMPT_PREFIXES) and any(
             m in out.result for m in NEEDS_USER_MARKERS
         ):
-            raise AgentFailure('needs_human', f'사람 확인 필요: {name}', FailReason.CAPTCHA)
+            raise AgentFailure('needs_ai', f'사람 확인 필요: {name}', FailReason.CAPTCHA)
         # 앱은 거절을 HTTP 오류가 아니라 200 + 'refused: …' 로 돌려준다 — 성공으로 읽으면
         # 잠긴 금고·읽기 전용 모드에서도 다음 단계로 넘어간다(리뷰 지적 — I5)
         verdict = classify_refusal(out.result)
@@ -365,7 +389,7 @@ class AgentBase:
                 return self._decide(prompt, model)
             except Exception as e:  # noqa: BLE001 — 판단 함수가 던지는 형식은 정해져 있지 않다
                 last = e
-        raise AgentFailure('needs_human', f'구조화 출력 실패: {last}', FailReason.UNKNOWN) from last
+        raise AgentFailure('needs_ai', f'구조화 출력 실패: {last}', FailReason.UNKNOWN) from last
 
     def note(self, label: str, detail: str) -> None:
         """근거 조각을 남긴다. 결과에 함께 실려 진단·검수 큐가 본다.
@@ -406,19 +430,29 @@ def split_page_dialogs(raw: str) -> tuple[str, list[str]]:
 
 
 def run_agent(
-    fn: Callable[[], AgentResult], evidence: Callable[[], list[Evidence]] | None = None
+    fn: Callable[[], AgentResult],
+    evidence: Callable[[], list[Evidence]] | None = None,
+    shot: Callable[[str], list[str]] | None = None,
 ) -> AgentResult:
     """AgentFailure 를 AgentResult 로 바꾼다. 감독자는 예외를 보지 않는다.
 
     ``evidence`` 를 주면 실패 결과에도 그때까지의 근거를 싣는다 — 실기에서 실패 사유만 남고
     어느 단계까지 갔는지(옵션 목록·계정·배송지) 알 수 없어 진단이 막혔다.
+    ``shot(reason)`` 을 주면 실패 순간의 화면 파일 경로를 받아 사유 끝에 ' [화면: …]' 로 붙인다
+    (사용자 2026-10-14: 실패 근거는 이미지로). 화면 저장이 실패해도 결과는 그대로 낸다.
     """
     try:
         return fn()
     except AgentFailure as e:
+        reason = e.reason
+        if shot is not None:
+            try:
+                reason += evidence_tag(shot(e.reason))
+            except Exception as err:  # noqa: BLE001 — 근거 저장 실패는 판정을 막지 않는다
+                log.warning('실패 화면 저장 실패: %s', err)
         return AgentResult(
             status=e.status,
-            reason=e.reason,
+            reason=reason,
             fail_reason=e.fail_reason,
             evidence=tuple(evidence()) if evidence is not None else (),
         )

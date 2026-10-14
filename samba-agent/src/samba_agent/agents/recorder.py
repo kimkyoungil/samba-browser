@@ -1,7 +1,7 @@
 """기록 에이전트 — SAMBA-WAVE 행에 저장하고, 저장한 값을 다시 읽어 확인한다.
 
 결제 뒤 기록이 실패해도 재결제는 절대 하지 않는다(스펙 §6). 여기서 실패하면
-감독자가 needs_human 으로 넘기고 사람이 "결제됨, 기록만 남음" 을 처리한다.
+감독자가 needs_ai 으로 넘기고 사람이 "결제됨, 기록만 남음" 을 처리한다.
 
 재시도가 재저장(중복 행)으로 이어지지 않도록, 저장 전에 먼저 읽어 이미 저장된
 주문인지 확인한다 — 있으면 저장을 건너뛰고 재확인만 한다.
@@ -119,7 +119,9 @@ class RecorderAgent(AgentBase):
     def __call__(self, assignment: Assignment) -> AgentResult:
         self.reset_repairs()
         self._estimate_gap = None
-        return run_agent(lambda: self._record(assignment), lambda: self.evidence)
+        return run_agent(
+            lambda: self._record(assignment), lambda: self.evidence, self.failure_shot(assignment)
+        )
 
     def _record(self, a: Assignment) -> AgentResult:
         self.evidence = []
@@ -148,7 +150,7 @@ class RecorderAgent(AgentBase):
         }
         account = a.options.get('account') or a.handoff.get('account')
         if not account:
-            raise AgentFailure('needs_human', '저장할 판매 계정이 없다', FailReason.UNKNOWN)
+            raise AgentFailure('needs_ai', '저장할 판매 계정이 없다', FailReason.UNKNOWN)
         values['account'] = account
         values['shipping_fee'] = a.expected.get('shipping_fee', 0)
         values['memo'] = memo.choice
@@ -274,7 +276,7 @@ class RecorderAgent(AgentBase):
             self.note('주문상태', '배송대기중으로 변경 확인')
             return
         raise AgentFailure(
-            'needs_human',
+            'needs_ai',
             mask_text(
                 f'기록은 됐지만 주문상태를 배송대기중으로 못 바꿨다(재주문 위험) — {out.get("note") or status}'
             ),
@@ -389,7 +391,7 @@ class RecorderAgent(AgentBase):
                 values['source_order_no'] = sourcing_no
                 self.note('소싱 주문번호(주문내역)', sourcing_no)
         if not sourcing_no:
-            raise AgentFailure('needs_human', '기입할 소싱주문번호가 없다', FailReason.UNKNOWN)
+            raise AgentFailure('needs_ai', '기입할 소싱주문번호가 없다', FailReason.UNKNOWN)
         if self.read_actual_cost:
             self._apply_actual_cost(a, values, sourcing_no)
         self.step('recorder: 삼바웨이브 기입')
@@ -416,7 +418,7 @@ class RecorderAgent(AgentBase):
                 a.order.wave_key, sourcing_order_number=sourcing_no
             )
         except WaveError as e:
-            status = 'needs_human' if e.reason is FailReason.DUPLICATE else 'fail'
+            status = 'needs_ai' if e.reason is FailReason.DUPLICATE else 'fail'
             raise AgentFailure(status, f'삼바웨이브 기입 실패(재결제 금지): {e}', e.reason) from e
 
         # 응답이 돌려주는 필드만 대조한다 — 목록 모델에 없는 값(소싱주문번호 등)은 확인할 수 없다.
@@ -457,7 +459,7 @@ class RecorderAgent(AgentBase):
         if gap is not None:
             # 기록·배송대기중은 끝났다 — 견적이 틀렸다는 사실만 사람에게 올린다(재결제·취소는 사람이 정한다)
             return AgentResult(
-                status='needs_human',
+                status='needs_ai',
                 reason=f'⚠ 견적 오차 {gap:+,.0f}원 — 기록·배송대기중은 완료(소싱주문번호 {sourcing_no})',
                 fail_reason=FailReason.VERIFY_MISMATCH,
                 payload={'dry_run': False, 'saved': True, 'values': values, 'via': 'wave', 'estimate_gap': gap},

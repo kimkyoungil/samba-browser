@@ -19,3 +19,6 @@ PAUSE
 PAUSE_APP
 local-aliases.json
 phone.lock
+
+# 실패 화면 근거(PNG)
+evidence/

@@ -333,7 +333,10 @@ def order_form_mismatch(
          모델코드를 안 보이는 사이트(ABC: 삼바 '우먼스 에어 맥스 인비고' ↔ 주문서 'WMNS NIKE AIR MAX INVIGOR')
     진짜 다른 상품(2026-09-26: 나이키 코르테즈 주문에 아디다스 아디스타 주문서)은 어느 쪽도 맞지 않아 막힌다.
     """
-    text = re.sub(r'\s+', ' ', page or '')
+    # 슈마커의 같은 상품 표기: 판매 주문 '스트리트톡' ↔ 지정 상품 '스트릿톡'(JR4700).
+    product_name = product_name.replace('스트리트톡', '스트릿톡')
+    site_name = site_name.replace('스트리트톡', '스트릿톡')
+    text = re.sub(r'\s+', ' ', page or '').replace('스트리트톡', '스트릿톡')
     low = text.lower()
     sizes = _sizes(option, selected)
     if sizes and not any(re.search(rf'(?<![\d.]){re.escape(x)}(?![\d.])', text) for x in sizes):
@@ -779,7 +782,9 @@ class PayerAgent(AgentBase):
     def __call__(self, assignment: Assignment) -> AgentResult:
         self._dry_run = assignment.dry_run
         self.reset_repairs()
-        return run_agent(lambda: self._pay(assignment), lambda: self.evidence)
+        return run_agent(
+            lambda: self._pay(assignment), lambda: self.evidence, self.failure_shot(assignment)
+        )
 
     def _recheck_wave(self, a: Assignment) -> None:
         """결제창 진입 전 SAMBA 재조회(플레이북 §5-1) — 그사이 누가 샀거나 상태가 바뀌었는지 본다.
@@ -795,7 +800,7 @@ class PayerAgent(AgentBase):
             current = self._wave.get_order(a.order.wave_key)
         except WaveError as e:
             raise AgentFailure(
-                'needs_human', f'결제 직전 SAMBA 재조회 실패(결제하지 않음): {e}', e.reason
+                'needs_ai', f'결제 직전 SAMBA 재조회 실패(결제하지 않음): {e}', e.reason
             ) from e
         sourcing_no = (current.sourcing_order_number or '').strip()
         # 재구매 — 소싱처에서 취소한 주문을 다시 사는 경우(작업 옵션 rebuy_of = 취소한 소싱주문번호).
@@ -811,7 +816,7 @@ class PayerAgent(AgentBase):
         status = (current.status or '').strip()
         if status.lower() != WAVE_PENDING_STATUS:
             raise AgentFailure(
-                'needs_human', f'상태 변경: {status or "(비어 있음)"}', FailReason.UNKNOWN
+                'needs_ai', f'상태 변경: {status or "(비어 있음)"}', FailReason.UNKNOWN
             )
         self.note('결제 직전 재조회', f'상태 {status} · 소싱주문번호 없음')
 
@@ -839,7 +844,7 @@ class PayerAgent(AgentBase):
             listed = self.tool('list_tabs')
         except AgentFailure as e:
             raise AgentFailure(
-                'needs_human',
+                'needs_ai',
                 f'결제창 목록을 확인할 수 없다: {e.reason}',
                 e.fail_reason,
             ) from e
@@ -862,7 +867,7 @@ class PayerAgent(AgentBase):
                 return self._confirm_paid(a, card, paid_by='human')
             self.tool('wait', ms=KAKAO_HUMAN_WAIT_MS)
         raise AgentFailure(
-            'needs_human',
+            'needs_ai',
             '카카오페이 폰 비밀번호를 기다렸지만 결제 완료 화면이 안 떴다(재결제 금지 — 주문내역 확인)'
             f' [카카오페이 {_as_won(a.handoff.get("paid"))}]',
             FailReason.PAY_INTERRUPTED,
@@ -931,7 +936,7 @@ class PayerAgent(AgentBase):
             element_id = _element_id_of(page, pattern)
             if element_id is None:
                 raise AgentFailure(
-                    'needs_human', f'토스페이 알림 요청 칸 없음({field})', FailReason.UNKNOWN
+                    'needs_ai', f'토스페이 알림 요청 칸 없음({field})', FailReason.UNKNOWN
                 )
             out = ''
             # 휴대폰·생년월일은 같은 사람의 값이다 — 이 구매 계정의 토스 항목에 없으면 같은 사이트의 다른 계정 토스 항목,
@@ -950,7 +955,7 @@ class PayerAgent(AgentBase):
                     break
             if not out.strip().lower().startswith('ok'):
                 raise AgentFailure(
-                    'needs_human',
+                    'needs_ai',
                     f'토스페이 알림 요청 입력 실패({field}): {mask_text(out[:100])}',
                     FailReason.UNKNOWN,
                 )
@@ -958,7 +963,7 @@ class PayerAgent(AgentBase):
         now = self.tool('get_page')
         if 'app-payment/push' not in now.split('\n', 1)[0]:
             raise AgentFailure(
-                'needs_human',
+                'needs_ai',
                 '토스페이 알림 대기 화면으로 안 넘어갔다 — 알림이 갔는지 사람이 확인',
                 FailReason.UNKNOWN,
             )
@@ -990,7 +995,7 @@ class PayerAgent(AgentBase):
             element_id = _element_id_of(page, pattern)
             if element_id is None:
                 raise AgentFailure(
-                    'needs_human', f'카카오페이 카톡결제 칸 없음({field})', FailReason.UNKNOWN
+                    'needs_ai', f'카카오페이 카톡결제 칸 없음({field})', FailReason.UNKNOWN
                 )
             out = self.tool(
                 'fill_secret',
@@ -1002,13 +1007,13 @@ class PayerAgent(AgentBase):
             )
             if not out.strip().lower().startswith('ok'):
                 raise AgentFailure(
-                    'needs_human',
+                    'needs_ai',
                     f'카카오페이 카톡결제 입력 실패({field}): {mask_text(out[:100])}',
                     FailReason.UNKNOWN,
                 )
         button = _element_id_of(self.tool('get_page'), r'button "결제요청"')
         if button is None:
-            raise AgentFailure('needs_human', '카카오페이 결제요청 버튼 없음', FailReason.UNKNOWN)
+            raise AgentFailure('needs_ai', '카카오페이 결제요청 버튼 없음', FailReason.UNKNOWN)
         self.tool('click', id=button)
         self.tool('wait', ms=KAKAO_REQUEST_WAIT_MS)
         self.note('카카오페이', '카톡결제 요청 보냄(휴대폰·생년월일은 키마스터 값)')
@@ -1077,7 +1082,7 @@ class PayerAgent(AgentBase):
         if len(providers) > 1:
             hosts = ', '.join(url for url, _, _ in matches)
             raise AgentFailure(
-                'needs_human',
+                'needs_ai',
                 f'결제창이 여럿이고 서로 다른 결제 앱을 가리킨다 — 사람이 확인한다: {hosts}',
                 FailReason.UNKNOWN,
             )
@@ -1116,7 +1121,7 @@ class PayerAgent(AgentBase):
         )
         if problem:
             raise AgentFailure(
-                'needs_human', f'주문서가 이 주문과 다르다 — 결제하지 않음: {mask_text(problem)}', FailReason.VERIFY_MISMATCH
+                'needs_ai', f'주문서가 이 주문과 다르다 — 결제하지 않음: {mask_text(problem)}', FailReason.VERIFY_MISMATCH
             )
         # 받는 분 주소 — 구매가 넣은 도로명+번호(handoff ship_key)가 주문서에 보여야 한다. 주문서에 다른 도로명 주소만
         # 보이면 배송지가 엉뚱하게 들어간 것(실기 2026-10-02 롯데온 선물: 주소 검색이 다른 도시 '화전남1길 10'을 골라 경주로 감)
@@ -1126,7 +1131,7 @@ class PayerAgent(AgentBase):
             roads = re.findall(r'[가-힣A-Za-z0-9.]+(?:로|길)\d+(?:-\d+)?', flat)
             if roads and ship_key not in flat:
                 raise AgentFailure(
-                    'needs_human',
+                    'needs_ai',
                     '주문서의 받는 분 주소가 주문 주소와 다르다 — 결제하지 않음(배송지 다시 확인)',
                     FailReason.VERIFY_MISMATCH,
                 )
@@ -1190,14 +1195,14 @@ class PayerAgent(AgentBase):
             # 결제는 안 됐다. '결제 확인'으로 넘기면 "결제 여부 불명(재결제 금지)"으로 오판한다(실기 2026-10-01)
             shown, expected = mismatch
             raise AgentFailure(
-                'needs_human',
+                'needs_ai',
                 f'{NAVERPAY_MISMATCH_MARK}: 프로필 {account} 의 네이버페이 창은 {shown} 로 로그인돼 있고 키마스터 연결 계정은 '
                 f'{expected} 다 — 그 프로필에서 네이버를 {expected} 로 로그인해야 한다. 결제 비밀번호는 넣지 않았다(결제 안 됨)',
                 FailReason.PERMISSION_DENIED,
             )
         if low.startswith('refused') or '거절: refused' in low or 'not found' in low or 'ambiguous' in low:
             raise AgentFailure(
-                'needs_human',
+                'needs_ai',
                 f'결제 비밀번호를 앱이 넣지 못했다 — 사람이 직접 누른다: {mask_text(out[:100])}',
                 FailReason.PERMISSION_DENIED,
             )
@@ -1254,7 +1259,7 @@ class PayerAgent(AgentBase):
                         if not tab_login and not any(_is_login_url(str(q.get('url') or '')) for q in popups_now):
                             return
                 raise AgentFailure(
-                    'needs_human',
+                    'needs_ai',
                     f'결제창이 로그인 화면이다({_host_of(url)}) — 프로필 {profile or "-"} 에서 결제 앱(네이버 등)에 '
                     '먼저 로그인해야 한다. 결제 비밀번호는 넣지 않았다(결제 안 됨)',
                     FailReason.PERMISSION_DENIED,
@@ -1274,6 +1279,20 @@ class PayerAgent(AgentBase):
         entered = False  # 앱이 '아직 아님'이 아닌 답을 한 번이라도 했다 — 이후 절대 다시 부르지 않는다
         for attempt in range(KEYPAD_POLL_TRIES):
             popups, _active = self._list_tabs_popups()
+            if dry_run_digits is None:
+                try:
+                    listed = json.loads(str(getattr(self, '_last_listed', '') or '[]'))
+                except ValueError:
+                    listed = []
+                if isinstance(listed, list) and any(
+                    isinstance(t, dict)
+                    and t.get('active')
+                    and (not account or str(t.get('profile') or '').lower() == account.lower())
+                    and ORDER_DONE_URL_RE.search(str(t.get('url') or ''))
+                    for t in listed
+                ):
+                    self.note('키패드 입력', '현재 계정 탭이 주문 완료 화면 — 기존 결제 검증으로 진행')
+                    return NO_KEYPAD_PAID
             self._stop_if_login_popup(popups, a)
             targets = [str(p['id']) for p in reversed(popups) if p.get('id')] or ['']
             for tab_id in targets:
@@ -1350,10 +1369,11 @@ class PayerAgent(AgentBase):
                     if wait_i + 1 < NO_KEYPAD_DONE_CHECKS:
                         self.tool('wait', ms=NO_KEYPAD_DONE_WAIT_MS)
             raise AgentFailure(
-                'needs_human',
-                f'결제 비밀번호 키패드가 뜨지 않았다({calls}회 확인) — 비밀번호를 넣지 않았다(결제 안 됨): '
+                'needs_ai',
+                f'결제 비밀번호 키패드가 뜨지 않았다({calls}회 확인) — '
+                f'{"결제 여부 미확정·주문내역 확인 전 재결제 금지" if dry_run_digits is None else "시험 입력 중단·비밀번호를 넣지 않았다"}: '
                 f'{mask_text(out[:100])}',
-                FailReason.UNKNOWN,
+                FailReason.PAY_INTERRUPTED if dry_run_digits is None else FailReason.UNKNOWN,
             )
         return out
 
@@ -1378,7 +1398,7 @@ class PayerAgent(AgentBase):
                 page = f'결제완료 주문번호 {recent_no}'
         if not any(m in page for m in PAY_SUCCESS_MARKERS):
             raise AgentFailure(
-                'needs_human',
+                'needs_ai',
                 '결제됐는지 화면에서 확인되지 않는다 — 사람이 봐야 한다(재결제 금지)',
                 FailReason.VERIFY_MISMATCH,
             )
@@ -1441,7 +1461,7 @@ class PayerAgent(AgentBase):
                 self.note('카드 직접 결제', '주문 완료 화면 확인 — 사람이 승인했다')
                 return self._confirm_paid(a, card, paid_by='human')
         raise AgentFailure(
-            'needs_human',
+            'needs_ai',
             f'{issuer} 결제창 승인을 기다렸지만 주문 완료가 보이지 않는다 — 사람이 결제 여부를 확인한다(재결제 금지)',
             FailReason.PAY_INTERRUPTED,
         )
@@ -1458,7 +1478,7 @@ class PayerAgent(AgentBase):
             out = self.tool('run_js', code=_LOTTECARD_CODE_JS)
         except AgentFailure as e:
             raise AgentFailure(
-                'needs_human',
+                'needs_ai',
                 mask_text(f'{issuer} 결제창에서 앱카드 숫자코드를 못 읽었다({e.reason[:80]}) — 결제하지 않았다'),
                 FailReason.PAY_INTERRUPTED,
             ) from e
@@ -1466,13 +1486,13 @@ class PayerAgent(AgentBase):
         m = re.search(r'"code"\s*:\s*"(\d{4,12})"', out)
         if m is None:
             raise AgentFailure(
-                'needs_human',
+                'needs_ai',
                 mask_text(f'{issuer} 결제창에 앱카드 숫자코드가 안 보인다 — 결제하지 않았다: {out[:120]}'),
                 FailReason.PAY_INTERRUPTED,
             )
         amount = _amount_krw(a.handoff.get('cost'))
         if amount is None:
-            raise AgentFailure('needs_human', '결제 금액을 모른다 — 폰 승인을 부르지 않는다', FailReason.UNKNOWN)
+            raise AgentFailure('needs_ai', '결제 금액을 모른다 — 폰 승인을 부르지 않는다', FailReason.UNKNOWN)
         self.step('payer: 폰 승인(롯데카드 앱카드)')
         approved = self.tool(
             'phone_approve_payment',
@@ -1486,7 +1506,7 @@ class PayerAgent(AgentBase):
         low = approved.lower()
         if low.startswith(('refused', 'error')) or any(k in approved for k in DECLINED_MARKERS):
             raise AgentFailure(
-                'needs_human',
+                'needs_ai',
                 mask_text(f'롯데카드 앱카드 폰 승인 실패: {approved[:120]} — 결제창은 열어 둔다(재결제 금지)'),
                 FailReason.PAY_INTERRUPTED,
             )
@@ -1527,7 +1547,7 @@ class PayerAgent(AgentBase):
         if 'card-not-found' in out:
             # 결제는 누르지 않았다 — 다른 카드로 내면 청구할인이 없어 견적과 원가가 달라진다
             raise AgentFailure(
-                'needs_human',
+                'needs_ai',
                 mask_text(f'페이코 결제창에서 견적 카드를 못 찾았다 — 결제하지 않았다: {out[:120]}'),
                 FailReason.CARD_MISSING,
             )
@@ -1580,7 +1600,7 @@ class PayerAgent(AgentBase):
             amount = _amount_krw(a.handoff.get('cost'))
             if amount is None:
                 raise AgentFailure(
-                    'needs_human',
+                    'needs_ai',
                     '결제 금액을 모른다 — 시험 입력도 하지 않는다',
                     FailReason.UNKNOWN,
                 )
@@ -1607,7 +1627,7 @@ class PayerAgent(AgentBase):
         if not any(m in out.lower() for m in DRY_RUN_MARKERS):
             # 시험 입력이라고 했는데 시험 입력 응답이 아니다 — 결제가 진행됐을 수 있다
             raise AgentFailure(
-                'needs_human',
+                'needs_ai',
                 f'시험 입력 응답이 아니다 — 사람이 결제 상태를 확인한다: {mask_text(out[:100])}',
                 FailReason.PAY_INTERRUPTED,
             )
@@ -1708,7 +1728,7 @@ class PayerAgent(AgentBase):
         if not entered.get('ok'):
             # 결제하기를 못 눌렀다 — 비밀번호 단계로 가지 않는다(실기: 수단을 못 찾고도 키패드를 찾다 거절)
             raise AgentFailure(
-                'needs_human',
+                'needs_ai',
                 f'결제창을 열지 못했다: {mask_text(str(entered.get("error") or entered.get("note"))[:80])}'
                 + (f' — {mask_text(str(entered.get("why"))[:160])}' if entered.get('why') else '')
                 + (f' — 경고창: {mask_text(" | ".join(enter_dialogs)[:120])}' if enter_dialogs else '')
@@ -1759,7 +1779,7 @@ class PayerAgent(AgentBase):
         if looks_already_paid(listed, before, buy_src.login_host if buy_src else None):
             self.note('결제 전 확인', mask_text(before[:200]))
             raise AgentFailure(
-                'needs_human',
+                'needs_ai',
                 '이미 결제된 화면이다 — 사람이 확인한다(재결제 금지)',
                 FailReason.PAY_INTERRUPTED,
             )
@@ -1769,7 +1789,7 @@ class PayerAgent(AgentBase):
         amount = _amount_krw(a.handoff.get('cost'))
         if amount is None:
             raise AgentFailure(
-                'needs_human',
+                'needs_ai',
                 '결제 금액을 모른다 — 확인 전에는 결제하지 않는다',
                 FailReason.UNKNOWN,
             )
@@ -1844,7 +1864,7 @@ class PayerAgent(AgentBase):
             if any(m in approved for m in DECLINED_MARKERS):
                 # 'refused:' 접두사 없는 과거 형식. 재시도 없음 — 그대로 사람에게 넘긴다(재결제 위험)
                 raise AgentFailure(
-                    'needs_human',
+                    'needs_ai',
                     f'폰 승인 실패: {mask_text(approved[:100])}',
                     FailReason.UNKNOWN,
                 )

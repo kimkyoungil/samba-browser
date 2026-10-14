@@ -1,6 +1,6 @@
 // 브릿지 HTTP — 토큰·라우팅·busy·제한 시간
 import { describe, it, expect, afterEach } from 'vitest'
-import { BridgeServer } from '../src/main/bridge/server'
+import { BridgeServer, BridgeWindowNotFound } from '../src/main/bridge/server'
 import type { ToolSession } from '../src/main/agent/runner'
 
 const TOKEN = 'a'.repeat(64)
@@ -282,5 +282,76 @@ describe('BridgeServer', () => {
     const addr = (server as unknown as { address: () => { address: string } }).address()
     expect(addr.address).toBe('127.0.0.1')
     expect(port).toBeGreaterThan(0)
+  })
+})
+
+describe('BridgeServer — 창 단위 호출(X-Samba-Window)', () => {
+  it('헤더의 창 번호를 openSession 에 넘기고 응답에 window 를 붙인다', async () => {
+    const seen: Array<number | undefined> = []
+    const fs = fakeSession()
+    server = new BridgeServer({
+      openSession: (onStep, _lane, window) => {
+        seen.push(window)
+        return fs.make(onStep)
+      },
+      token: () => TOKEN
+    })
+    const port = await server.start(0)
+    const r = await fetch(`http://127.0.0.1:${port}/tool/get_page`, {
+      method: 'POST',
+      headers: { ...H, 'X-Samba-Window': '2' },
+      body: '{"args":{}}'
+    })
+    expect(r.status).toBe(200)
+    expect(await r.json()).toMatchObject({ ok: true, window: 2 })
+    // 헤더가 없으면 undefined(기본 창)
+    await fetch(`http://127.0.0.1:${port}/tool/get_page`, {
+      method: 'POST',
+      headers: H,
+      body: '{}'
+    })
+    expect(seen).toEqual([2, undefined])
+  })
+
+  it('창 번호가 숫자가 아니면 400, 없는 창이면 404', async () => {
+    server = new BridgeServer({
+      openSession: (onStep, _lane, window) => {
+        if (window !== undefined) throw new BridgeWindowNotFound(window)
+        return fakeSession().make(onStep)
+      },
+      token: () => TOKEN
+    })
+    const port = await server.start(0)
+    const bad = await fetch(`http://127.0.0.1:${port}/tool/get_page`, {
+      method: 'POST',
+      headers: { ...H, 'X-Samba-Window': 'new' },
+      body: '{}'
+    })
+    expect(bad.status).toBe(400)
+    const gone = await fetch(`http://127.0.0.1:${port}/tool/get_page`, {
+      method: 'POST',
+      headers: { ...H, 'X-Samba-Window': '9' },
+      body: '{}'
+    })
+    expect(gone.status).toBe(404)
+    expect(await gone.json()).toEqual({ error: 'window not found: 9' })
+  })
+
+  it('GET /windows 는 창 목록, POST /windows 는 새 창을 돌려준다(배선이 없으면 404)', async () => {
+    const list = [{ id: 1, title: '무신사', tabs: 2, primary: true }]
+    const base = await up({
+      windows: () => list,
+      createWindow: () => ({ id: 2, title: '', tabs: 1, primary: false })
+    })
+    const got = await fetch(`${base}/windows`, { headers: H })
+    expect(await got.json()).toEqual({ ok: true, windows: list })
+    const made = await fetch(`${base}/windows`, { method: 'POST', headers: H })
+    expect(await made.json()).toEqual({
+      ok: true,
+      window: { id: 2, title: '', tabs: 1, primary: false }
+    })
+    await server?.stop()
+    const plain = await up()
+    expect((await fetch(`${plain}/windows`, { headers: H })).status).toBe(404)
   })
 })

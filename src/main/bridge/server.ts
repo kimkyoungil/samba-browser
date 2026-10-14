@@ -9,10 +9,39 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { timingSafeEqual } from 'node:crypto'
 import type { ToolSession } from '../agent/runner'
 
+/** 브릿지가 밖에 보여 주는 창 한 개(비밀값 없음) */
+export interface BridgeWindowInfo {
+  /** 앱 안 창 번호(앱 로그의 "[창] 열림 #n" 과 같다) */
+  id: number
+  title: string
+  /** 탭 수(팝업 제외) */
+  tabs: number
+  /** 기본 창(가장 오래된 창) — X-Samba-Window 가 없는 호출이 쓰는 창 */
+  primary: boolean
+}
+
+/** X-Samba-Window 가 가리킨 창이 없을 때 openSession 이 던진다 → 404 */
+export class BridgeWindowNotFound extends Error {
+  constructor(id: number) {
+    super(`window not found: ${id}`)
+  }
+}
+
 export interface BridgeDeps {
-  /** lane 이 있으면 그 레인 세션(다른 레인과 동시에 열린다) */
-  openSession: (onStep: (label: string, ok: boolean) => void, lane?: string) => ToolSession
+  /**
+   * lane 이 있으면 그 레인 세션(다른 레인과 동시에 열린다).
+   * window 가 있으면 그 창의 탭만 다루는 세션(new_tab·list_tabs·switch_tab 이 그 창에 작용). 없으면 기본 창
+   */
+  openSession: (
+    onStep: (label: string, ok: boolean) => void,
+    lane?: string,
+    window?: number
+  ) => ToolSession
   token: () => string
+  /** 창 목록(GET /windows). 없으면 404 */
+  windows?: () => BridgeWindowInfo[]
+  /** 새 창 만들기(POST /windows) — 사람 탭 하나가 열린 빈 창. 없으면 404 */
+  createWindow?: () => BridgeWindowInfo
   toolTimeoutMs?: number
   /** 폰을 기다리는 긴 도구(결제 승인·인증번호)의 제한 시간. 없으면 LONG_TOOL_TIMEOUT_MS */
   longToolTimeoutMs?: number
@@ -115,6 +144,14 @@ export class BridgeServer {
     if (!this.authorized(req)) return json(res, 401, { error: 'unauthorized' })
     const url = new URL(req.url ?? '/', 'http://127.0.0.1')
     if (req.method === 'GET' && url.pathname === '/health') return this.health(res)
+    // 창 목록·새 창 — 호출을 창 단위로 묶을 때(영상수익화 창 ≠ 주문처리 창) 창 번호를 고르는 데 쓴다
+    if (url.pathname === '/windows') {
+      if (req.method === 'GET' && this.deps.windows)
+        return json(res, 200, { ok: true, windows: this.deps.windows() })
+      if (req.method === 'POST' && this.deps.createWindow)
+        return json(res, 200, { ok: true, window: this.deps.createWindow() })
+      return json(res, 404, { error: 'not found' })
+    }
     const m = /^\/tool\/([a-z0-9_]{1,64})$/.exec(url.pathname)
     if (req.method === 'POST' && m) return this.tool(m[1], req, res)
     return json(res, 404, { error: 'not found' })
@@ -139,6 +176,14 @@ export class BridgeServer {
     const rawLane = req.headers['x-samba-lane']
     const lane =
       typeof rawLane === 'string' && /^[A-Za-z0-9_.@-]{1,64}$/.test(rawLane) ? rawLane : undefined
+    // 창 번호(X-Samba-Window). 숫자가 아니면 400 — 조용히 기본 창에 보내면 주문처리 창에 탭이 생긴다
+    const rawWindow = req.headers['x-samba-window']
+    let window: number | undefined
+    if (rawWindow !== undefined) {
+      if (typeof rawWindow !== 'string' || !/^[0-9]{1,6}$/.test(rawWindow))
+        return json(res, 400, { error: 'invalid window' })
+      window = Number(rawWindow)
+    }
     // 레인 없는 요청은 단독(다른 요청·레인이 없어야 한다). 레인 요청은 같은 레인만 겹치지 않으면 된다
     if (this.busy) return json(res, 409, { error: 'busy' })
     if (lane ? this.busyLanes.has(lane) : this.busyLanes.size > 0) {
@@ -162,8 +207,9 @@ export class BridgeServer {
     const steps: Array<{ label: string; ok: boolean }> = []
     let session: ToolSession
     try {
-      session = this.deps.openSession((label, ok) => steps.push({ label, ok }), lane)
-    } catch {
+      session = this.deps.openSession((label, ok) => steps.push({ label, ok }), lane, window)
+    } catch (e: unknown) {
+      if (e instanceof BridgeWindowNotFound) return json(res, 404, { error: e.message })
       return json(res, 409, { error: 'busy' })
     }
     if (!session.names().includes(name)) {
@@ -199,7 +245,13 @@ export class BridgeServer {
         })
       ])
       // 레인 요청이면 레인 이름을 돌려준다 — 하네스가 이 앱이 레인을 아는지 확인한다(예전 앱은 머리글을 무시한다)
-      json(res, 200, { ok: true, result, steps, ...(lane ? { lane } : {}) })
+      json(res, 200, {
+        ok: true,
+        result,
+        steps,
+        ...(lane ? { lane } : {}),
+        ...(window !== undefined ? { window } : {})
+      })
     } catch (e: unknown) {
       if (settledByTimer) {
         // 504 를 먼저 보낸다 — 세션은 아직 안 닫는다, callPromise 가 끝날 때 정리한다

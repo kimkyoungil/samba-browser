@@ -366,3 +366,20 @@ describe('isNewWindowShortcut', () => {
     expect(key({ type: 'keyUp' })).toBe(false)
   })
 })
+
+describe('WindowManager — 창 번호로 찾기(브릿지 X-Samba-Window)', () => {
+  it('byId 는 살아 있는 창만, tabsForWindow 는 그 창에만 작용하고 창이 닫히면 던진다', () => {
+    const { wm, windows, tabsOf } = setup()
+    wm.create({ openTab: true })
+    const b = wm.create({ openTab: true })
+    expect(wm.byId(2)).toBe(b)
+    expect(wm.byId(9)).toBeNull()
+    const tabs = wm.tabsForWindow(2)
+    tabs.create({ user: false })
+    expect(tabsOf(1).tabs).toHaveLength(2)
+    expect(tabsOf(0).tabs).toHaveLength(1)
+    windows[1].close()
+    expect(wm.byId(2)).toBeNull()
+    expect(() => tabs.list()).toThrow('window closed: #2')
+  })
+})

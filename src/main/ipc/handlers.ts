@@ -38,7 +38,7 @@ import { ClosedTabStack, newProfileName, runGesture, type GestureDeps } from '..
 import { SettingsStore } from '../settings/store'
 import { setOcrEnabled } from '../agent/tools-ocr'
 import { AgentRunner, BRIDGE_BUSY_ERROR } from '../agent/runner'
-import { BridgeServer } from '../bridge/server'
+import { BridgeServer, BridgeWindowNotFound, type BridgeWindowInfo } from '../bridge/server'
 import { applyBridgeSettings, newBridgeToken } from '../bridge/wiring'
 import { createHarnessApi } from '../harness/wiring'
 import { createAgentNotifier } from '../notify'
@@ -290,9 +290,29 @@ export function registerIpc(
   // 한 번 통한 run_js 코드를 저장해 두고 재생한다(기기 로컬). 사이트 기억과 같은 스위치로 켜고 끈다
   agent.setSiteScripts(new SiteScriptStore(join(app.getPath('userData'), 'site-scripts.json')))
   // 하네스 브릿지 — 밖의 LangGraph 하네스가 이 앱의 도구를 부르는 문. 설정으로 켜고 끈다
+  const bridgeWindowInfo = (entry: WindowEntry): BridgeWindowInfo => ({
+    id: entry.id,
+    title: entry.win.isDestroyed() ? '' : entry.win.getTitle(),
+    tabs: entry.tabs.list().length,
+    primary: entry === windows.primary()
+  })
   const bridge = new BridgeServer({
-    openSession: (onStep, lane) => agent.createToolSession({ onStep, ...(lane ? { lane } : {}) }),
-    token: () => settings.get().bridgeToken
+    // X-Samba-Window 가 있으면 그 창의 탭 관리자로 세션을 연다(없는 창이면 404)
+    openSession: (onStep, lane, windowId) => {
+      let tabsFor: TabManager | undefined
+      if (windowId !== undefined) {
+        if (!windows.byId(windowId)) throw new BridgeWindowNotFound(windowId)
+        tabsFor = windows.tabsForWindow(windowId)
+      }
+      return agent.createToolSession({
+        onStep,
+        ...(lane ? { lane } : {}),
+        ...(tabsFor ? { tabs: tabsFor } : {})
+      })
+    },
+    token: () => settings.get().bridgeToken,
+    windows: () => windows.all().map(bridgeWindowInfo),
+    createWindow: () => bridgeWindowInfo(windows.create({ openTab: true }))
   })
   const applyBridge = (): Promise<void> =>
     applyBridgeSettings(

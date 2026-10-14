@@ -935,6 +935,8 @@ ${CODEX_NO_IMAGE_NOTE}`
     onStep?: (label: string, ok: boolean) => void
     /** 레인 이름(하네스가 계정마다 동시에 돌릴 때). 있으면 그 레인의 탭 보기로 일하고 다른 레인과 동시에 열린다 */
     lane?: string
+    /** 이 세션이 다룰 탭 관리자(특정 창). 없으면 러너의 기본 창 */
+    tabs?: TabManager
   }): ToolSession {
     if (this.abort) throw new Error('이미 실행 중')
     // 레인 없는 세션은 단독이다(다른 세션·레인이 없어야 한다). 레인 세션은 레인 없는 세션만 없으면 된다
@@ -950,7 +952,9 @@ ${CODEX_NO_IMAGE_NOTE}`
     }
     const phones = this.phones
     const laneState = opts.lane ? this.laneStateOf(opts.lane) : null
-    const laneView = laneState ? laneTabs(this.tabs, laneState) : null
+    // 창을 지정한 세션은 그 창의 탭 관리자 위에서 일한다(레인 보기도 그 위에 얹는다)
+    const sessionTabs = opts.tabs ?? this.tabs
+    const laneView = laneState ? laneTabs(sessionTabs, laneState) : null
     const phoneCtx = (): PhoneRunContext => ({
       jobId,
       confirm: async () => true,
@@ -988,7 +992,7 @@ ${CODEX_NO_IMAGE_NOTE}`
     const server = createSambaTools(
       laneView
         ? { ...bridgeCtx, tabs: laneView }
-        : { ...bridgeCtx, tabs: labelLaneTargets(this.tabs, this.lanes) }
+        : { ...bridgeCtx, tabs: labelLaneTargets(sessionTabs, this.lanes) }
     )
     const tools = extractSdkTools(server).filter((t) => t.name !== 'done')
     // 브릿지 세션이 열려 있는 동안은 금고 자동 잠금을 보류한다(run() 과 같은 패턴). 두 번 풀려도 안전하다

@@ -147,6 +147,23 @@ export class WindowManager {
     return this.findTab(wc) !== null
   }
 
+  /** 창 번호로(앱 로그의 "#n"). 닫혔으면 null */
+  byId(id: number): WindowEntry | null {
+    return this.all().find((e) => e.id === id) ?? null
+  }
+
+  /**
+   * 특정 창의 탭 관리자 겉모양(브릿지 X-Samba-Window). 창이 닫히면 이후 호출은 던진다 —
+   * 조용히 다른 창으로 넘어가 엉뚱한 창(주문처리 창)에 탭을 만들지 않게
+   */
+  tabsForWindow(id: number): TabManager {
+    return this.tabsFacade(() => {
+      const entry = this.byId(id)
+      if (!entry) throw new Error(`window closed: #${id}`)
+      return entry
+    })
+  }
+
   /** 탭 id 로 그 탭을 쥔 창 */
   ownerOfTab(tabId: string): WindowEntry | null {
     return this.all().find((e) => e.tabs.get(tabId) !== null) ?? null

@@ -3,6 +3,9 @@ import { app, BrowserWindow, crashReporter } from 'electron'
 import { electronApp, is, optimizer } from '@electron-toolkit/utils'
 import { createMainWindow } from './window'
 import { TabManager } from './browser/tab-manager'
+
+// 두 번째 실행(바탕화면 아이콘)이 새 탭을 열 때 쓰는 탭 관리자 — 창이 만들어진 뒤 채워진다
+let tabsRef: TabManager | null = null
 import { loadSavedTabs, savedTabsOf, writeSavedTabs } from './browser/user-tabs-store'
 import { setExtensionTabsProvider } from './extensions/tabs-bridge'
 import { installExtensionPageApi } from './extensions/page-api'
@@ -63,6 +66,12 @@ if (!app.requestSingleInstanceLock()) {
     if (humanBusyInWindow(win)) return
     if (win.isMinimized()) win.restore()
     win.focus()
+    // 바탕화면 아이콘을 다시 눌렀을 때 — 앱은 창 하나라 새 창 대신 같은 계정·데이터로 새 탭을 연다(사용자 2026-10-14)
+    try {
+      tabsRef?.create({ user: true })
+    } catch (e: unknown) {
+      console.warn('두 번째 실행: 새 탭 열기 실패', e instanceof Error ? e.message : String(e))
+    }
   })
 }
 
@@ -124,6 +133,7 @@ app
     // 첫 탭의 page-favicon-updated 도 캐시에 들어간다
     registerFaviconIpc(win)
     const tabs = new TabManager(win)
+    tabsRef = tabs
     // 확장 팝업·서비스워커의 탭·창 API(tabs.create·windows 등)를 이 창의 탭으로 처리한다
     setExtensionTabsProvider(tabs.extensionTabsProvider())
     installExtensionPageApi()

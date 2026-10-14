@@ -189,6 +189,11 @@ export class WindowManager {
     const tabs = this.deps.createTabs(win)
     const entry: WindowEntry = { id: this.nextId++, win, tabs }
     this.entries.push(entry)
+    // 창 수명은 로그로 남긴다 — 창이 저절로 사라지는 문제를 앱 로그만으로 추적할 수 있게
+    console.info(`[창] 열림 #${entry.id} (창 ${this.entries.length}개)`)
+    win.webContents.on('render-process-gone', (_e, details) => {
+      console.error(`[창] #${entry.id} 렌더러 프로세스 종료: ${details.reason} (${details.exitCode})`)
+    })
     win.on('focus', () => {
       this.lastFocusedId = entry.id
     })
@@ -197,6 +202,7 @@ export class WindowManager {
     win.once('closed', () => {
       this.entries = this.entries.filter((e) => e !== entry)
       const remaining = this.all()
+      console.info(`[창] 닫힘 #${entry.id} (남은 창 ${remaining.length}개)`)
       for (const cb of this.closedListeners) cb(entry, remaining)
       if (remaining.length === 0) for (const cb of this.lastClosedListeners) cb()
     })

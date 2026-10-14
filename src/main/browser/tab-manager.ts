@@ -482,6 +482,16 @@ export class TabManager {
   dispose(): void {
     if (this.disposed) return
     this.disposed = true
+    // 창과 함께 탭 페이지도 닫는다 — 창이 여럿이면 앱은 계속 돌므로, 목록만 비우면 닫힌 창의 탭이
+    // 보이지 않는 채 살아남아 메모리·네트워크를 계속 쓴다(실측: 닫은 창의 newtab 이 CDP 타깃에 남음)
+    for (const tab of this.tabs) {
+      if (!isTabAlive(tab)) continue
+      try {
+        tab.view.webContents.close()
+      } catch (e: unknown) {
+        console.warn('창 닫힘 탭 정리 실패', e instanceof Error ? e.message : String(e))
+      }
+    }
     this.listeners = []
     this.activatedListeners = []
     this.closedListeners = []

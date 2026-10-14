@@ -12,6 +12,9 @@ export const IPC = {
   tabReload: 'tab:reload',
   tabSetMobile: 'tab:setMobile',
   tabMove: 'tab:move',
+  tabDetach: 'tab:detach', // 탭 바 밖으로 끌어낸 탭을 새 창으로 뗀다
+  tabAdopt: 'tab:adopt', // 다른 창의 탭을 이 창의 탭 바 자리로 옮긴다
+  windowNew: 'window:new', // 같은 계정·같은 데이터로 새 창
   profileList: 'profile:list',
   tabUpdated: 'tab:updated', // main → renderer 이벤트
   layoutSet: 'layout:set',

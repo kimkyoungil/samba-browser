@@ -269,6 +269,8 @@
     "bookmarkRemove": "Remove bookmark"
   },
   "tab": {
+    "newWindow": "New Window",
+    "newWindowHint": "Drag a tab out of the tab bar to open it in its own window",
     "new": "New Tab",
     "close": "Close tab",
     "openTabs": "Open tabs",
@@ -991,7 +993,7 @@
         "home": "Home page",
         "reload": "Reload",
         "newTab": "New tab",
-        "newWindow": "New window (opens a tab)",
+        "newWindow": "New window",
         "newProfileTab": "New profile tab",
         "closeTab": "Close tab",
         "reopenTab": "Reopen closed tab",

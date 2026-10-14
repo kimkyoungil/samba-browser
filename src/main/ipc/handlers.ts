@@ -16,6 +16,7 @@ import {
   dialog,
   ipcMain,
   safeStorage,
+  screen,
   session,
   shell,
   type BrowserWindow,
@@ -31,6 +32,8 @@ import * as os from 'node:os'
 import { IPC, type IpcResult, type Layout, type Settings } from '../../shared/ipc'
 import { defaultTabUrl } from '../../shared/settings'
 import type { TabManager } from '../browser/tab-manager'
+import type { WindowEntry, WindowManager } from '../browser/window-manager'
+import { isNewWindowShortcut } from '../browser/window-manager'
 import { ClosedTabStack, newProfileName, runGesture, type GestureDeps } from '../browser/gestures'
 import { SettingsStore } from '../settings/store'
 import { setOcrEnabled } from '../agent/tools-ocr'
@@ -192,8 +195,7 @@ function wrap<T>(fn: () => T | Promise<T>): Promise<IpcResult<T>> {
 }
 
 export function registerIpc(
-  win: BrowserWindow,
-  tabs: TabManager,
+  windows: WindowManager,
   db: Db
 ): {
   settings: SettingsStore
@@ -204,6 +206,15 @@ export function registerIpc(
   sync: SyncEngineHolder
 } {
   const settings = new SettingsStore()
+  // 창을 모르는 쪽(AI 러너·하네스 브릿지·제스처 기본값)이 쓰는 탭 관리자 — 기본 창(가장 오래된 창)을 따른다.
+  // 설정·구독(set*/on*)은 모든 창에 걸리고 새 창에도 다시 걸린다(window-manager.ts tabsFacade)
+  const tabs = windows.primaryTabs()
+  // 사람이 지금 보는 탭을 다루는 쪽(캡처·번역·자동 채움)은 포커스된 창을 따른다
+  const focusedTabs = windows.focusedTabs()
+  // 다이얼로그 부모 창 — 사람이 쓰는 창
+  const dialogWin = (): BrowserWindow => windows.focused().win
+  // 앱 전체 서비스 정리는 마지막 창이 닫힐 때 — 창 하나가 닫혀도 다른 창이 남아 있으면 계속 돈다
+  const onShutdown = (fn: () => void): void => windows.onLastClosed(fn)
   // 동기화 엔진이 붙을 자리. 로그인 전에도 IPC 가 상태를 답할 수 있게 한다
   const sync = new SyncEngineHolder()
   // === 홈 버튼 / 설정 페이지 (신규 추가분) ===================================
@@ -222,11 +233,8 @@ export function registerIpc(
   applyBrowserDefaults(settings.get())
   setOcrEnabled(settings.get().ocrEnabled)
   // === 신규 추가분 끝 =========================================================
-  // 창이 이미 파괴됐는데 send 하면 예외가 난다. 모든 main→renderer 통지는 이 관문을 거친다
-  const send = (channel: string, payload: unknown): void => {
-    if (win.isDestroyed() || win.webContents.isDestroyed()) return
-    win.webContents.send(channel, payload)
-  }
+  // 앱 전체 상태(금고·AI·동기화·설정)의 main→renderer 통지는 모든 창에 방송한다
+  const send = (channel: string, payload: unknown): void => windows.broadcast(channel, payload)
   // 금고. 마스터 키는 이 인스턴스 안에만 있고 IPC 로는 절대 나가지 않는다
   const vault = new VaultService(db, settings, { safeStorage })
   // AI 도구(list_accounts/fill_secret/login)가 쓸 수 있도록 금고를 넘긴다.
@@ -292,7 +300,7 @@ export function registerIpc(
       (patch) => void settings.set(patch)
     )
   void applyBridge()
-  win.once('closed', () => void bridge.stop())
+  onShutdown(() => void bridge.stop())
   handleFromRenderer(IPC.bridgeRegenerateToken, async () => {
     const token = newBridgeToken()
     settings.set({ bridgeToken: token })
@@ -345,7 +353,7 @@ export function registerIpc(
   // 가져오기(비밀번호 CSV·북마크 HTML). filePath 를 안 주면 다이얼로그를 연다
   const importDialogs: ImportDialogs = {
     showOpenDialog: async (filters) => {
-      const result = await dialog.showOpenDialog(win, { filters, properties: ['openFile'] })
+      const result = await dialog.showOpenDialog(dialogWin(), { filters, properties: ['openFile'] })
       if (result.canceled || result.filePaths.length === 0) return undefined
       return result.filePaths[0]
     }
@@ -354,7 +362,7 @@ export function registerIpc(
   // === 북마크 관리자 페이지 (신규 추가분) — 내보내기용 저장 다이얼로그를 나중에 덧붙인다 ===
   // (importDialogs 리터럴 자체는 건드리지 않고, 참조가 같은 객체에 속성만 추가한다)
   importDialogs.showSaveDialog = async (filters, defaultPath) => {
-    const result = await dialog.showSaveDialog(win, { filters, defaultPath })
+    const result = await dialog.showSaveDialog(dialogWin(), { filters, defaultPath })
     if (result.canceled || !result.filePath) return undefined
     return result.filePath
   }
@@ -371,7 +379,7 @@ export function registerIpc(
   ): void {
     ipcMain.handle(channel, (e, ...args: unknown[]) =>
       wrap(() => {
-        assertFromRenderer(win, e.sender)
+        assertFromRenderer(windows, e.sender)
         return fn(...(args as A))
       })
     )
@@ -380,15 +388,32 @@ export function registerIpc(
   /** 렌더러 전용 단방향(send) 채널을 등록한다. 다른 발신자의 메시지는 조용히 버린다 */
   function onFromRenderer<A extends unknown[]>(channel: string, fn: (...args: A) => void): void {
     ipcMain.on(channel, (e, ...args: unknown[]) => {
-      if (!isFromRenderer(win, e.sender)) return
+      if (!isFromRenderer(windows, e.sender)) return
       fn(...(args as A))
     })
   }
 
-  tabs.onChange((list) => send(IPC.tabUpdated, list))
+  /** 렌더러 전용 invoke 채널 — 발신자의 창(탭 관리자·BrowserWindow)을 함께 넘긴다 */
+  function handleFromRendererWin<A extends unknown[], T>(
+    channel: string,
+    fn: (entry: WindowEntry, ...args: A) => T | Promise<T>
+  ): void {
+    ipcMain.handle(channel, (e, ...args: unknown[]) =>
+      wrap(() => {
+        const entry = windows.forSender(e.sender)
+        if (!entry) throw new Error('forbidden: renderer-only channel')
+        return fn(entry, ...(args as A))
+      })
+    )
+  }
 
-  // 창이 닫히면 등록한 핸들러를 모두 걷어낸다(1단계는 단일 창)
-  win.once('closed', () => {
+  // 탭 목록은 창마다 다르다 — 그 창의 렌더러에만 보낸다
+  windows.eachWindow((entry) =>
+    entry.tabs.onChange((list) => windows.sendTo(entry, IPC.tabUpdated, list))
+  )
+
+  // 마지막 창이 닫히면 등록한 핸들러를 모두 걷어낸다
+  onShutdown(() => {
     for (const channel of Object.values(IPC)) ipcMain.removeHandler(channel)
     ipcMain.removeAllListeners(IPC.agentConfirmReply)
     ipcMain.removeAllListeners(IPC.vaultCaptureDecision)
@@ -405,20 +430,37 @@ export function registerIpc(
   })
 
   // 팝업(결제창·주소 검색창)까지 함께 돌려준다 — 사이드바가 "팝업" 배지로 보여 준다
-  handleFromRenderer(IPC.tabList, () => tabs.listAll())
-  handleFromRenderer(IPC.tabCreate, (o: { url?: string; profile?: string; mobile?: boolean }) =>
-    // 화면에서 사람이 연 탭 — 바깥 자동화가 닫지 못하게 표시한다
-    tabs.create({ ...o, user: true })
+  handleFromRendererWin(IPC.tabList, (w) => w.tabs.listAll())
+  handleFromRendererWin(
+    IPC.tabCreate,
+    (w, o: { url?: string; profile?: string; mobile?: boolean }) =>
+      // 화면에서 사람이 연 탭 — 바깥 자동화가 닫지 못하게 표시한다
+      w.tabs.create({ ...o, user: true })
   )
   // 팝업 id 로도 닫기·전환이 되게 대상(탭+팝업) 경로로 보낸다
-  handleFromRenderer(IPC.tabClose, (id: string) => tabs.closeTarget(id))
-  handleFromRenderer(IPC.tabActivate, (id: string) => tabs.focusTarget(id))
-  handleFromRenderer(IPC.tabNavigate, (id: string, url: string) => tabs.navigate(id, url))
-  handleFromRenderer(IPC.tabBack, (id: string) => tabs.back(id))
-  handleFromRenderer(IPC.tabForward, (id: string) => tabs.forward(id))
-  handleFromRenderer(IPC.tabReload, (id: string) => tabs.reload(id))
-  handleFromRenderer(IPC.tabSetMobile, (id: string, mobile: boolean) => tabs.setMobile(id, mobile))
-  handleFromRenderer(IPC.tabMove, (id: string, toIndex: number) => tabs.move(id, toIndex))
+  handleFromRendererWin(IPC.tabClose, (w, id: string) => w.tabs.closeTarget(id))
+  handleFromRendererWin(IPC.tabActivate, (w, id: string) => w.tabs.focusTarget(id))
+  handleFromRendererWin(IPC.tabNavigate, (w, id: string, url: string) => w.tabs.navigate(id, url))
+  handleFromRendererWin(IPC.tabBack, (w, id: string) => w.tabs.back(id))
+  handleFromRendererWin(IPC.tabForward, (w, id: string) => w.tabs.forward(id))
+  handleFromRendererWin(IPC.tabReload, (w, id: string) => w.tabs.reload(id))
+  handleFromRendererWin(IPC.tabSetMobile, (w, id: string, mobile: boolean) =>
+    w.tabs.setMobile(id, mobile)
+  )
+  handleFromRendererWin(IPC.tabMove, (w, id: string, toIndex: number) => w.tabs.move(id, toIndex))
+  // 탭 바 밖으로 끌어낸 탭 — 마우스 자리에 새 창을 띄워 그 탭을 옮긴다(사람 탭만, 마지막 탭은 그대로)
+  handleFromRendererWin(IPC.tabDetach, (_w, id: string) => {
+    const point = screen.getCursorScreenPoint()
+    return windows.detach(id, { x: point.x - 80, y: point.y - 20 }) !== null
+  })
+  // 다른 창의 탭을 이 창의 탭 바 자리로 끌어다 놓음
+  handleFromRendererWin(IPC.tabAdopt, (w, id: string, toIndex?: number) =>
+    windows.moveTab(id, w, typeof toIndex === 'number' ? toIndex : undefined)
+  )
+  // 메뉴 '새 창' — 같은 계정·같은 데이터로 완전한 새 창
+  handleFromRenderer(IPC.windowNew, () => {
+    windows.create({ openTab: true })
+  })
   // 프로필 메뉴용 목록 — 이 작업공간에서 한 번이라도 쓴 프로필(세션 폴더)과 지금 열린 탭의 프로필
   handleFromRenderer(IPC.profileList, () => {
     const dirPrefix = workspace.partitionPrefix().replace(/^persist:/, '')
@@ -433,10 +475,13 @@ export function registerIpc(
     return profileNames(
       dirs,
       dirPrefix,
-      tabs.listAll().map((t) => t.profile)
+      windows
+        .allTabLists()
+        .flat()
+        .map((t) => t.profile)
     )
   })
-  handleFromRenderer(IPC.layoutSet, (l: Layout) => tabs.setLayout(l))
+  handleFromRendererWin(IPC.layoutSet, (w, l: Layout) => w.tabs.setLayout(l))
 
   // 실행 시작만 즉시 확인해 주고, 완료·실패는 status 이벤트로만 알린다.
   // (예전처럼 완료까지 기다리면 늦게 끝난 이전 작업의 응답이 새 작업 UI 를 덮어썼다)
@@ -508,7 +553,7 @@ export function registerIpc(
   // 렌더러 창(메인 UI)에는 전체 설정을, 탭 안의 페이지 preload(언어 표기용)에는
   // language 하나만 돌려준다. 분기 로직 자체는 sender.ts 의 순수 함수(settingsForSender)에 있다
   ipcMain.handle(IPC.settingsGet, (e) =>
-    wrap(() => settingsForSender(settings.get(), win, e.sender))
+    wrap(() => settingsForSender(settings.get(), windows, e.sender))
   )
   handleFromRenderer(IPC.settingsSet, async (patch: Partial<Settings>) => {
     // 저장 폴더는 렌더러가 임의 경로를 넣지 못한다 — 폴더 선택 다이얼로그(메인)로만 자유롭다
@@ -582,7 +627,7 @@ export function registerIpc(
       {
         vault,
         showSaveDialog: async (prompt) => {
-          const result = await dialog.showSaveDialog(win, {
+          const result = await dialog.showSaveDialog(dialogWin(), {
             defaultPath: prompt.defaultPath,
             filters: prompt.filters,
             message: prompt.message,
@@ -606,7 +651,7 @@ export function registerIpc(
     excludedHosts: () => settings.get().vaultExcludedHosts,
     neverSaveHosts: () => settings.get().vaultNeverSaveHosts,
     machineFilled: (senderKey) => machineFilledRecently(senderKey as WebContents),
-    profileOf: (senderKey) => tabs.findByWebContents(senderKey as WebContents)?.profile,
+    profileOf: (senderKey) => windows.findTab(senderKey as WebContents)?.tab.profile,
     watchLogin: (senderKey, onSettled, subFrame) => {
       const wc = senderKey as WebContents
       watchLoginOutcome(wc, wc.getURL(), onSettled, subFrame as WebFrameMain | undefined)
@@ -638,7 +683,7 @@ export function registerIpc(
     captureGate.handle(
       e.sender,
       {
-        trusted: tabs.hasWebContents(e.sender),
+        trusted: windows.hasWebContents(e.sender),
         frameUrl: frame?.url ?? '',
         topUrl: e.sender.isDestroyed() ? '' : e.sender.getURL(),
         ...(isSubFrame && frame ? { subFrame: frame } : {})
@@ -650,7 +695,7 @@ export function registerIpc(
   // 실제 탭이 보낸 것만, 정해진 단계 이름만, 탭당 30초에 10줄까지만(로그 도배 방지)
   const traceSentAt = new WeakMap<WebContents, number[]>()
   ipcMain.on(IPC.vaultCaptureTrace, (e, raw: unknown) => {
-    if (!tabs.hasWebContents(e.sender)) return
+    if (!windows.hasWebContents(e.sender)) return
     if (typeof raw !== 'string' || !(CAPTURE_TRACE_STAGES as readonly string[]).includes(raw))
       return
     const now = Date.now()
@@ -676,7 +721,8 @@ export function registerIpc(
   // 상세 화면의 '자동 채우기' 버튼과 페이지 내 피커가 같은 경로를 쓴다
   const autofillDeps: AutofillDeps = {
     vault,
-    activeTab: () => tabs.active(),
+    // 사람이 보고 있는 창의 활성 탭
+    activeTab: () => focusedTabs.active(),
     excludedHosts: () => settings.get().vaultExcludedHosts,
     autoSubmit: () => settings.get().autofillAutoSubmit
   }
@@ -692,7 +738,7 @@ export function registerIpc(
   ipcMain.handle(IPC.vaultPickerAccounts, (e, rawHost: unknown) => {
     const result = pickerGate.accounts(
       e.sender,
-      { trusted: tabs.hasWebContents(e.sender), frameUrl: e.senderFrame?.url ?? '' },
+      { trusted: windows.hasWebContents(e.sender), frameUrl: e.senderFrame?.url ?? '' },
       rawHost
     )
     return { outcome: result.outcome, accounts: result.accounts }
@@ -702,13 +748,13 @@ export function registerIpc(
   ipcMain.handle(IPC.vaultPickerFill, async (e, raw: unknown) => {
     const result = pickerGate.fill(
       e.sender,
-      { trusted: tabs.hasWebContents(e.sender), frameUrl: e.senderFrame?.url ?? '' },
+      { trusted: windows.hasWebContents(e.sender), frameUrl: e.senderFrame?.url ?? '' },
       raw
     )
     if (result.outcome !== 'ok' || result.accountId === undefined || result.host === undefined) {
       return { outcome: result.outcome }
     }
-    const tab = tabs.findByWebContents(e.sender)
+    const tab = windows.findTab(e.sender)?.tab ?? null
     if (!tab) return { outcome: 'untrusted-sender' }
     try {
       const filled = await autofillAccount(autofillDeps, result.accountId, {
@@ -805,11 +851,11 @@ export function registerIpc(
 
   // === 자체 새 탭 페이지(samba://newtab) ================================================
   // 발신자는 반드시 관리 중인 탭이면서 내부 페이지여야 한다(웹 페이지의 위조 호출 차단)
-  const newTabSender = (sender: WebContents): { tabId: string } | null => {
-    const tab = tabs.findByWebContents(sender)
-    if (!tab) return null
+  const newTabSender = (sender: WebContents): { tabId: string; tabs: TabManager } | null => {
+    const found = windows.findTab(sender)
+    if (!found) return null
     if (!isInternalUrl(sender.getURL())) return null
-    return { tabId: tab.id }
+    return { tabId: found.tab.id, tabs: found.entry.tabs }
   }
 
   ipcMain.handle(IPC.newTabInit, (e): NewTabInitDto => {
@@ -824,7 +870,7 @@ export function registerIpc(
     const from = newTabSender(e.sender)
     if (!from || typeof input !== 'string' || !input.trim()) return
     // 검색어 → URL 변환과 허용 판정은 주소창과 완전히 같은 경로를 쓴다
-    void tabs.navigate(from.tabId, input).catch((err: unknown) => {
+    void from.tabs.navigate(from.tabId, input).catch((err: unknown) => {
       console.warn('새 탭 검색 실패', err instanceof Error ? err.message : String(err))
     })
   })
@@ -832,7 +878,7 @@ export function registerIpc(
   ipcMain.on(IPC.newTabOpen, (e, url: unknown) => {
     const from = newTabSender(e.sender)
     if (!from || typeof url !== 'string' || !isAllowedExternalUrl(url)) return
-    void tabs.navigate(from.tabId, url).catch((err: unknown) => {
+    void from.tabs.navigate(from.tabId, url).catch((err: unknown) => {
       console.warn('새 탭 북마크 열기 실패', err instanceof Error ? err.message : String(err))
     })
   })
@@ -843,7 +889,8 @@ export function registerIpc(
   const closedTabs = new ClosedTabStack()
   tabs.onTabClosed((closed) => closedTabs.push(closed))
 
-  const gestureDeps: GestureDeps = {
+  // 제스처가 일어난 탭이 있는 창의 탭 관리자·창을 쓴다(창 제어는 그 창에)
+  const gestureDepsFor = ({ tabs, win }: WindowEntry): GestureDeps => ({
     activeTabId: () => tabs.active()?.id ?? null,
     back: (id) => tabs.back(id),
     forward: (id) => tabs.forward(id),
@@ -854,9 +901,8 @@ export function registerIpc(
     newTab: () => {
       tabs.create({ user: true })
     },
-    // 이 앱은 단일 창이라 '새 창 열기' 는 새 탭으로 대체한다(설정 라벨에도 그렇게 적혀 있다)
     newWindow: () => {
-      tabs.create({ user: true })
+      windows.create({ openTab: true })
     },
     // 시크릿창 대체 — 세션이 분리된 새 프로필 탭
     newProfileTab: () => {
@@ -879,19 +925,20 @@ export function registerIpc(
     minimize: () => {
       if (!win.isDestroyed()) win.minimize()
     }
-  }
+  })
 
   // 발신자는 반드시 관리 중인 탭이어야 한다(웹 페이지·확장의 위조 호출 차단)
   ipcMain.on(IPC.pageGesture, (e, raw: unknown) => {
-    const tab = tabs.findByWebContents(e.sender)
-    if (!tab) return
+    const found = windows.findTab(e.sender)
+    if (!found) return
+    const tab = found.tab
     // 방향 4글자(L/R/U/D)를 넘는 값은 인식기가 만들 수 없다 — 들어오면 버린다
     if (typeof raw !== 'string' || !/^[LRUD]{1,4}$/.test(raw)) return
     const s = settings.get()
     if (!s.mouseGesturesEnabled) return
     // 제스처가 일어난 그 탭을 대상으로 실행한다(활성 탭 추정에 기대지 않는다)
     void runGesture(raw, s.mouseGestures, {
-      ...gestureDeps,
+      ...gestureDepsFor(found.entry),
       activeTabId: () => tab.id
     }).catch((err: unknown) => {
       console.warn('마우스 제스처 실행 실패', err instanceof Error ? err.message : String(err))
@@ -919,7 +966,7 @@ export function registerIpc(
   })
   // 구독 예비 계정 토큰(하네스와 공유). 등록·삭제가 재시작 없이 반영되게 부를 때마다 읽는다
   setSubscriptionFallbackTokens(() => loadFallbackTokens([process.cwd(), app.getAppPath()]))
-  win.once('closed', () => {
+  onShutdown(() => {
     setApiKeyResolver(null)
     setAuthResolver(null)
     setSubscriptionFallbackTokens(null)
@@ -1103,7 +1150,7 @@ export function registerIpc(
   auth.onStateChanged(() => send(IPC.authStateChanged, authStateWithAccount()))
   account.onStateChanged(() => send(IPC.authStateChanged, authStateWithAccount()))
   // 구글 로그인을 기다리는 중에 창이 닫히면 루프백 서버가 최대 5분 남는다
-  win.once('closed', () => {
+  onShutdown(() => {
     auth.dispose()
     directoryAuth?.dispose()
   })
@@ -1212,11 +1259,20 @@ export function registerIpc(
   }
   // 캡처 단축키(Alt+1~6)도 같은 창 안 입력 경로를 쓴다. 캡처 배선은 아래에서 붙는다
   let handleCaptureShortcut: (input: CaptureShortcutInput) => boolean = () => false
-  const handleWindowShortcut = (input: CaptureShortcutInput): boolean =>
-    handleWorkspaceShortcut(input) || handleCaptureShortcut(input)
-  win.webContents.on('before-input-event', (e, input) => {
-    if (handleWindowShortcut(input)) e.preventDefault()
-  })
+  const handleWindowShortcut = (input: CaptureShortcutInput): boolean => {
+    // Ctrl+N — 크롬처럼 같은 계정·같은 데이터로 새 창
+    if (isNewWindowShortcut(input)) {
+      windows.create({ openTab: true })
+      return true
+    }
+    return handleWorkspaceShortcut(input) || handleCaptureShortcut(input)
+  }
+  windows.eachWindow(({ win }) =>
+    win.webContents.on('before-input-event', (e, input) => {
+      if (handleWindowShortcut(input)) e.preventDefault()
+    })
+  )
+  // 탭 페이지 안에서 눌러도 듣는다(모든 창에 걸린다)
   tabs.setInputHandler(handleWindowShortcut)
 
   handleFromRenderer(IPC.workspaceList, () => workspace.list())
@@ -1303,7 +1359,7 @@ export function registerIpc(
   // 저장된 세션이 있으면 조용히 되살린다(디렉터리 → 주소 내려받기 → 데이터 세션). 실패는 로그아웃으로 본다.
   // 연결부가 만들어진 뒤에 돌려야 새 백엔드 교체가 연결부까지 닿는다
   void account.restore().then(() => connection.refresh())
-  win.once('closed', () => connection.dispose())
+  onShutdown(() => connection.dispose())
 
   const requireDevices = (): DeviceService => {
     const devices = connection.devices()
@@ -1356,24 +1412,43 @@ export function registerIpc(
       .catch((e: unknown) => console.error('파티션 세션 확장 로드 실패', e))
   })
 
-  // 확장 액션 팝업(툴바 아이콘 아래에 붙는 작은 창). 창당 한 개만 떠 있는다
-  const extensionPopup = new ExtensionPopupHost({
-    win,
-    onClosed: () => send(IPC.extPopupClosed, null)
+  // 확장 액션 팝업(툴바 아이콘 아래에 붙는 작은 창). 창마다 호스트 하나, 창당 한 개만 떠 있는다
+  const popupHosts = new Map<number, ExtensionPopupHost>()
+  const closeAllPopups = (): void => {
+    for (const host of popupHosts.values()) host.close()
+  }
+  const popupActiveId = (): string | null => {
+    for (const host of popupHosts.values()) {
+      const id = host.activeId()
+      if (id) return id
+    }
+    return null
+  }
+  windows.eachWindow((entry) => {
+    popupHosts.set(
+      entry.id,
+      new ExtensionPopupHost({
+        win: entry.win,
+        onClosed: () => windows.sendTo(entry, IPC.extPopupClosed, null)
+      })
+    )
+    // 팝업은 탭 뷰 위에 얹히는데, 탭을 전환하면 활성 탭 뷰가 다시 맨 위로 올라간다.
+    // 크롬도 탭을 바꾸면 팝업을 닫으므로 여기서 함께 닫는다
+    entry.tabs.onActivated(() => {
+      popupHosts.get(entry.id)?.close()
+      // 확장에 탭 활성화를 알린다(chrome.tabs.onActivated) — 샵백은 이때 아이콘·알림을 다시 판정한다.
+      // 이 콜백은 활성 탭이 바뀌기 전에 불리므로 한 틱 뒤에 새 활성 탭을 읽는다(실기 2026-09-28: 이전 탭을 보냈다)
+      setTimeout(() => {
+        const t = entry.tabs.active()
+        const wc = t?.view.webContents
+        if (wc && !wc.isDestroyed())
+          sendExtensionTabEvent(wc.session, 'activated', { tabId: wc.id, windowId: 0 })
+      }, 0)
+    })
   })
-  win.once('closed', () => extensionPopup.dispose())
-  // 팝업은 탭 뷰 위에 얹히는데, 탭을 전환하면 활성 탭 뷰가 다시 맨 위로 올라간다.
-  // 크롬도 탭을 바꾸면 팝업을 닫으므로 여기서 함께 닫는다
-  tabs.onActivated(() => {
-    extensionPopup.close()
-    // 확장에 탭 활성화를 알린다(chrome.tabs.onActivated) — 샵백은 이때 아이콘·알림을 다시 판정한다.
-    // 이 콜백은 활성 탭이 바뀌기 전에 불리므로 한 틱 뒤에 새 활성 탭을 읽는다(실기 2026-09-28: 이전 탭을 보냈다)
-    setTimeout(() => {
-      const t = tabs.active()
-      const wc = t?.view.webContents
-      if (wc && !wc.isDestroyed())
-        sendExtensionTabEvent(wc.session, 'activated', { tabId: wc.id, windowId: 0 })
-    }, 0)
+  windows.onClosed((entry) => {
+    popupHosts.get(entry.id)?.dispose()
+    popupHosts.delete(entry.id)
   })
 
   handleFromRenderer(IPC.extList, () => ({ items: extensions.list(), errors: extensions.errors() }))
@@ -1383,54 +1458,59 @@ export function registerIpc(
   handleFromRenderer(IPC.extLoad, async (rawPath?: unknown) => {
     let folder = typeof rawPath === 'string' ? rawPath : ''
     if (!folder) {
-      const picked = await dialog.showOpenDialog(win, { properties: ['openDirectory'] })
+      const picked = await dialog.showOpenDialog(dialogWin(), { properties: ['openDirectory'] })
       if (picked.canceled || picked.filePaths.length === 0) return null
       folder = picked.filePaths[0]
     }
     return extensions.add(folder)
   })
   handleFromRenderer(IPC.extRemove, (id: string) => {
-    extensionPopup.close()
+    closeAllPopups()
     return extensions.remove(id)
   })
   handleFromRenderer(IPC.extSetEnabled, (id: string, enabled: boolean) => {
-    if (extensionPopup.activeId() === id) extensionPopup.close()
+    if (popupActiveId() === id) closeAllPopups()
     return extensions.setEnabled(id, enabled)
   })
 
   // 툴바 아이콘 클릭 → 크롬이 하던 일을 대신한다.
   // Electron 39 에는 chrome.action 이 없어 확장이 팝업을 띄워 달라고 할 수 없으므로,
   // manifest 의 default_popup 을 우리가 읽어 같은 자리에 같은 문서를 띄운다
-  handleFromRenderer(IPC.extAction, (id: unknown, rawAnchor: unknown): ExtensionActionResult => {
-    if (typeof id !== 'string') throw new Error(tr('ipc.invalidExtensionId'))
-    const item = extensions.find(id)
-    if (!item) throw new Error(tr('ipc.extensionNotListed'))
-    if (!item.enabled) throw new Error(tr('ipc.extensionDisabled'))
-    const anchor = toExtensionAnchor(rawAnchor)
-    if (item.popup) {
-      // 팝업은 그 확장이 로드된 세션에서 열어야 chrome.* 이 동작한다.
-      // 보통은 지금 보고 있는 탭의 파티션 세션이고, 거기에 없으면 기본 세션으로 내려간다
-      const active = tabs.active()?.view.webContents.session
-      const ses = sessionWithExtension(id, [...(active ? [active] : []), session.defaultSession])
-      if (!ses) throw new Error(tr('ipc.extensionSessionNotFound'))
-      const open = extensionPopup.toggle({
-        id,
-        url: extensionPopupUrl(id, item.popup),
-        session: ses,
-        anchor
-      })
-      return { kind: 'popup', open }
+  handleFromRendererWin(
+    IPC.extAction,
+    (w, id: unknown, rawAnchor: unknown): ExtensionActionResult => {
+      if (typeof id !== 'string') throw new Error(tr('ipc.invalidExtensionId'))
+      const extensionPopup = popupHosts.get(w.id)
+      if (!extensionPopup) throw new Error('window closed')
+      const item = extensions.find(id)
+      if (!item) throw new Error(tr('ipc.extensionNotListed'))
+      if (!item.enabled) throw new Error(tr('ipc.extensionDisabled'))
+      const anchor = toExtensionAnchor(rawAnchor)
+      if (item.popup) {
+        // 팝업은 그 확장이 로드된 세션에서 열어야 chrome.* 이 동작한다.
+        // 보통은 지금 보고 있는 탭의 파티션 세션이고, 거기에 없으면 기본 세션으로 내려간다
+        const active = w.tabs.active()?.view.webContents.session
+        const ses = sessionWithExtension(id, [...(active ? [active] : []), session.defaultSession])
+        if (!ses) throw new Error(tr('ipc.extensionSessionNotFound'))
+        const open = extensionPopup.toggle({
+          id,
+          url: extensionPopupUrl(id, item.popup),
+          session: ses,
+          anchor
+        })
+        return { kind: 'popup', open }
+      }
+      extensionPopup.close()
+      if (item.optionsPage) {
+        // 팝업이 없으면 크롬은 chrome.action.onClicked 를 보낸다. Electron 은 그 이벤트를
+        // 전달할 방법이 없어, 대신 설정 화면에 해당하는 옵션 페이지를 새 탭으로 연다
+        w.tabs.create({ url: extensionPopupUrl(id, item.optionsPage), extension: true })
+        return { kind: 'options', open: false }
+      }
+      return { kind: 'none', open: false }
     }
-    extensionPopup.close()
-    if (item.optionsPage) {
-      // 팝업이 없으면 크롬은 chrome.action.onClicked 를 보낸다. Electron 은 그 이벤트를
-      // 전달할 방법이 없어, 대신 설정 화면에 해당하는 옵션 페이지를 새 탭으로 연다
-      tabs.create({ url: extensionPopupUrl(id, item.optionsPage), extension: true })
-      return { kind: 'options', open: false }
-    }
-    return { kind: 'none', open: false }
-  })
-  handleFromRenderer(IPC.extPopupClose, () => extensionPopup.close())
+  )
+  handleFromRendererWin(IPC.extPopupClose, (w) => popupHosts.get(w.id)?.close())
 
   // 가져오기·웹스토어 설치. 결과 폴더는 항상 userData/extensions/<id> 이고, 로드는 위 관리자가 한다
   const extensionInstaller = createExtensionInstaller({
@@ -1450,7 +1530,7 @@ export function registerIpc(
   // 발신자는 반드시 관리 중인 탭이면서 지금 보고 있는 주소가 웹스토어여야 한다
   // (웹 페이지·확장이 아무 id 나 밀어 넣어 설치시키는 것을 막는다)
   ipcMain.on(IPC.pageWebstoreInstall, (e, raw: unknown) => {
-    if (!tabs.findByWebContents(e.sender)) return
+    if (!windows.hasWebContents(e.sender)) return
     if (normalizeHost(e.sender.getURL()) !== WEBSTORE_HOST) return
     if (!isExtensionId(raw)) return
     const id = raw
@@ -1537,7 +1617,7 @@ export function registerIpc(
   })
   phones.start()
   relay.start()
-  win.once('closed', () => {
+  onShutdown(() => {
     if (phonePublishTimer) clearTimeout(phonePublishTimer)
     relay.stop()
     phones.dispose()
@@ -1643,13 +1723,14 @@ export function registerIpc(
   })
   // 폰 도구가 큰 화면(scrcpy 창)을 열 수 있게 잇는다 — 캡차는 사람이 이 창에서 푼다
   phoneOps.openWindow = (serial) => phoneScreen.windows.open(serial)
-  win.once('closed', () => phoneScreen.dispose())
+  onShutdown(() => phoneScreen.dispose())
   // === 폰 화면 끝 ======================================================================
 
   // === 화면 번역 · 이미지 번역 =========================================================
   const translate = registerTranslate({
     handle: handleFromRenderer,
-    tabs,
+    // 화면 번역은 사람이 보는 창의 활성 탭을 다룬다(우클릭 메뉴 훅은 모든 창에 걸린다)
+    tabs: focusedTabs,
     settings: () => settings.get(),
     apiKeys,
     userDataDir: app.getPath('userData'),
@@ -1660,7 +1741,7 @@ export function registerIpc(
   })
   // 작업공간을 바꾸면 그 프로필의 캐시 파일로 갈아 끼운다
   workspace.onChanged(() => translate.setProfile())
-  win.once('closed', () => translate.dispose())
+  onShutdown(() => translate.dispose())
   // === 번역 끝 ========================================================================
   // === 사진·영상 캡처 ==================================================================
   // 파일은 설정의 저장 폴더에만 쓰인다. 단축키는 위에서 만든 창 안 입력 경로에 붙는다
@@ -1669,12 +1750,13 @@ export function registerIpc(
     send,
     settings: () => settings.get(),
     setSettings: (patch) => settings.set(patch),
-    win,
-    tabs,
+    // 캡처는 사람이 보는 창의 활성 탭을 찍는다
+    win: () => windows.focused().win,
+    tabs: focusedTabs,
     downloadsDir: () => app.getPath('downloads')
   })
   handleCaptureShortcut = capture.handleShortcut
-  win.once('closed', () => capture.dispose())
+  onShutdown(() => capture.dispose())
   // === 캡처 끝 =========================================================================
 
   return { settings, agent, db, vault, auth, sync }

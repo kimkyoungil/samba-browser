@@ -5,14 +5,14 @@ import { join } from 'node:path'
 import { app, ipcMain } from 'electron'
 import { IPC, type IpcResult } from '../../shared/ipc'
 import { FaviconService, setFaviconService, type FaviconResponse } from '../favicon/service'
-import { assertFromRenderer, type RendererWindowLike } from './sender'
+import { assertFromRenderer, type RendererScope } from './sender'
 
 export interface FaviconGetResult {
   dataUrl: string | null
 }
 
-// win: 렌더러 창. 파비콘 조회도 UI 전용 채널이므로 발신자를 렌더러 창으로 제한한다
-export function registerFaviconIpc(win: RendererWindowLike): FaviconService {
+// win: 렌더러 창(또는 창 묶음). 파비콘 조회도 UI 전용 채널이므로 발신자를 렌더러 창으로 제한한다
+export function registerFaviconIpc(win: RendererScope): FaviconService {
   const service = new FaviconService({
     cacheDir: join(app.getPath('userData'), 'favicons'),
     // net.fetch 대신 Node fetch — 확장(webRequest)이 켜진 상태의 Electron 크래시 회피

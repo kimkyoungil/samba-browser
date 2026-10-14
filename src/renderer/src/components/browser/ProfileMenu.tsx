@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
-import { Plus, Users } from 'lucide-react'
+import { AppWindow, Plus, Users } from 'lucide-react'
 import { Popover, PopoverContent, PopoverTrigger } from '@renderer/components/ui/popover'
 import { Input } from '@renderer/components/ui/input'
 import { useOverlayStore } from '@renderer/stores/overlayStore'
@@ -64,6 +64,18 @@ export function ProfileMenu(): React.JSX.Element {
         </button>
       </PopoverTrigger>
       <PopoverContent className="w-64 max-w-[calc(100vw-16px)]">
+        {/* 크롬의 '새 창' — 같은 계정·같은 데이터로 완전한 새 창. 탭을 탭 바 밖으로 끌어도 된다 */}
+        <button
+          title={t('tab.newWindowHint')}
+          onClick={() => {
+            setOpen(false)
+            void window.samba.windows.create()
+          }}
+          className="mb-1 flex w-full items-center gap-2 rounded-md border-b border-[var(--line)] px-2 py-1.5 pb-2 text-left text-[12.5px] hover:bg-black/5"
+        >
+          <AppWindow className="h-3.5 w-3.5 shrink-0 text-[var(--text2)]" />
+          <span className="truncate">{t('tab.newWindow')}</span>
+        </button>
         <div className="px-2 pb-1 pt-1 text-[11.5px] text-[var(--text3)]">
           {t('tab.profileHint')}
         </div>

@@ -269,6 +269,8 @@
     "bookmarkRemove": "북마크에서 삭제"
   },
   "tab": {
+    "newWindow": "새 창",
+    "newWindowHint": "탭을 탭 바 밖으로 끌면 새 창으로 분리됩니다",
     "new": "새 탭",
     "close": "탭 닫기",
     "openTabs": "열린 탭",
@@ -991,7 +993,7 @@
         "home": "홈페이지로",
         "reload": "새로고침",
         "newTab": "새 탭 열기",
-        "newWindow": "새 창 열기(새 탭)",
+        "newWindow": "새 창 열기",
         "newProfileTab": "새 프로필 탭",
         "closeTab": "탭 닫기",
         "reopenTab": "닫은 탭 다시 열기",

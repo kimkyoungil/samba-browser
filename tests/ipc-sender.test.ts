@@ -34,6 +34,34 @@ describe('isFromRenderer', () => {
   })
 })
 
+describe('isFromRenderer — 창 여러 개', () => {
+  const two = {
+    windows: () => [
+      win(),
+      {
+        isDestroyed: () => false,
+        webContents: { id: 2, isDestroyed: () => false }
+      }
+    ]
+  }
+
+  it('어느 창의 렌더러든 허용한다', () => {
+    expect(isFromRenderer(two, { id: 1 })).toBe(true)
+    expect(isFromRenderer(two, { id: 2 })).toBe(true)
+  })
+
+  it('어느 창도 아니면(탭 페이지) 거부한다', () => {
+    expect(isFromRenderer(two, { id: 7 })).toBe(false)
+    expect(isFromRenderer({ windows: () => [] }, { id: 1 })).toBe(false)
+  })
+
+  it('닫힌 창은 세지 않는다', () => {
+    const closedFirst = { windows: () => [win({ destroyed: true }), two.windows()[1]] }
+    expect(isFromRenderer(closedFirst, { id: 1 })).toBe(false)
+    expect(isFromRenderer(closedFirst, { id: 2 })).toBe(true)
+  })
+})
+
 describe('assertFromRenderer', () => {
   it('허용된 발신자에게는 아무 일도 하지 않는다', () => {
     expect(() => assertFromRenderer(win(), { id: 1 })).not.toThrow()

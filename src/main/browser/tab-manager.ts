@@ -150,8 +150,34 @@ export function computeBehindBounds(
 // 이미 하드닝한 파티션 이름. session.fromPartition 은 같은 인스턴스를 돌려주므로 1회만 건다
 const hardenedPartitions = new Set<string>()
 
-// 다운로드 정책 레지스트리 — 가장 최근에 만든 TabManager 가 등록한다(창은 하나라 충분하다)
-let downloadPolicy: DownloadPolicy | null = null
+// 다운로드 상태는 앱 전체(모든 창)가 공유한다 — 저장 폴더는 AI 도구가 한 번 정하면 어느 창의 탭이 받든 같다.
+// 세션 'will-download' 는 파티션마다 한 번만 걸리므로(hardenSession) 정책도 창과 무관하게 하나여야 한다
+const downloadState: { dir: string | null; records: DownloadRecord[] } = { dir: null, records: [] }
+const downloadPolicy: DownloadPolicy = {
+  getDir: () => downloadState.dir,
+  reserved: new Set<string>(),
+  onRecord: (record) => {
+    downloadState.records.unshift(record)
+    if (downloadState.records.length > 50) downloadState.records.length = 50
+  }
+}
+
+// 탭 webContents → 지금 그 탭을 쥔 TabManager. 탭을 다른 창으로 옮기면(adoptTab) 바뀐다 —
+// 생성 때 건 webContents 리스너들이 옛 창의 관리자가 아니라 지금 창의 관리자에게 알리게 한다
+const ownerOf = new WeakMap<WebContents, TabManager>()
+
+/** 창 사이를 옮기는 탭 — exportTab 이 돌려주고 adoptTab 이 받는다 */
+export interface ExportedTab {
+  tab: Tab
+  /** 사람이 연 탭이었는가 */
+  user: boolean
+  /** 레인(하네스) 탭이었는가 */
+  lane: boolean
+  /** 떼어 낼 때 자동화 대상이었는가 */
+  automationTarget: boolean
+  /** 아직 도구 결과에 붙이지 않은 대화상자 문구 */
+  dialogMessage: string | null
+}
 
 // 세션 기본 거부 정책: 권한 요청·권한 조회·다운로드를 모두 막는다(1단계 범위)
 function hardenSession(ses: Session, partition: string): void {
@@ -172,13 +198,7 @@ function hardenSession(ses: Session, partition: string): void {
     return false
   })
   // 폴더가 지정되지 않았으면 막고, set_download_dir 로 지정됐으면 그 폴더에 저장한다
-  ses.on('will-download', (e, item) => {
-    if (downloadPolicy) handleWillDownload(downloadPolicy, e, item)
-    else {
-      e.preventDefault()
-      console.warn(`다운로드 차단: ${item.getURL()}`)
-    }
-  })
+  ses.on('will-download', (e, item) => handleWillDownload(downloadPolicy, e, item))
   // 웹스토어는 Electron UA 를 보면 "지원되지 않는 브라우저" 안내로 설치 버튼을 감춘다.
   // 구글 로그인은 크롬 UA 를 보면 로그인을 막는다 — 두 호스트 요청에만 각각 맞는 UA 를 보낸다(다른 사이트는 그대로)
   installSiteUserAgents(ses)
@@ -286,20 +306,30 @@ export class TabManager {
   private closedListeners: Array<(tab: ClosedTabRecord) => void> = []
   // === 마우스 제스처 끝 ======================================================
 
-  // set_download_dir 로 지정한 저장 폴더. null 이면 다운로드를 모두 막는다
-  downloadDir: string | null = null
-  // 받은 파일 기록(최근 것이 앞)
-  downloads: DownloadRecord[] = []
+  // set_download_dir 로 지정한 저장 폴더. null 이면 다운로드를 모두 막는다(모든 창이 같은 값을 본다)
+  get downloadDir(): string | null {
+    return downloadState.dir
+  }
+
+  set downloadDir(dir: string | null) {
+    downloadState.dir = dir
+  }
+
+  // 받은 파일 기록(최근 것이 앞) — 창과 무관하게 하나의 목록
+  get downloads(): DownloadRecord[] {
+    return downloadState.records
+  }
+
+  set downloads(list: DownloadRecord[]) {
+    downloadState.records = list
+  }
+
+  /** 이 탭 관리자가 붙어 있는 창 */
+  window(): BrowserWindow {
+    return this.win
+  }
 
   constructor(private win: BrowserWindow) {
-    downloadPolicy = {
-      getDir: () => this.downloadDir,
-      reserved: new Set<string>(),
-      onRecord: (record) => {
-        this.downloads.unshift(record)
-        if (this.downloads.length > 50) this.downloads.length = 50
-      }
-    }
     // 창이 닫히면 남은 리스너·탭을 정리해 파괴된 창에 접근하지 않게 한다
     win.once('closed', () => this.dispose())
     // 창 크기가 바뀌면 렌더러 보고를 기다리지 않고 메인이 먼저 맞춘다.
@@ -387,7 +417,8 @@ export class TabManager {
 
   private attachInputHandler(wc: WebContents): void {
     wc.on('before-input-event', (e, input) => {
-      if (this.inputHandler?.(input)) e.preventDefault()
+      // 탭이 다른 창으로 옮겨 갔으면 그 창의 처리기(작업공간·캡처 단축키)를 쓴다
+      if ((ownerOf.get(wc) ?? this).inputHandler?.(input)) e.preventDefault()
     })
   }
 
@@ -473,6 +504,16 @@ export class TabManager {
   dispose(): void {
     if (this.disposed) return
     this.disposed = true
+    // 창과 함께 탭 페이지도 닫는다 — 창이 여럿이면 앱은 계속 돌므로, 목록만 비우면 닫힌 창의 탭이
+    // 보이지 않는 채 살아남아 메모리·네트워크를 계속 쓴다(실측: 닫은 창의 newtab 이 CDP 타깃에 남음)
+    for (const tab of this.tabs) {
+      if (!isTabAlive(tab)) continue
+      try {
+        tab.view.webContents.close()
+      } catch (e: unknown) {
+        console.warn('창 닫힘 탭 정리 실패', e instanceof Error ? e.message : String(e))
+      }
+    }
     this.listeners = []
     this.activatedListeners = []
     this.closedListeners = []
@@ -789,16 +830,20 @@ export class TabManager {
     }
     this.tabs.push(tab)
     const wc = view.webContents
+    ownerOf.set(wc, this)
+    // 아래 리스너들은 탭이 다른 창으로 옮겨 간 뒤에도 남으므로, 매번 지금 소유자를 찾아 알린다
+    const owner = (): TabManager => ownerOf.get(wc) ?? this
     this.attachInputHandler(wc)
     this.contextMenuHook?.(wc)
     // 상태 변화 이벤트마다 리스너에 통지 (개별 등록: on() 오버로드가 유니온 리터럴을 받지 않음)
-    wc.on('did-start-loading', () => this.emit())
-    wc.on('did-stop-loading', () => this.emit())
-    wc.on('page-title-updated', () => this.emit())
+    wc.on('did-start-loading', () => owner().emit())
+    wc.on('did-stop-loading', () => owner().emit())
+    wc.on('page-title-updated', () => owner().emit())
     wc.on('did-navigate', () => {
       // 활성 탭에서 다른 사이트로 옮겨 갔을 때만 방문으로 센다(뒤 탭의 자동 이동은 세지 않는다)
-      if (this.activeId === tab.id) this.noteVisit(wc.getURL())
-      this.emit()
+      const o = owner()
+      if (o.activeId === tab.id) o.noteVisit(wc.getURL())
+      o.emit()
     })
     // 로드 실패는 원인 파악이 어려우므로 항상 로그로 남긴다(내부 페이지·차단된 주소 진단용)
     // 내부 페이지의 콘솔 오류는 메인 로그로 넘긴다(개발자 도구 없이 진단)
@@ -810,9 +855,9 @@ export class TabManager {
     wc.on('did-fail-load', (_e, code, desc, failedUrl, isMainFrame) => {
       if (isMainFrame && code !== -3) console.error(`탭 로드 실패 ${code} ${desc}: ${failedUrl}`)
     })
-    wc.on('did-navigate-in-page', () => this.emit())
+    wc.on('did-navigate-in-page', () => owner().emit())
     // 문서가 바뀔 때마다 제스처 설정을 다시 밀어 준다(preload 는 매 문서마다 새로 뜬다)
-    wc.on('dom-ready', () => this.sendGestureConfig(wc))
+    wc.on('dom-ready', () => owner().sendGestureConfig(wc))
     // 탭이 실제로 받은 파비콘을 파비콘 서비스 캐시에 넣어 둔다.
     // 이미 열고 있는 페이지에서 나온 정보라 추가로 노출되는 것이 없고,
     // /favicon.ico 가 없는 사이트의 아이콘도 이 경로로 채워진다
@@ -847,19 +892,21 @@ export class TabManager {
     installDialogHandler(wc, {
       // SAMBA_E2E 환경변수는 개발 빌드에서만 인정한다(패키징된 앱에서 자동 처리 금지)
       isAutomationActive: () =>
-        isAutomationActive(this.agentRunning(), process.env, !app.isPackaged),
+        isAutomationActive(owner().agentRunning(), process.env, !app.isPackaged),
       // 사람이 보는 탭 = 포커스를 가진(최소화되지 않은) 창의 활성 탭. 사람의 클릭은 키 입력 기록
       // (humanBusy)에 남지 않으므로 그것까지 요구하지는 않는다 — 활성 탭의 루프는 반복 감지가 막는다
-      isUserFacing: () =>
-        this.activeId === tab.id &&
-        !this.win.isDestroyed() &&
-        this.win.isFocused() &&
-        !this.win.isMinimized(),
-      mode: () => this.dialogMode(),
+      isUserFacing: () => {
+        const o = owner()
+        return (
+          o.activeId === tab.id && !o.win.isDestroyed() && o.win.isFocused() && !o.win.isMinimized()
+        )
+      },
+      mode: () => owner().dialogMode(),
       ...(this.dialogConfirm ? { confirm: this.dialogConfirm } : {}),
-      onMessage: (message) => this.lastDialogMessage.set(tab.id, message)
+      onMessage: (message) => owner().lastDialogMessage.set(tab.id, message)
     })
     wc.setWindowOpenHandler(({ url: target, disposition }) => {
+      const o = owner()
       if (!isAllowedUrl(target)) {
         console.warn(`새 창 차단: ${target}`)
         return { action: 'deny' }
@@ -872,18 +919,18 @@ export class TabManager {
       if (disposition === 'foreground-tab' || disposition === 'background-tab') {
         try {
           // 보이지 않는 탭(자동화가 뒤에서 조작하는 탭)이 연 새 탭은 사람이 보던 탭을 덮지 않게 뒤에서 연다
-          const background = openInBackground(tab.id, this.activeId)
-          const opened = this.create({
+          const background = openInBackground(tab.id, o.activeId)
+          const opened = o.create({
             url: target,
             profile,
             mobile: tab.mobile,
             openerId: tab.id,
             background,
             // 사람이 쓰던 탭에서 열린 링크 탭도 사람의 탭이다
-            user: this.userIds.has(tab.id)
+            user: o.userIds.has(tab.id)
           })
           // 자동화 대상 탭이 연 탭이면 자동화 대상도 새 탭으로 옮긴다(보이는 탭이 연 새 탭을 따라가던 예전 동작과 같다)
-          if (background && this.automationTabId === tab.id) this.automationTabId = opened.id
+          if (background && o.automationTabId === tab.id) o.automationTabId = opened.id
         } catch (e: unknown) {
           console.warn('새 탭 등록 실패', e instanceof Error ? e.message : String(e))
         }
@@ -896,7 +943,7 @@ export class TabManager {
       // 브라우저 프로세스가 죽는 경우가 있었다), did-create-window 에서 받아 추적만 한다
       // 보이지 않는 탭(자동화가 뒤에서 조작하는 탭)이 연 팝업 창은 포커스를 가져가지 않게 숨긴 채 만들고
       // did-create-window 에서 showInactive 로 띄운다 — 사람이 쓰던 창의 키 입력이 팝업으로 넘어가지 않게
-      const quiet = openInBackground(tab.id, this.activeId)
+      const quiet = openInBackground(tab.id, o.activeId)
       googlePopupTarget = isGoogleSigninUrl(target)
       return {
         action: 'allow',
@@ -915,7 +962,7 @@ export class TabManager {
     wc.on('did-create-window', (popupWin) => {
       installGoogleSigninUserAgent(popupWin.webContents, { eager: googlePopupTarget })
       googlePopupTarget = false
-      this.registerPopup(popupWin, tab.id, profile)
+      owner().registerPopup(popupWin, tab.id, profile)
       // 숨긴 채 만든 팝업(뒤 탭이 연 것)은 포커스 없이 보여 준다
       if (!popupWin.isDestroyed() && !popupWin.isVisible()) popupWin.showInactive()
     })
@@ -983,7 +1030,9 @@ export class TabManager {
       if (!isHumanInputEvent(wc)) return
       const now = Date.now()
       markHuman(wc, now, kind)
-      if (!this.win.isDestroyed()) markHumanInWindow(this.win, now)
+      // 탭이 다른 창으로 옮겨 갔으면 지금 창에 기록한다
+      const win = (ownerOf.get(wc) ?? this).win
+      if (!win.isDestroyed()) markHumanInWindow(win, now)
     }
     wc.on('before-input-event', () => note('key'))
     wc.on('before-mouse-event', (_e, mouse) => {
@@ -1007,6 +1056,7 @@ export class TabManager {
     this.win.contentView.addChildView(tab.view, 0)
     // 보이는 탭에 가려진 뷰도 타이머·requestAnimationFrame 이 늦춰지지 않게 한다(가려짐 판정 스로틀링 방지)
     tab.view.webContents.setBackgroundThrottling(false)
+    // 가려진 뷰도 '포커스된 보이는 화면'으로 믿게 해 지연 렌더링 영역(인스타 릴스 격자)이 그려지게 한다
     void setFocusEmulation(tab.view.webContents, true)
   }
 
@@ -1200,6 +1250,68 @@ export class TabManager {
     if (from < 0) return
     this.tabs = moveItem(this.tabs, from, toIndex)
     this.emit()
+  }
+
+  /**
+   * 다른 창으로 옮기기 위해 탭을 이 창에서 떼어 낸다 — 닫지 않고 webContents 를 그대로 넘긴다.
+   * 보이던 탭이면 옆 탭을 보여 준다. 없으면(팝업 id 포함) null
+   */
+  exportTab(id: string): ExportedTab | null {
+    const idx = this.tabs.findIndex((t) => t.id === id)
+    if (idx < 0) return null
+    const [tab] = this.tabs.splice(idx, 1)
+    const exported: ExportedTab = {
+      tab,
+      user: this.userIds.has(id),
+      lane: this.laneIds.has(id),
+      automationTarget: this.automationTabId === id,
+      dialogMessage: this.lastDialogMessage.get(id) ?? null
+    }
+    this.lastDialogMessage.delete(id)
+    if (this.automationTabId === id) this.automationTabId = null
+    this.behindIds = this.behindIds.filter((b) => b !== id)
+    this.laneIds.delete(id)
+    this.userIds.delete(id)
+    if (!this.win.isDestroyed()) this.win.contentView.removeChildView(tab.view)
+    if (this.activeId === id) {
+      const next = this.tabs[idx] ?? this.tabs[idx - 1]
+      if (next) this.activate(next.id)
+      else this.activeId = null
+    }
+    this.emit()
+    return exported
+  }
+
+  /**
+   * 다른 창에서 떼어 온 탭을 이 창에 붙인다. index 는 탭만 센 자리(없으면 맨 뒤).
+   * background 면 보이는 탭을 바꾸지 않고 뒤 층에 붙인다(창이 닫힐 때 자동화 탭을 옮겨 올 때)
+   */
+  adoptTab(exported: ExportedTab, opts: { index?: number; background?: boolean } = {}): TabInfo {
+    if (this.disposed) throw new Error('window closed')
+    const { tab } = exported
+    const index =
+      opts.index === undefined
+        ? this.tabs.length
+        : Math.max(0, Math.min(opts.index, this.tabs.length))
+    this.tabs.splice(index, 0, tab)
+    if (isTabAlive(tab)) {
+      const wc = tab.view.webContents
+      ownerOf.set(wc, this)
+      // 제스처 설정은 창마다 같은 값이지만, 옮겨 온 탭에도 한 번 밀어 둔다
+      this.sendGestureConfig(wc)
+    }
+    if (exported.user) this.userIds.add(tab.id)
+    if (exported.lane) this.laneIds.add(tab.id)
+    if (exported.dialogMessage !== null) this.lastDialogMessage.set(tab.id, exported.dialogMessage)
+    if (opts.background === true) {
+      this.sizeHidden(tab)
+      if (exported.automationTarget) this.automationTabId = tab.id
+    } else {
+      this.activate(tab.id)
+      if (this.activeId !== tab.id) this.sizeHidden(tab)
+    }
+    this.emit()
+    return this.list().find((t) => t.id === tab.id)!
   }
 
   close(id: string): void {

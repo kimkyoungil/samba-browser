@@ -41,7 +41,7 @@ export interface ExtensionTabsProvider {
 
 let provider: ExtensionTabsProvider | null = null
 
-/** 창이 만들어질 때 탭 관리자를 꽂는다(창 1개 앱) */
+/** 탭 제공자를 꽂는다 — 창이 여럿이면 WindowManager 가 '사람이 쓰는 창'으로 보내는 제공자를 준다 */
 export function setExtensionTabsProvider(p: ExtensionTabsProvider | null): void {
   provider = p
 }

@@ -202,11 +202,22 @@ export class AccountService {
     if (!this.lastEnterServerDown) throw new Error('offline-not-allowed')
     const userId = offline.userId()
     if (!userId) throw new Error('offline-no-account')
-    // 앱 로그인 확인값이 있으면 그것으로만 판정한다(키마스터와 무관). 없으면(예전 설치) 키마스터로 확인한다
+    if (password.length === 0) throw new Error('offline-wrong-password')
+    // 앱 로그인 확인값이 있으면 그것으로만 판정한다(키마스터와 무관).
+    // 없으면(예전 설치·온라인 로그인 전) 키마스터로 확인해 보고, 그것도 안 맞으면 이 PC 의 유일한 계정 공간이므로
+    // 지금 친 비밀번호로 확인값을 처음 만든다 — 서버가 풀려 온라인 로그인이 되면 그 비밀번호로 덮어쓴다
+    // (실기 2026-10-14: 키마스터 열쇠가 계정 비밀번호와 달라 서버 정지 중 앱에 못 들어갔다)
     const own = this.deps.loginVerifier?.check(password)
-    const ok = own !== undefined ? own : await offline.verifyPassword(password)
-    if (password.length === 0 || !ok) {
-      throw new Error('offline-wrong-password')
+    if (own === false) throw new Error('offline-wrong-password')
+    if (own === undefined) {
+      const byVault = await offline.verifyPassword(password).catch(() => false)
+      if (!byVault && !this.deps.loginVerifier) throw new Error('offline-wrong-password')
+      if (!byVault) console.warn('서버 없이 로그인: 앱 로그인 확인값을 처음 만든다(키마스터와 무관)')
+      try {
+        this.deps.loginVerifier?.save(password)
+      } catch (e: unknown) {
+        console.warn('앱 로그인 확인값 저장 실패', e instanceof Error ? e.message : String(e))
+      }
     }
     this.accountPassword = password
     this.next({

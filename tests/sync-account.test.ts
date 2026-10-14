@@ -541,3 +541,34 @@ describe('앱 시작: 서버 정지 중 계정 세션 복원', () => {
     expect(h.account.accountState().signedIn).toBe(false)
   })
 })
+
+describe('서버 없이 로그인 — 앱 로그인 확인값(키마스터와 분리)', () => {
+  function offlineSetup(verifier: { save: ReturnType<typeof vi.fn>; check: ReturnType<typeof vi.fn> }, vaultOk: boolean) {
+    const h = setup({
+      seedConfig: true,
+      offline: { userId: () => 'user-1', email: () => undefined, verifyPassword: async () => vaultOk }
+    })
+    vi.spyOn(h.directory!, 'signIn').mockRejectedValue(new Error('exceed_egress_quota'))
+    Object.assign((h.account as unknown as { deps: Record<string, unknown> }).deps, { loginVerifier: verifier })
+    return h
+  }
+
+  it('확인값이 있으면 그것으로만 판정하고 키마스터는 보지 않는다', async () => {
+    const verifier = { save: vi.fn(), check: vi.fn(() => true) }
+    const h = offlineSetup(verifier, false)
+    await expect(h.account.signIn('me@example.com', 'pw')).rejects.toThrow('exceed_egress_quota')
+    await h.account.offlineSignIn('pw')
+    expect(h.account.accountState().offline).toBe(true)
+    verifier.check.mockReturnValue(false)
+    await expect(h.account.offlineSignIn('bad')).rejects.toThrow('offline-wrong-password')
+  })
+
+  it('확인값이 없고 키마스터도 안 맞으면 지금 비밀번호로 확인값을 처음 만든다', async () => {
+    const verifier = { save: vi.fn(), check: vi.fn(() => undefined) }
+    const h = offlineSetup(verifier, false)
+    await expect(h.account.signIn('me@example.com', 'pw')).rejects.toThrow('exceed_egress_quota')
+    await h.account.offlineSignIn('first-pw')
+    expect(h.account.accountState().offline).toBe(true)
+    expect(verifier.save).toHaveBeenCalledWith('first-pw')
+  })
+})

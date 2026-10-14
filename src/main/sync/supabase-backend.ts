@@ -74,6 +74,25 @@ function raise(message: string): never {
   throw new Error(message)
 }
 
+/** supabase-js 가 세션을 저장하는 키(sb-<프로젝트 ref>-auth-token) */
+export function storageKeyFor(url: string): string {
+  const host = new URL(url).hostname
+  return `sb-${host.split('.')[0]}-auth-token`
+}
+
+/** 저장된 세션 JSON 에서 사용자 id·이메일만 꺼낸다. 없거나 형식이 다르면 null (토큰은 보지 않는다) */
+export function userFromStoredSession(raw: string | null): { userId: string; email: string } | null {
+  if (!raw) return null
+  try {
+    const parsed: unknown = JSON.parse(raw)
+    const user = (parsed as { user?: { id?: unknown; email?: unknown } } | null)?.user
+    if (!user || typeof user.id !== 'string' || user.id === '') return null
+    return { userId: user.id, email: typeof user.email === 'string' ? user.email : '' }
+  } catch {
+    return null
+  }
+}
+
 export function createSupabaseBackend(
   storage: SessionStorageAdapter,
   // 주소를 직접 주면 그 프로젝트로 붙는다(디렉터리·계정에서 내려받은 주소). 생략하면 설정/.env
@@ -150,14 +169,9 @@ export function createSupabaseBackend(
       return data.user ? { userId: data.user.id, email: data.user.email ?? '' } : null
     },
     async cachedUser() {
-      // getSession 은 저장소의 세션을 읽는다(서버 확인 없음). 만료 갱신이 실패해도 세션 사용자는 남는다
-      try {
-        const { data } = await client.auth.getSession()
-        const u = data.session?.user
-        return u ? { userId: u.id, email: u.email ?? '' } : null
-      } catch {
-        return null
-      }
+      // getSession 은 토큰이 만료돼 있으면 서버 갱신을 시도하고 실패하면 null 을 준다 — 서버 정지 중엔 쓸 수 없다.
+      // 저장소에 적힌 세션 JSON 에서 사용자 id·이메일만 읽는다(토큰은 꺼내지 않는다)
+      return userFromStoredSession(storage.getItem(storageKeyFor(env.url)))
     },
     async select(table, cursor, workspaceId, limit) {
       const c = toPullCursor(cursor)

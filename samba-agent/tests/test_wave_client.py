@@ -340,3 +340,10 @@ def test_행이_여럿인_번호_조회는_422_로_막힌다():
         client().get_order('X')
     assert e.value.status == 422
     assert 'ord_A' in str(e.value)
+
+
+def test_선택안함은_옵션이_없는_것으로_본다():
+    # 실기 2026-10-15: 옵션 '선택안함' 주문이 상품 목록 ['black'] 과 불일치로 막혔다
+    assert WaveOrder(order_number='A1', product_option='옵션:선택안함').option is None
+    assert WaveOrder(order_number='A1', product_option='선택 안함').option is None
+    assert WaveOrder(order_number='A1', product_option='옵션:230').option == '230'

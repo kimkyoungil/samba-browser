@@ -36,6 +36,8 @@ _STATUS_REASON = {
 
 # 삼바웨이브 옵션 문자열은 '옵션:230' 처럼 머리말이 붙어 오기도 한다 — 값만 남긴다
 # '옵션:230' 과 '옵션1:DEEP PEACH(H25)/옵션2:095'(무신사 292) — 줄 앞과 '/' 뒤의 '옵션N:' 머리말을 뗀다
+# 옵션이 없는 상품을 판매처가 적는 말
+NO_OPTION_VALUES = frozenset({'선택안함', '옵션없음', '단일상품', '단일옵션'})
 _OPTION_PREFIX = re.compile(r'(?:^|(?<=/))\s*옵션\d*\s*[:：]\s*')
 
 OrderType = Literal['direct', 'kkadaegi', 'gift']
@@ -214,6 +216,10 @@ class WaveOrder(BaseModel):
     def option(self) -> str | None:
         """'옵션:230' · 'BLACK / 270' 어느 쪽으로 와도 머리말을 뗀 값만 준다."""
         raw = _OPTION_PREFIX.sub('', self.product_option or '').strip()
+        # '선택안함'(옵션이 없는 상품)은 옵션이 없다는 뜻이다 — 구매가 색·사이즈 목록과 대조해 불일치로 막지 않게 비운다
+        # (실기 2026-10-15 마스마룰즈 가방 2360: 옵션 '선택안함' 인데 상품 목록 ['black'] 과 불일치로 4계정 모두 막힘)
+        if re.sub(r'\s+', '', raw) in NO_OPTION_VALUES:
+            return None
         return raw or None
 
     def to_order_ref(self) -> OrderRef:

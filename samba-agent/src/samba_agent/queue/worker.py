@@ -517,6 +517,15 @@ class Worker:
                         )
                     except Exception as exc:
                         self.d.report(job, f'{job.order_no} 선물 수락 보류 메모 실패: {mask_text(str(exc))[:100]}')
+                elif 'SSG' in line and '완료' in line and self.d.add_memo:
+                    # 수락에 성공해도 로그 한 줄뿐이라 주문 기록에서 수락했는지 알 수 없었다(사용자 2026-10-16 지적)
+                    try:
+                        self.d.add_memo(
+                            job.wave_id or job.order_no,
+                            f'[선물 수락 완료] {mask_text(line)[:200]}',
+                        )
+                    except Exception as exc:
+                        self.d.report(job, f'{job.order_no} 선물 수락 완료 메모 실패: {mask_text(str(exc))[:100]}')
         # 새 배송지 저장이 목록에 안 보여 멈춘 건('저장 뒤 목록에 없음')은 자동으로 다시 사지 않고 사람에게 넘긴다.
         # 예전엔 한 번 다시 돌려 기존 항목 선택으로 통과시켰는데, 그 재시도가 엉뚱한 배송지를 골라 5건이 오배송됐다(2026-10-08)
         if outcome == 'needs_ai' and not self.d.dry_run and str(fail or 'unknown') == 'unknown':

@@ -128,6 +128,8 @@ class OperatorService:
             self.apply(job, verdict)
         except Exception:
             log.exception('AI 대행 실패: %s', job.order_no)
+            # 실패한 건을 미판정으로 두면 drain 이 2초마다 같은 건을 다시 잡는다(실기 2026-10-16: 주문번호 중복 422 로 1만 번 반복)
+            self._queue.mark_option(job.id, OPERATOR_KEY, 'error')
         finally:
             self._busy.release()
 

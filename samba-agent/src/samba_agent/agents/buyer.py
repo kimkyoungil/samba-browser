@@ -3999,7 +3999,11 @@ class BuyerAgent(AgentBase):
         if picked.choice not in candidates:
             # 2단 옵션(색상 + 사이즈)은 후보가 'BLK'·'95(77)' 처럼 단계별로 따로 온다 — 모델이 둘을 합쳐 답하면
             # 그 조각이 전부 후보에 있을 때 주문 옵션 그대로를 고른 것으로 본다(실기 2026-09-28 SSG 'BLK/95(77)')
-            parts = [t for t in re.split(r'[,/·\s]+', picked.choice) if t]
+            # 조각은 먼저 '/' 로만 나눠 본다 — '29 핑크 / 240' 처럼 색상 이름에 띄어쓰기가 든 후보는 공백까지
+            # 나누면 '29'·'핑크' 가 후보에 없어 판정 실패로 끝났다(실기 2026-10-15 SSG 푸마 실리아 2192)
+            coarse = [t.strip() for t in picked.choice.split('/') if t.strip()]
+            fine = [t for t in re.split(r'[,/·\s]+', picked.choice) if t]
+            parts = coarse if len(coarse) >= 2 and all(t in candidates for t in coarse) else fine
             if len(parts) >= 2 and all(t in candidates for t in parts) and a.order.option:
                 picked = Decision(choice=a.order.option, reason=picked.reason)
                 candidates = [*candidates, a.order.option]

@@ -125,7 +125,7 @@ class AgentBase:
                 text = self.tool('get_page')
             except Exception:  # noqa: BLE001 — 근거 수집 실패는 판정을 막지 않는다
                 return []
-            saved = save_text_shot(order_no, self.spec.name, f'{order_no} {reason[:60]}', text[:6000])
+            saved = save_text_shot(order_no, self.spec.name, f'{order_no} {reason[:60]}', text[:20000])
             return [saved] if saved else []
 
         return shot

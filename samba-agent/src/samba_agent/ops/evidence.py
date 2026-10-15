@@ -159,7 +159,7 @@ def render_text_png(title: str, text: str, width: int = 1100) -> bytes:
             lines.append(raw[:70])
             raw = raw[70:]
         lines.append(raw)
-    lines = lines[:120]
+    lines = lines[:700]
     height = 60 + 22 * (len(lines) + 1)
     img = Image.new('RGB', (width, height), 'white')
     draw = ImageDraw.Draw(img)

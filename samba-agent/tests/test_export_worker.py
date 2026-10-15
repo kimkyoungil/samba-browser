@@ -471,3 +471,16 @@ def test_취소_연동은_주문이_지금도_취소_상태일_때만_실행한�
     third = w.run_once()  # A3 — 상태를 확인 못 했다: 실행하지 않고 미룬다
     assert third.order_no == 'A3' and third.status == 'pending'
     assert adapter.seen == [['A2']]
+
+
+def test_취소_연동이_화면에_없으면_30분_뒤에_다시_본다(queue):
+    # 실기 2026-10-15: 60초마다 되풀이되는 취소 연동 388건이 기입을 굶겼다 — 취소만 길게 미룬다
+    from samba_agent.export.worker import CANCEL_NOT_FOUND_RETRY_S
+
+    adapter = FakeAdapter({})
+    req = queue.enqueue('C1', 'emp_cancel', 0, 0)
+    w = ExportWorker(queue, {'emp_cancel': adapter}, user_idle_s=lambda: 999.0, retry_delay_s=0)
+    assert w._retry_delay_for(req, ExportFail.NOT_FOUND) == CANCEL_NOT_FOUND_RETRY_S
+    assert w._retry_delay_for(req, ExportFail.BLOCKED) == 0
+    fill = queue.enqueue('A1', 'emp', 1000, 0)
+    assert w._retry_delay_for(fill, ExportFail.NOT_FOUND) == 0

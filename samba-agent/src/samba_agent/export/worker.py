@@ -49,6 +49,8 @@ class _Outcome:
 
 # 화면에서 못 찾은 주문을 포기하기까지의 시간 — 그 전에는 횟수를 넘겨도 다시 본다
 NOT_FOUND_GIVE_UP_S = 24 * 3600
+# 취소 연동이 화면에서 주문을 못 찾았을 때 다시 보기까지의 최소 간격(기입을 굶기지 않게)
+CANCEL_NOT_FOUND_RETRY_S = 30 * 60
 
 
 def _age_s(req: ExportRequest) -> float:
@@ -181,7 +183,7 @@ class ExportWorker:
                 req.id,
                 outcome.reason,
                 outcome.detail,
-                self._retry_delay_s,
+                self._retry_delay_for(req, outcome.reason),
                 count_attempt=outcome.reason not in _WAIT_REASONS,
             )
             if outcome.reason in (
@@ -193,6 +195,16 @@ class ExportWorker:
         else:
             assert outcome.reason is not None
             self._queue.fail(req.id, outcome.reason, outcome.detail)
+
+    def _retry_delay_for(self, req: ExportRequest, reason: ExportFail) -> float:
+        """다시 볼 때까지의 간격. 취소 연동이 화면에서 주문을 못 찾은 경우만 길게(최소 30분) 둔다.
+
+        실기 2026-10-15: EMP 에 없는 주문의 취소 연동 388건이 60초마다 7초씩 검색되며 원가 기입을 하루 종일
+        밀어냈다. 취소 연동은 늦어도 손해가 없고(기입 전 취소는 EMP 에 애초에 없다), 기입은 늦으면 정산이 밀린다.
+        """
+        if reason is ExportFail.NOT_FOUND and req.target.endswith('_cancel'):
+            return max(self._retry_delay_s, CANCEL_NOT_FOUND_RETRY_S)
+        return self._retry_delay_s
 
     def _alert_auth(self, target: str, detail: str) -> None:
         program = target.split('_', 1)[0]

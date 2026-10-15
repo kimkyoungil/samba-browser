@@ -204,9 +204,12 @@ class ExportQueue:
     def claim_next(self, targets: Sequence[str]) -> ExportRequest | None:
         """맡은 대상의 대기 요청 하나를 running 으로 바꿔 돌려준다.
 
-        아직 한 번도 시도하지 않은 요청이 먼저다(오래된 순). 다시 보는 요청은 그 뒤에, 가장 오래전에 본 것부터.
+        기입·조회(원가가 들어가야 정산이 되는 일)가 취소 연동보다 먼저다. 그 안에서는 아직 한 번도 시도하지
+        않은 요청이 먼저(오래된 순), 다시 보는 요청은 그 뒤에 가장 오래전에 본 것부터.
         예전에는 만든 순서만 봐서, 화면에 없는 옛 요청 열몇 건이 번갈아 집히며 새 요청이 몇 시간씩 밀렸다
         (실기 2026-10-01: EMP 취소 대기 14건 때문에 원가 기입·상품코드 조회가 한 번도 못 돌았다).
+        취소를 뒤로 둔 이유: 실기 2026-10-15 — EMP 에 없는 주문의 취소 연동 388건이 하루 동안 60초마다
+        되풀이되며 원가 기입 25건(한 번 막혀 fail_reason 이 붙은 것)을 14시간 굶겼다.
         """
         if not targets:
             return None
@@ -215,7 +218,8 @@ class ExportQueue:
         with self._immediate():
             row = self._db.execute(
                 f"SELECT * FROM export_requests WHERE status='pending' AND next_at<=? "
-                f'AND target IN ({marks}) ORDER BY (fail_reason IS NOT NULL), '
+                f"AND target IN ({marks}) ORDER BY (target LIKE '%\\_cancel' ESCAPE '\\'), "
+                '(fail_reason IS NOT NULL), '
                 'CASE WHEN fail_reason IS NULL THEN created_at ELSE updated_at END, id LIMIT 1',
                 (now, *targets),
             ).fetchone()

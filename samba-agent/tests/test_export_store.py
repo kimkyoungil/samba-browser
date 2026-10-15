@@ -382,3 +382,18 @@ def test_새_요청이_다시_보는_요청보다_먼저_집힌다(tmp_path):
     q.enqueue('NEW1', 'emp', 1000, 0)
     assert q.claim_next(['emp_cancel', 'emp']).order_no == 'NEW1'  # 새 요청 먼저
     assert q.claim_next(['emp_cancel', 'emp']).order_no in ('OLD1', 'OLD2')
+
+
+def test_claim_은_취소_연동보다_기입을_먼저_집는다(queue, clock):
+    # 실기 2026-10-15: EMP 에 없는 취소 연동 388건이 먼저 집혀 원가 기입 25건이 14시간 밀렸다
+    queue.enqueue('C1', 'emp_cancel', 0, 0)
+    clock.forward(1)
+    fill = queue.enqueue('A1', 'emp', 1000, 0)
+    clock.forward(1)
+    got = queue.claim_next(['emp', 'emp_cancel'])
+    assert got is not None and got.id == fill.id
+    # 한 번 막혀 fail_reason 이 붙은 기입도 취소 연동(한 번도 안 본 것)보다 먼저다
+    queue.retry_later(fill.id, ExportFail.BLOCKED, '대화상자', delay_s=0)
+    clock.forward(1)
+    got = queue.claim_next(['emp', 'emp_cancel'])
+    assert got is not None and got.id == fill.id

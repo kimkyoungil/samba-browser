@@ -61,6 +61,11 @@ START_DATE = 'OrderSdate'
 END_DATE = 'OrderEdate'
 # 날짜 빠른 선택 '2주' — 오늘까지 14일을 잡는다
 TWO_WEEKS_BUTTON = 'ribbonToggleButton1511'
+# 2주보다 넓은 빠른 선택 '1개월'(141)·'3개월'(153) — 리본 단추 열거로 확인(2026-10-16: 15~16일 전 주문이 2주 목록에 없어 not_found)
+WIDER_PERIOD_BUTTONS = ('ribbonToggleButton141', 'ribbonToggleButton153')
+WIDE_ENOUGH_DAYS = 25
+# 상태 탭 '전체보기' — 신규주문 탭만 보면 송장·배송 단계로 넘어간 주문이 안 나온다(2026-10-16)
+ALL_STATES_BUTTON = 'O전체보기'
 SEARCH_BUTTON = 'OrderSearchBT'
 KEYWORD_BOX = 'OrderKeyword'
 # 취소 확인 창은 30초 뒤 스스로 실행된다 — 여유를 두고 기다린다
@@ -80,7 +85,9 @@ MENU_CANCEL = '취소'
 PREVIEW_ORDER_NO = 'ocode1'
 _WM_MOUSEMOVE = 0x0200
 _VK_APPS = 0x5D
-NO_BUTTONS = ('아니요(N)', '아니오(N)', 'No')
+NO_BUTTONS = ('아니요(N)', '아니오(N)', '아니요', '아니오', 'No')
+# 종료 확인 창 표지 — 제목·문구에 '종료' 가 들어 있다
+EXIT_MARK = '종료'
 YES_BUTTONS = ('예(Y)', 'Yes')
 
 _WM_SETTEXT, _WM_GETTEXT = 0x000C, 0x000D
@@ -399,17 +406,46 @@ class PywinautoEmpUi:
         if self._window_text(hwnd) != text:
             raise AdapterRetry(ExportFail.BLOCKED, 'EMP 검색어 칸에 글자가 들어가지 않았다')
 
+    def _widen_period(self) -> bool:
+        """검색 기간을 2주보다 넓힌다(빠른 선택 '1개월'·'3개월'). 시작일이 충분히 앞서면 True.
+
+        2주 목록은 15일 전 이전 주문을 안 보여 줘서 not_found 로 61건이 실패했다(2026-10-16).
+        """
+        today = dt.datetime.now().astimezone().date()
+        for name in WIDER_PERIOD_BUTTONS:
+            try:
+                self._invoke(name)
+                time.sleep(self._poll_s * 2)
+                start = self._ribbon_date(START_DATE)
+            except AdapterRetry as e:
+                log.warning('EMP 기간 넓히기 실패(%s): %s', name, e)
+                continue
+            if start is not None and (today - start).days >= WIDE_ENOUGH_DAYS:
+                log.info('EMP 검색 기간을 넓혔다(%s): %s 부터', name, start)
+                try:
+                    self._invoke(ALL_STATES_BUTTON)
+                    time.sleep(self._poll_s * 2)
+                    log.info('EMP 상태 탭을 전체보기로 바꿨다')
+                except AdapterRetry as e:
+                    log.warning('EMP 전체보기 전환 실패: %s', e)
+                return True
+        return False
+
     def show_only(self, order_no: str) -> None:
         """그 주문만 그리드에 띄운다 — 행이 많으면 대상 행이 화면 밖이라 누를 수 없다.
 
         주문번호가 두 토막이면(GS이숍) 토막마다 검색해 본다. 끝나면 clear_keyword() 로 되돌린다.
         """
         # 구분 글자(':' · 공백)로 나눈 토막마다 검색한다 — EMP 검색은 한 토막만 받는다
-        for word in dict.fromkeys(t for t in re.split(r'[:\s]+', order_no.strip()) if t):
-            self.set_keyword(word)
-            self.search()
-            if any(order_matches(order_no, r.values.get(COL_ORDER_NO, '')) for r in self.rows()):
-                return
+        words = list(dict.fromkeys(t for t in re.split(r'[:\s]+', order_no.strip()) if t))
+        for widen in (False, True):
+            if widen and not self._widen_period():
+                break
+            for word in words:
+                self.set_keyword(word)
+                self.search()
+                if any(order_matches(order_no, r.values.get(COL_ORDER_NO, '')) for r in self.rows()):
+                    return
         self._dump_controls_once(order_no)
         raise AdapterRetry(ExportFail.NOT_FOUND, 'EMP 그리드에 그 주문번호가 없다')
 
@@ -933,6 +969,10 @@ class PywinautoEmpUi:
                 if UNSAVED_MARK in message:
                     self._click_dialog_button(buttons, NO_BUTTONS)
                     log.warning('EMP 에 저장 안 된 편집이 남아 있어 버렸다')
+                elif EXIT_MARK in _title or EXIT_MARK in message:
+                    # '종료 확인' 창 — 아니오로 닫아 EMP 를 끄지 않는다. 이 창이 남아 취소 대기 124건이 밤새 막혔다(2026-10-16)
+                    self._click_dialog_button(buttons, NO_BUTTONS)
+                    log.warning('EMP 종료 확인 창을 아니오로 닫았다')
             time.sleep(self._poll_s)
         raise AdapterRetry(ExportFail.BLOCKED, 'EMP 대화상자가 닫히지 않았다')
 

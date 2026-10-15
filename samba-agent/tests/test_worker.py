@@ -77,7 +77,7 @@ def test_승인_대기에서_멈추고_요약을_보고한다(setup):
     q, log, sent, make = setup
     q.enqueue('A1', 'U1', {}, 'ts1')
     job = make(gate=True).tick()
-    assert job.state == 'needs_human'
+    assert job.state == 'needs_ai'
     assert '승인 대기' in q.get('A1').step
     assert any('승인 요청' in s for s in sent)
     assert log == ['buy']
@@ -99,7 +99,7 @@ def test_거부하면_사람에게_남는다(setup):
     w = make(gate=True)
     w.tick()
     job = w.resume('A1', approved=False, by='U9')
-    assert job.state == 'needs_human'
+    assert job.state == 'needs_ai'
     assert log == ['buy']
 
 
@@ -125,11 +125,11 @@ def test_브릿지가_죽으면_사람에게_넘기고_사유를_남긴다(setup
     q, _log, _sent, make = setup
     q.enqueue('A1', 'U1', {}, 'ts1')
     job = make(gate=False, fail_at='buy').tick()
-    assert job.state == 'needs_human'
+    assert job.state == 'needs_ai'
     assert 'bridge_down' in q.get('A1').error
 
 
-def test_그래프가_예외를_던지면_needs_human으로_마감하고_사유를_가린다(setup):
+def test_그래프가_예외를_던지면_needs_ai으로_마감하고_사유를_가린다(setup):
     q, _log, sent, make = setup
     q.enqueue('A1', 'U1', {}, 'ts1')
     w = make(gate=False)
@@ -141,9 +141,43 @@ def test_그래프가_예외를_던지면_needs_human으로_마감하고_사유�
     job = w.tick()
 
     assert job is not None
-    assert job.state == 'needs_human'  # running 으로 남지 않는다
+    assert job.state == 'needs_ai'  # running 으로 남지 않는다
     assert q.get('A1').error == 'unknown'
     assert any('***' in s and 'hong@example.com' not in s for s in sent)
+
+
+@pytest.mark.parametrize('card,memo_fails', [('카카오페이', False), ('카카오페이', True), ('네이버페이', False)])
+def test_exception_after_pay_start_is_guarded_and_kakao_note_appended(setup, card, memo_fails):
+    q, _log, _sent, make = setup
+    q.enqueue('A1', 'U1', {}, 'ts1')
+    w = make(gate=False)
+    w.d.dry_run = False
+    memos = ['existing note']
+
+    def append(_key, line):
+        if memo_fails:
+            raise RuntimeError('memo unavailable')
+        memos.append(line)
+        return True
+
+    w.d.add_memo = append
+
+    def boom(*_a, **_k):
+        w.mark_stage({'job_id': q.get('A1').id, 'results': {
+            'buyer.musinsa': AgentResult(status='ok', reason='selected', payload={'card': card, 'cost': 54000})
+        }}, 'pay')
+        raise RuntimeError('payment interrupted hong@example.com')
+
+    w.d.graph.invoke = boom
+    job = w.tick()
+    assert job.state == 'needs_ai'
+    assert job.error == 'pay_interrupted'
+    assert memos[0] == 'existing note'
+    if card == '카카오페이' and not memo_fails:
+        assert len(memos) == 2 and '재결제 금지' in memos[1]
+        assert 'hong@example.com' not in memos[1]
+    else:
+        assert len(memos) == 1
 
 
 def test_run_forever는_tick_예외에도_계속_돈다(setup):
@@ -300,7 +334,7 @@ def test_결제_중_죽어도_재시작_뒤_결제를_다시_하지_않는다(tm
         w.tick()
 
     restarted = JobQueue(path)  # 프로세스 재시작
-    assert restarted.get('A1').state == 'needs_human'
+    assert restarted.get('A1').state == 'needs_ai'
     w2 = Worker(
         WorkerDeps(
             queue=restarted,
@@ -391,7 +425,7 @@ def test_주문_조회가_실패하면_running으로_남기지_않고_사람에�
     job = w.tick()
 
     assert job is not None
-    assert job.state == 'needs_human'
+    assert job.state == 'needs_ai'
     assert '주문 조회 실패' in (q.get('A1').error or '')
     assert all('hong@example.com' not in s for s in sent)
 
@@ -416,7 +450,7 @@ def test_승인_대기로_멈춘_스레드는_지우지_않는다(setup):
     wiped: list[str] = []
     w.d.reset_thread = wiped.append
     q.enqueue('A1', 'U1', {}, 'ts1')
-    assert w.tick().state == 'needs_human'
+    assert w.tick().state == 'needs_ai'
     assert '승인 대기' in q.get('A1').step
     wiped.clear()
     w._reset_finished_thread(1)  # 다음 노드(승인 뒤 결제)가 남아 있다
@@ -457,7 +491,7 @@ def test_작업이_끝나면_그_작업이_연_탭을_닫는다(setup):
     assert tabs.closed == ['t-order'] and 't-samba' in tabs.open
 
 
-def test_결제_시작_뒤_끝나지_못한_작업은_결제창_탭을_닫지_않는다(tmp_path):
+def test_결제_단계에서_실패로_끝난_작업도_탭을_닫는다(tmp_path):
     """실기 2026-10-06 토스: 폰 승인 도중 하네스가 bridge_down 으로 접고 결제창 탭을 닫아, 폰에서는 승인됐는데
     PC 쪽 주문이 마무리되지 않았다. 결제 단계에 들어간 뒤 done 이 아니면 탭을 남긴다(다음 작업 시작 때 정리)."""
     reg = Registry.load(DEFAULT_ROOT)
@@ -473,7 +507,7 @@ def test_결제_시작_뒤_끝나지_못한_작업은_결제창_탭을_닫지_�
     def payer_cut(_a):
         tabs.open.add('t-pay-popup')  # 결제창이 떠 있는 채로
         return AgentResult(
-            status='needs_human', reason='브릿지 끊김', fail_reason=FailReason.BRIDGE_DOWN
+            status='needs_ai', reason='브릿지 끊김', fail_reason=FailReason.BRIDGE_DOWN
         )
 
     log: list[str] = []
@@ -485,8 +519,8 @@ def test_결제_시작_뒤_끝나지_못한_작업은_결제창_탭을_닫지_�
         on_stage_start=w.mark_stage,
     )
     q.enqueue('A1', 'U1', {}, 'ts1')
-    assert w.tick().state == 'needs_human'
-    assert tabs.closed == [] and 't-pay-popup' in tabs.open
+    assert w.tick().state == 'needs_ai'
+    assert tabs.closed == ['t-pay-popup'] and 't-pay-popup' not in tabs.open
 
     # 결제 전(구매 단계)에서 실패한 작업은 예전처럼 바로 닫는다
     tabs2 = _FakeTabs()
@@ -506,7 +540,7 @@ def test_결제_시작_뒤_끝나지_못한_작업은_결제창_탭을_닫지_�
 
     w.d.graph.invoke = invoke_and_open_tab  # type: ignore[method-assign]
     q.enqueue('A2', 'U1', {}, 'ts2')
-    assert w.tick().state in ('needs_human', 'failed', 'fail')
+    assert w.tick().state in ('needs_ai', 'failed', 'fail')
     assert tabs2.closed == ['t-order']
 
 
@@ -562,7 +596,7 @@ def test_소싱처가_범위_밖으로_바뀐_주문은_돌리지_않는다(tmp_
     )
     q.enqueue('L1', 'U1', {}, 'ts1')
     job = w.tick()
-    assert job.state == 'needs_human'
+    assert job.state == 'needs_ai'
     assert log == []
     assert '범위 밖' in (job.error or '')
 
@@ -585,7 +619,7 @@ def test_마진_미달로_멈춰도_가격X_표시를_부르지_않는다(setup)
         )
     )
     job, _ = q.enqueue('A1', 'U1', {}, 'ts1')
-    w._apply(job, {'outcome': 'needs_human', 'fail_reason': 'margin'})
+    w._apply(job, {'outcome': 'needs_ai', 'fail_reason': 'margin'})
     assert marked == []
     assert any('가격X 보류' in s for s in sent)
 
@@ -621,7 +655,7 @@ def test_품절_실패는_자동으로_재고X_를_붙이지_않는다(setup, re
     w._apply(
         job,
         {
-            'outcome': 'needs_human',
+            'outcome': 'needs_ai',
             'fail_reason': 'out_of_stock',
             'results': {'buyer.musinsa': result},
         },
@@ -673,7 +707,7 @@ def test_확정_품절은_근거를_적고_자동으로_취소중(setup):
     w._apply(
         job,
         {
-            'outcome': 'needs_human',
+            'outcome': 'needs_ai',
             'fail_reason': 'out_of_stock',
             'order': _ref('KT알파쇼핑'),
             'results': {'buyer.musinsa': result},
@@ -695,7 +729,7 @@ def test_포이즌_품절도_자동으로_취소중(setup):
     w._apply(
         job,
         {
-            'outcome': 'needs_human',
+            'outcome': 'needs_ai',
             'fail_reason': 'out_of_stock',
             'order': _ref('poison(x)'),
             'results': {'buyer.musinsa': result},
@@ -717,7 +751,7 @@ def test_마진_미달은_주문서_원가가_있으면_자동으로_취소중(s
     w._apply(
         job,
         {
-            'outcome': 'needs_human',
+            'outcome': 'needs_ai',
             'fail_reason': 'margin',
             'order': _ref('KT알파쇼핑'),
             'results': {'buyer.musinsa': buy},
@@ -725,6 +759,17 @@ def test_마진_미달은_주문서_원가가_있으면_자동으로_취소중(s
     )
     assert len(marked) == 1 and marked[0][1] == 'margin'
     assert '48,480' in marked[0][2] and '43,600' in marked[0][2]
+
+
+@pytest.mark.parametrize('confirmed', [True, False])
+def test_verified_cancellation_is_terminal_but_unverified_stays_needs_ai(setup, confirmed):
+    q, sent, w = _auto_worker(setup, [])
+    w.d.cancel_confirmed = lambda key, error: confirmed
+    job, _ = q.enqueue('X1', 'U1', {}, 'ts1')
+    buy = AgentResult(status='ok', reason='ok', payload={'cost': 48480, 'margin_pct': -9.0})
+    w._apply(job, {'outcome': 'needs_ai', 'fail_reason': 'margin',
+                  'order': _ref('KT알파쇼핑'), 'results': {'buyer.musinsa': buy}})
+    assert q.get_by_id(job.id).state == ('cancelled' if confirmed else 'needs_ai')
 
 
 @pytest.mark.parametrize(
@@ -780,19 +825,26 @@ def test_검증_전_결제수단은_자동_승인하지_않는다(tmp_path):
     )
     q.enqueue('A1', 'U1', {}, 'ts1')
     job = w.tick()
-    assert job.state == 'needs_human'
+    assert job.state == 'needs_ai'
     assert 'pay' not in log
     assert any('수동 승인 필요' in s for s in sent)
 
 
-def test_카카오페이_비밀번호_미입력이면_다른_수단으로_사지_않고_메모만_남긴다(tmp_path):
+@pytest.mark.parametrize('reason,override', [
+    ('카카오페이 폰 비밀번호를 기다렸지만 결제 완료 화면이 안 떴다(재결제 금지 — 주문내역 확인) [카카오페이 54,000원]', False),
+    ('phone_approve_payment 거절: refused: no-phone', False),
+    ('phone_approve_payment 거절: refused: no-phone', True),
+])
+def test_카카오페이_비밀번호_미입력이면_다른_수단으로_사지_않고_메모만_남긴다(tmp_path, reason, override):
     """사용자 2026-10-01: 카카오페이 최저가면 결제 시도·알림 뒤 안 되면 네이버페이로 사지 말고 메모만 — 사람이 산다."""
     reg = Registry.load(DEFAULT_ROOT)
     q = JobQueue(tmp_path / 'jobs.sqlite')
     acts = agents([])
+    acts['buyer.musinsa'] = lambda _a: AgentResult(status='ok', reason='카카오페이 선택',
+                                                  payload={'account': 'a', 'card': '카카오페이', 'cost': 54000, 'margin_pct': 12.5})
     acts['payer'] = lambda _a: AgentResult(
-        status='needs_human',
-        reason='카카오페이 폰 비밀번호를 기다렸지만 결제 완료 화면이 안 떴다(재결제 금지 — 주문내역 확인) [카카오페이 54,000원]',
+        status='needs_ai',
+        reason=reason,
         fail_reason=FailReason.PAY_INTERRUPTED,
     )
     memos: list[tuple[str, str]] = []
@@ -808,12 +860,41 @@ def test_카카오페이_비밀번호_미입력이면_다른_수단으로_사지
             add_memo=lambda no, line: memos.append((no, line)) or True,
         )
     )
-    q.enqueue('A1', 'U1', {}, 'ts1')
+    q.enqueue('A1', 'U1', {'card': '카카오페이'} if override else {}, 'ts1')
     w.tick()
     job = q.get('A1')
-    assert job.state == 'needs_human'
-    assert not job.options.get('card')  # 네이버페이로 다시 사지 않는다
-    assert memos and memos[0][0] == 'A1' and '54,000원' in memos[0][1]
+    assert job.state == 'needs_ai'
+    assert job.options.get('card') in (None, '카카오페이')
+    assert memos and memos[0][0] == 'A1' and '재결제 금지' in memos[0][1]
+    if '54,000원' in reason:
+        assert '54,000원' in memos[0][1]
+
+
+def test_failed_kakao_result_appends_note_without_requeue(setup):
+    q, _, _, make = setup
+    w = make(gate=False)
+    w.d.dry_run = False
+    notes = ['existing note']
+    w.d.add_memo = lambda no, line: notes.append(line) or True
+    q.enqueue('A1', 'U1', {}, 'ts1')
+    job = q.claim()
+    out = {
+        'outcome': 'failed',
+        'fail_reason': FailReason.PAY_INTERRUPTED,
+        'results': {
+            'buyer.musinsa': AgentResult(status='ok', reason='selected',
+                                        payload={'card': '카카오페이', 'cost': 54000}),
+            'payer': AgentResult(status='fail', reason='payment connection lost',
+                                 fail_reason=FailReason.PAY_INTERRUPTED),
+        },
+    }
+    result = w._apply(job, out)
+    assert result.state == 'failed'
+    assert notes[0] == 'existing note'
+    assert len(notes) == 2
+    assert '재결제 금지' in notes[1]
+    assert q.claim() is None
+    assert q.get('A1').id == job.id
 
 
 def test_끝난_작업은_뒤처리를_부르고_결과를_보고한다(setup):
@@ -826,6 +907,27 @@ def test_끝난_작업은_뒤처리를_부르고_결과를_보고한다(setup):
     assert w.tick().state == 'done'
     assert calls == ['A1']
     assert any('SSG 선물 받기 완료' in s for s in sent)
+
+
+@pytest.mark.parametrize('memo_fails', [False, True])
+def test_paid_ssg_gift_failure_is_memoed_without_repurchase(setup, memo_fails):
+    q, log, sent, make = setup
+    w = make(gate=False)
+    w.d.dry_run = False
+    w.d.after_done = lambda job, out: 'SSG 선물 수락 실패 — 알리페이 화면 보호 중'
+    memos = []
+
+    def add_memo(key, text):
+        memos.append((key, text))
+        if memo_fails:
+            raise RuntimeError('memo unavailable')
+
+    w.d.add_memo = add_memo
+    q.enqueue('A1', 'U1', {}, 'ts1')
+    assert w.tick().state == 'done'
+    assert len(memos) == 1
+    assert '재결제 금지' in memos[0][1]
+    assert not any(j.state == 'queued' for j in q.live())
 
 
 def test_폰_구매_소싱처는_그래프_없이_처리기로_끝낸다(setup):
@@ -841,6 +943,24 @@ def test_폰_구매_소싱처는_그래프_없이_처리기로_끝낸다(setup):
     assert w.tick().state == 'done'
     assert log == []  # 브라우저 그래프(구매·결제·기록)는 돌지 않았다
     assert any('得物 110' in s for s in sent)
+
+
+@pytest.mark.parametrize('fail', ['unknown', 'pay_interrupted', 'verify_mismatch'])
+def test_폰_구매_실패는_기록하고_결제전만_AI에_넘긴다(setup, tmp_path, fail):
+    q, log, sent, make = setup
+    w = make(gate=False)
+    w.d.dry_run = False
+    w.d.parse_order = lambda job: OrderRef(
+        order_no=job.order_no, source='SHIHUO', seller='크림', sku='S1', qty=1
+    )
+    w.d.phone_sources = {'SHIHUO': lambda job, order: ('needs_ai', fail, '상품 화면을 못 읽음')}
+    w.d.events = EventLog(tmp_path / 'phone-events.sqlite')
+    calls = []
+    w.d.operator = lambda job, code, reason: calls.append((code, reason))
+    job, _ = q.enqueue('A1', 'U1', {}, 'ts1')
+    assert w.tick().state == 'needs_ai'
+    assert len(calls) == (1 if fail == 'unknown' else 0)
+    assert w.d.events.of_job(job.id)[0]['payload']['fail_reason'] == fail
 
 
 def test_네이버페이_창_계정_불일치면_그_계정만_빼고_한_번_다시_산다(tmp_path):
@@ -860,7 +980,7 @@ def test_네이버페이_창_계정_불일치면_그_계정만_빼고_한_번_�
     q = JobQueue(tmp_path / 'jobs.sqlite')
     acts = agents([])
     acts['payer'] = lambda _a: AgentResult(
-        status='needs_human',
+        status='needs_ai',
         reason=f'{NAVERPAY_MISMATCH_MARK}: 프로필 cannonfort 의 네이버페이 창은 cannonfort 로 로그인돼 있고 키마스터 연결 '
         '계정은 edelvise06 다 — 결제 비밀번호는 넣지 않았다(결제 안 됨)',
         fail_reason=FailReason.PERMISSION_DENIED,
@@ -885,7 +1005,7 @@ def test_네이버페이_창_계정_불일치면_그_계정만_빼고_한_번_�
     assert any('cannonfort 계정을 빼고' in s for s in sent)
     # 두 번째도 같은 사유면 더 돌리지 않고 사람에게 남긴다
     w.tick()
-    assert q.get('A1').state == 'needs_human'
+    assert q.get('A1').state == 'needs_ai'
 
 
 def test_결제창_로그인_화면으로_멈춘_계정을_알아낸다():
@@ -914,15 +1034,15 @@ def test_같은_주문번호_두_행을_각각_끝까지_돌린다(setup):
     w.d.approval_report = lambda job, key, stage, summary: asked.append((key, stage))
 
     first = w.tick()
-    assert first.wave_id == 'ord_A' and first.state == 'needs_human'
+    assert first.wave_id == 'ord_A' and first.state == 'needs_ai'
     second = w.tick()
-    assert second.wave_id == 'ord_B' and second.state == 'needs_human'
+    assert second.wave_id == 'ord_B' and second.state == 'needs_ai'
     assert asked == [('ord_A', 'pay'), ('ord_B', 'pay')]
 
     # 둘째 행만 승인 — 첫 행은 그대로 대기
     done = w.resume('ord_B', approved=True, by='U9', stage='pay')
     assert done.wave_id == 'ord_B' and done.state == 'done'
-    assert q.get('ord_A').state == 'needs_human'
+    assert q.get('ord_A').state == 'needs_ai'
     assert log == ['buy', 'buy', 'pay', 'record', 'verify']
     done_a = w.resume('ord_A', approved=True, by='U9', stage='pay')
     assert done_a.state == 'done'
@@ -965,7 +1085,7 @@ def test_주문_조회가_행이_여럿이라_실패하면_사람에게_넘긴�
 
     w.d.parse_order = ambiguous
     job = w.tick()
-    assert job.state == 'needs_human'
+    assert job.state == 'needs_ai'
     assert 'ord_A' in job.error and 'ord_B' in job.error
     assert any('행 id 로 접수' in s for s in sent)
 
@@ -984,3 +1104,17 @@ def test_결제_전_일시_오류는_하네스가_다시_하고_결제_가능성
     assert not is_transient_prepay('결제 비밀번호 키패드가 뜨지 않았다(10회 확인)')
     assert not is_transient_prepay('주문서가 이 주문과 다르다 — 결제하지 않음')
     assert not is_transient_prepay('')
+
+
+def test_수단_라디오_대응_실패_재시도는_29cm_비교를_끈다(setup):
+    # 실기 2026-10-15 무신사 모자 2306: 29CM 가 더 싸 같은 라디오 실패로 10분씩 3번 멈췄다
+    q, _log, _sent, make = setup
+    w = make(gate=False)
+    job, _ = q.enqueue('X', 'intake', {}, 'ts1')
+    retried = w._retry_transient(job, '결제창을 열지 못했다: 수단 라디오 대응 실패')
+    assert retried is not None
+    assert retried.options.get('no_cross') is True
+    job2, _ = q.enqueue('Y', 'intake', {}, 'ts2')
+    other = w._retry_transient(job2, '得物 검색 버튼(搜索)을 못 찾았다')
+    assert other is not None
+    assert 'no_cross' not in other.options

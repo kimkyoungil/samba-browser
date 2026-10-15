@@ -26,8 +26,15 @@ CDP_URL = 'http://127.0.0.1:9502'
 SECRET_WORDS = ('비밀번호', '키패드', 'password', 'secret', 'keypad')
 
 
+# 키패드가 '뜨지 않았다'는 사유는 비밀번호 화면이 없다는 뜻이라 찍어도 안전하다 — 오히려 왜 안 떴는지 화면이 필요하다
+# (롯데온 L.PAY 키패드 미표시가 하루에 4건 반복됐는데 이 사유에서 화면을 안 남겨 원인을 못 봤다, 2026-10-15)
+SAFE_PHRASES = ('키패드가 뜨지 않았다',)
+
+
 def is_secret_stage(text: str) -> bool:
     low = (text or '').lower()
+    if any(p in low for p in SAFE_PHRASES):
+        return False
     return any(w.lower() in low for w in SECRET_WORDS)
 
 

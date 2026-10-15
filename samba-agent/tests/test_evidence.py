@@ -15,8 +15,11 @@ def test_shot_path_uses_date_dir_and_safe_name():
 def test_tag_and_secret_stage():
     assert evidence.tag(None) == ''
     assert evidence.tag(['a.png', 'b.png']) == ' [화면: a.png; b.png]'
-    assert evidence.is_secret_stage('결제 비밀번호 키패드가 뜨지 않았다')
+    assert evidence.is_secret_stage('결제 비밀번호 키패드 입력 중 실패')
     assert not evidence.is_secret_stage('옵션 불일치')
+    # 키패드가 안 뜬 화면에는 비밀번호가 없다 — 찍는다. 비밀번호를 입력하는 단계는 그대로 막는다
+    assert not evidence.is_secret_stage('결제 비밀번호 키패드가 뜨지 않았다(10회 확인)')
+    assert evidence.is_secret_stage('결제 비밀번호 입력 중 실패')
 
 
 def test_host_of():

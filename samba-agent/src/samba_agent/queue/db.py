@@ -355,6 +355,31 @@ class JobQueue:
         row = self._find_row(order_no, wave_id)
         return self._job(row) if row is not None else None
 
+    def mark_option(self, job_id: int, key: str, value: object) -> None:
+        """작업 옵션 하나를 덧붙인다(판단을 한 번 받았다는 표시 등)."""
+        with self._immediate():
+            row = self._db.execute('SELECT options FROM jobs WHERE id=?', (job_id,)).fetchone()
+            if row is None:
+                return
+            options = json.loads(row['options'])
+            options[key] = value
+            self._db.execute(
+                'UPDATE jobs SET options=? WHERE id=?',
+                (json.dumps(options, ensure_ascii=False), job_id),
+            )
+
+    def needs_ai_unjudged(self, limit: int = 5) -> list[Job]:
+        """AI 대행이 아직 보지 않은 needs_ai(사유 unknown) — 오래된 것부터.
+
+        AI 대행은 한 번에 한 건만 판단해서, 바쁠 때 들어온 멈춤은 영영 판단받지 못했다(실기 2026-10-15).
+        """
+        rows = self._db.execute(
+            "SELECT * FROM jobs WHERE state='needs_ai' AND error='unknown' "
+            "AND options NOT LIKE '%\"_operator\"%' ORDER BY id LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [self._job(r) for r in rows]
+
     def live(self) -> list[Job]:
         q = ','.join('?' * len(LIVE_STATES))
         rows = self._db.execute(

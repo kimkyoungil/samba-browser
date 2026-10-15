@@ -80,3 +80,29 @@ def test_결제_비밀번호_취소_글자는_대행_코드에서_막힌다(bloc
     from samba_agent.repair.agent import blocked_reason
 
     assert blocked_reason(blocked) is not None
+
+
+def test_바빠서_못_본_needs_ai_는_drain_이_나중에_맡긴다(tmp_path):
+    # 실기 2026-10-15: 한 건씩만 판단해서 바쁠 때 들어온 멈춤 대부분이 판단을 못 받았다
+    h = _Q(tmp_path)
+    seen = []
+
+    class Agent(OperatorAgent):
+        def judge(self, *, call, ctx):
+            seen.append(ctx['order'])
+            return Verdict('human', '확인 필요')
+
+    svc = OperatorService(
+        Agent(), call=lambda *_: '', queue=h.q, flag_order=None,
+        report=lambda *_: None, run_async=False,
+    )
+    assert [j.id for j in h.q.needs_ai_unjudged()] == [h.job.id]
+    assert svc.drain() is True
+    assert len(seen) == 1
+    # human 판단도 한 번 본 것으로 표시돼 같은 작업을 되풀이해 판단하지 않는다
+    assert svc.drain() is False
+    assert len(seen) == 1
+    # 한 번 판단한 작업은 다시 맡기지 않는다(retry 가 아니면 키가 안 붙으니 목록에서 빠지게 두지 않는다)
+    other, _ = h.q.enqueue('T2', 'u', {OPERATOR_KEY: 1}, None, wave_id='ord_T2')
+    h.q.finish(other.id, 'needs_ai', error='unknown')
+    assert all(j.id != other.id for j in h.q.needs_ai_unjudged())

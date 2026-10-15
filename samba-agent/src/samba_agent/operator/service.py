@@ -99,6 +99,17 @@ class OperatorService:
             self._run(job, reason)
         return True
 
+    def drain(self) -> bool:
+        """판단을 못 받고 남은 멈춤 한 건을 맡긴다 — 바빠서 건너뛴 건을 나중에라도 본다. 시작했으면 True."""
+        if self._busy.locked():
+            return False
+        for job in self._queue.needs_ai_unjudged(5):
+            tail = events_tail(self._events_path, job.id, 1) if self._events_path else ''
+            reason = tail.split(': ', 1)[-1] if tail else ''
+            if self.submit(job, 'unknown', reason):
+                return True
+        return False
+
     def _run(self, job: Job, reason: str) -> None:
         try:
             source, summary = self._describe(job) if self._describe else ('', job.order_no)
@@ -138,6 +149,8 @@ class OperatorService:
             done = self._flag(key, 'out_of_stock', f'[AI 대행 확인] {verdict.evidence}')
             line += f' — 근거 "{mask_text(verdict.evidence)[:100]}" 로 취소중 정리({done or "표시 실패"})'
         else:
+            # 사람 확인으로 남기는 판단도 한 번 본 것이다 — drain 이 같은 작업을 되풀이해 판단하지 않게 표시한다
+            self._queue.mark_option(job.id, OPERATOR_KEY, 1)
             line += ' — 사람 확인 필요'
         log.info(line)
         self._report(job, line)

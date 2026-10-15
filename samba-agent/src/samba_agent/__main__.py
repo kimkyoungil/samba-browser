@@ -452,6 +452,7 @@ def main() -> None:
             # SSG 선물 주문은 결제 뒤 폰 카카오톡에서 선물을 받아야 발송된다(사용자 2026-10-01 하네스 이식)
             after_done=make_after_done(_source_sku_of),
             operator=operator_service.submit if operator_service is not None else None,
+            operator_drain=operator_service.drain if operator_service is not None else None,
             # 중국 크림(식화) 주문은 폰 得物 앱으로 산다 — 알리페이 비밀번호는 앱 폰 결제 도구가 키마스터에서 넣는다
             phone_sources=(
                 {

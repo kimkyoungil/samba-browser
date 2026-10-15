@@ -64,6 +64,8 @@ class WorkerDeps:
     after_done: Callable[[Job, dict], str | None] | None = None
     # AI 대행 — 결제 전에 막힌 작업의 판단을 맡긴다. (작업, 오류 코드, 사유) → 맡았으면 True
     operator: Callable[[Job, str | None, str], bool] | None = None
+    # 바빠서 판단을 못 받은 needs_ai 를 한 건씩 AI 대행에 다시 맡긴다(큐가 한가할 때 tick 이 부른다)
+    operator_drain: Callable[[], bool] | None = None
     # 브라우저 그래프 대신 폰으로 사는 소싱처(대문자 id → 처리기). 처리기는 (작업, 주문) → (결과, 오류 코드, 보고)
     # 중국 크림(SHIHUO) 주문 — 得物 앱 구매(사용자 2026-10-01)
     phone_sources: dict[str, Callable[[Job, OrderRef], tuple[str, str | None, str]]] = field(
@@ -118,6 +120,11 @@ class Worker:
             return None
         job = self.d.queue.claim()
         if job is None:
+            if self.d.operator_drain is not None:
+                try:
+                    self.d.operator_drain()
+                except Exception:  # noqa: BLE001 — AI 대행 재시도 실패가 큐 순환을 멈추면 안 된다
+                    _log.exception('AI 대행 재시도 실패')
             return None
         version = self.d.version()
         self.d.queue.set_version(job.id, version)

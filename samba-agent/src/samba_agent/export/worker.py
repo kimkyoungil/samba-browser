@@ -51,6 +51,8 @@ class _Outcome:
 NOT_FOUND_GIVE_UP_S = 24 * 3600
 # 취소 연동이 화면에서 주문을 못 찾았을 때 다시 보기까지의 최소 간격(기입을 굶기지 않게)
 CANCEL_NOT_FOUND_RETRY_S = 30 * 60
+# 취소 묶음 한 번에 넘기는 최대 주문 수
+CANCEL_BATCH_MAX = 30
 
 
 def _age_s(req: ExportRequest) -> float:
@@ -265,7 +267,17 @@ class ExportWorker:
         if getattr(adapter, 'one_at_a_time', False):
             order_nos = [req.order_no]
         else:
-            order_nos = [req.order_no, *self._queue.pending_order_nos(req.target)]
+            if req.target.endswith('_cancel'):
+                # 취소는 최근 주문부터 한 묶음 CANCEL_BATCH_MAX 건씩 — 한 묶음이 몇 시간 걸리지 않게(2026-10-16: 423건 대기)
+                order_nos = [
+                    req.order_no,
+                    *self._queue.pending_order_nos(
+                        req.target, limit=CANCEL_BATCH_MAX, newest_first=True
+                    ),
+                ]
+                order_nos = list(dict.fromkeys(order_nos))[: CANCEL_BATCH_MAX + 1]
+            else:
+                order_nos = [req.order_no, *self._queue.pending_order_nos(req.target)]
             if req.target.endswith('_cancel'):
                 # 묶음에 같이 태우는 다른 대기 주문도 지금 취소 상태인 것만 넘긴다(확인 못 한 것은 이번엔 뺀다)
                 order_nos = [req.order_no, *[o for o in order_nos[1:] if self._cancel_ok(o) is True]]

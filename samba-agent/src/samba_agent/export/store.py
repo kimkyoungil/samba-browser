@@ -242,14 +242,21 @@ class ExportQueue:
                 (detail, self._iso(), request_id),
             )
 
-    def pending_order_nos(self, target: str) -> list[str]:
-        """그 대상의 대기(pending) 요청 주문번호(오래된 순) — 일괄형 어댑터에 한꺼번에 넘긴다."""
+    def pending_order_nos(
+        self, target: str, *, limit: int | None = None, newest_first: bool = False
+    ) -> list[str]:
+        """그 대상의 대기(pending) 요청 주문번호(기본 오래된 순) — 일괄형 어댑터에 한꺼번에 넘긴다.
+
+        limit 이 있으면 그만큼만 — 423건 취소를 한 묶음으로 넘기면 몇 시간이 걸리고 중간에 막히면 전부 잃는다.
+        """
+        order = 'created_at DESC, id DESC' if newest_first else 'created_at, id'
+        sql = f"SELECT order_no FROM export_requests WHERE target=? AND status='pending' ORDER BY {order}"
+        args: tuple = (target,)
+        if limit is not None:
+            sql += ' LIMIT ?'
+            args = (target, limit)
         with self._lock:
-            rows = self._db.execute(
-                "SELECT order_no FROM export_requests WHERE target=? AND status='pending' "
-                'ORDER BY created_at, id',
-                (target,),
-            ).fetchall()
+            rows = self._db.execute(sql, args).fetchall()
         return [r['order_no'] for r in rows]
 
     def done_orders(

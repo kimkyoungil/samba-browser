@@ -85,6 +85,7 @@ def test_결제_비밀번호_취소_글자는_대행_코드에서_막힌다(bloc
 def test_바빠서_못_본_needs_ai_는_drain_이_나중에_맡긴다(tmp_path):
     # 실기 2026-10-15: 한 건씩만 판단해서 바쁠 때 들어온 멈춤 대부분이 판단을 못 받았다
     h = _Q(tmp_path)
+    h.q.finish(h.job.id, 'needs_ai', error='unknown')  # 헬퍼가 다른 상태명을 쓰는 줄기에서도 같게
     seen = []
 
     class Agent(OperatorAgent):

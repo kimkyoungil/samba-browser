@@ -88,26 +88,13 @@ try{const ra=(await page.get({query:'받는 분 주소로 보내기'})).tree.spl
   if(ra&&!/value="on"/.test(ra)){await page.click(parseInt(ra.slice(1)));await sleep(1500);}}catch(e){}
 const payId = await page.idOf('결제하기');
 if (payId<0) return {ok:false, error:'결제하기 button not found', method};
-let payRes = String(await page.click(payId));
-// '임성희 님만을 위한 주문할인혜택을 적용해 보세요' 안내창이 열린 채로 남으면 결제하기가 가려져(covered) 눌리지 않고, 하네스는
-// 결제창이 뜬 줄 알고 키패드를 10번 기다리다 멈춘다(실기 2026-10-15 하루 5건: 2214·2285·2308·2326). 가려졌으면 안내창을
-// 정리하고 다시 누른다 — 할인혜택 받기(이미 고른 즉시할인 적용)가 있으면 그것을, 없으면 닫기를 누른다
-// (가려진 클릭은 눌리지 않으므로 다시 눌러도 이중 결제가 아니다)
-for (let k = 0; k < 2 && /covered/i.test(payRes); k++) {
-  const QQ = async (q, re) => (await page.get({ query: q })).tree.split(String.fromCharCode(10)).filter(l => re.test(l)).map(l => parseInt(l.slice(1)))
-  if (k === 0) {
-    const bs = await QQ('할인혜택 받기', /button "[\d,]+원 할인혜택 받기"/)
-    if (bs.length) { await page.click(Math.max(...bs)); await sleep(2000) }
-    const ap2 = await QQ('적용하기', /button "적용하기"/)
-    if (ap2.length) { await page.click(Math.max(...ap2)); await sleep(2500) }
-  } else {
-    const cs = await QQ('닫기', /button "닫기"/)
-    if (cs.length) { await page.click(Math.max(...cs)); await sleep(1000) }
-  }
-  const again = await page.idOf('결제하기')
-  if (again < 0) break
-  payRes = String(await page.click(again))
-}
+let pr=String(await page.click(payId));
+// 주문할인혜택 안내창이 결제하기를 가리면(covered) 받기·닫기 후 다시 누른다
+for(let k=0;k<2&&/covered/i.test(pr);k++){
+const Z=async(q,r)=>(await page.get({query:q})).tree.split(String.fromCharCode(10)).filter(l=>r.test(l)).map(l=>parseInt(l.slice(1)));
+const L=k?await Z('닫기',/button "닫기"/):[...await Z('할인혜택 받기',/button "[\d,]+원 할인혜택 받기"/),...await Z('적용하기',/button "적용하기"/)];
+if(L.length){await page.click(Math.max(...L));await sleep(2000)}
+const a=await page.idOf('결제하기');if(a<0)break;pr=String(await page.click(a))}
 await sleep(3000);
 if (/네이버페이/.test(method)) {
   for (let i = 0; i < 8; i++) { const ag = await page.idOf('동의하고 결제하기'); if (ag >= 0) { await page.click(ag); await sleep(3000); break; } await sleep(1000); }

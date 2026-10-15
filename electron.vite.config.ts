@@ -16,6 +16,21 @@ function appRev(): string {
   }
 }
 
+// 로그인 화면에 보일 빌드 정보 — 코드 판(최종 커밋 해시·날짜)과 빌드 시각. 소스에 커밋 안 된 변경이 있으면 판 끝에 '+' 를 붙인다
+function appBuildInfo(): { rev: string; built: string } {
+  const pad = (n: number): string => String(n).padStart(2, '0')
+  const d = new Date()
+  const built = `${pad(d.getMonth() + 1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+  let dirty = ''
+  try {
+    dirty = execSync('git status --porcelain -- src', { encoding: 'utf8' }).trim() ? '+' : ''
+  } catch {
+    dirty = ''
+  }
+  return { rev: `${appRev()}${dirty}`, built }
+}
+const BUILD_INFO = appBuildInfo()
+
 export default defineConfig({
   main: {
     // .env 의 SAMBA_* 값(Supabase URL·anon 키)을 메인 번들에 주입한다
@@ -41,6 +56,10 @@ export default defineConfig({
     }
   },
   renderer: {
+    define: {
+      __APP_REV__: JSON.stringify(BUILD_INFO.rev),
+      __APP_BUILT__: JSON.stringify(BUILD_INFO.built)
+    },
     build: {
       rollupOptions: {
         // 다중 페이지: 앱 UI(index)와 자체 새 탭 페이지(newtab, samba:// 로 서빙)

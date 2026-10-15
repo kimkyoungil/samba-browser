@@ -1112,6 +1112,7 @@
     "userCount": "{{n}} registered users",
     "accountSignedIn": "Account signed in",
     "gateHint": "Sign in to open this account’s bookmarks, chats and KeyMaster",
+    "buildInfo": "Last change {{rev}} · built {{built}}",
     "forgotPassword": "Forgot your password? Set a new one using the session still on this PC",
     "resetHint": "Enter the email of the account signed in on this PC above, set a new password, and you will be signed in with it right away (no email needed)",
     "newPassword": "New password (8+ characters)",

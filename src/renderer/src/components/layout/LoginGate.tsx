@@ -4,6 +4,10 @@ import { SignInCard } from '@renderer/components/settings/AccountSection'
 
 // 로그인 게이트 — 계정 로그인 전에는 이 화면뿐이다(사이드바·탭·대화 전부 숨김).
 // 자리를 비운 사이 다른 사람이 앱을 열어도 내 북마크·대화·금고가 보이지 않게 한다
+// 로그인 화면에 보이는 판 — 어느 빌드가 떠 있는지 바로 알아보게 한다(옛 빌드로 되돌아가는 일이 잦았다)
+const APP_REV = typeof __APP_REV__ === 'string' ? __APP_REV__ : 'dev'
+const APP_BUILT = typeof __APP_BUILT__ === 'string' ? __APP_BUILT__ : ''
+
 export function LoginGate(): React.JSX.Element {
   const { t } = useTranslation()
   return (
@@ -14,6 +18,9 @@ export function LoginGate(): React.JSX.Element {
           <div className="text-[12px] text-[var(--text2)]">{t('account.gateHint')}</div>
         </div>
         <SignInCard />
+        <div className="mt-3 text-center text-[11px] text-[var(--text3)]" data-testid="build-info">
+          {t('account.buildInfo', { rev: APP_REV, built: APP_BUILT || '-' })}
+        </div>
       </div>
     </div>
   )

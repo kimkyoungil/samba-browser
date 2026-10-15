@@ -5,99 +5,98 @@ const cardCompanies=['롯데카드','신한카드','KB국민카드','삼성카�
 const simplePays=['간편결제','카카오페이','네이버페이','토스페이','삼성페이','휴대폰결제','충전결제','퀵계좌이체','온누리상품권'];
 if (args.tab && (await tabs.list()).some(t => t.id === String(args.tab))) await tabs.switch(String(args.tab));
 { const ot=(await tabs.list()).filter(t=>/orderSheet/.test(t.url||''));
-  const good=async()=>{const T=String((await page.get({})).tree||'');const r=T.split('\n').find(l=>/radio "받는 분 주소로/.test(l));return !r||(/value="on"/.test(r)&&!/배송지를 선택해 ?주세요/.test(T));};
-  if(ot.length>1&&!(await good())){for(const t of ot){await tabs.switch(t.id);await sleep(300);if(await good())break;}}}
+ const good=async()=>{const T=String((await page.get({})).tree||'');const r=T.split('\n').find(l=>/radio "받는 분 주소로/.test(l));return !r||(/value="on"/.test(r)&&!/배송지를 선택해 ?주세요/.test(T));};
+ if(ot.length>1&&!(await good())){for(const t of ot){await tabs.switch(t.id);await sleep(300);if(await good())break;}}}
 const url = await page.url();
 if (!/orderSheet/.test(url)) return {ok:false, error:'no lotteon order sheet open in current tab'};
 for (let i = 0; i < 6 && !/결제수단/.test((await page.get({query:'결제수단'})).tree); i++) {
-  const c = await page.idOf('계속하기'); if (c < 0) break; await page.click(c); await sleep(2500);
+ const c = await page.idOf('계속하기'); if (c < 0) break; await page.click(c); await sleep(2500);
 }
 const fu = await page.idOf('전액사용'); if (fu >= 0) { await page.click(fu); await sleep(2500); }
 let method=null;
 const mc = cardCompanies.find(c=>c.includes(card)||(card && card.length>0 && c.replace('카드','').includes(card)));
 if (mc) {
-  await page.clickText('신용카드');
-  await sleep(600);
-  const sel = await page.idOf('카드를 선택해 주세요.');
-  if (sel<0) return {ok:false, error:'card select box not found'};
-  await page.click(sel);
-  await sleep(600);
-  await page.clickText(mc);
-  method = mc;
+ await page.clickText('신용카드');
+ await sleep(600);
+ const sel = await page.idOf('카드를 선택해 주세요.');
+ if (sel<0) return {ok:false, error:'card select box not found'};
+ await page.click(sel);
+ await sleep(600);
+ await page.clickText(mc);
+ method = mc;
 } else {
-  const mp = simplePays.find(p=>p.includes(card)||(card && card.length>0 && p.includes(card)));
-  if (!mp) return {ok:false, error:'payment method not found: '+card};
-  const KP=mp==='카카오페이';
-  const LC=mp==='간편결제';
-  if(!KP){await page.clickText(mp);await sleep(1500);}
-  {
-    const Q=async(q,re)=>(await page.get({query:q})).tree.split('\n').filter(l=>re.test(l));
-    const hi=ls=>ls.length?Math.max(...ls.map(l=>parseInt(l.slice(1)))):-1;
-    const disc=async()=>{const t=(await page.get({query:'주문할인금액'})).tree;const m=(t.split('PAGE TEXT')[1]||t).match(/주문할인금액\s*할인변경\s*(-?[\d,]+)원/);return m?parseInt(m[1].replace(/[,-]/g,''),10):0;};
-    if(!(await disc())){
-      const hb=await page.idOf('할인변경'); if(hb<0&&KP) return {ok:false,error:'카카오페이 할인변경 버튼 없음'};
-      if(hb>=0){await page.click(hb); await sleep(2000);
-      const rs=(KP?await Q('카카오페이 머니',/radio "카카오페이 머니\d+%/):LC?await Q('롯데카드',/radio "롯데카드\s*\d+%/):await Q('장바구니',/radio "\d+% ?장바구니 ?쿠폰/)).map(l=>({id:parseInt(l.slice(1)),p:+(l.match(/(\d+)%/)||[])[1],on:/value="on"/.test(l)}));
-      const mx=rs.length?Math.max(...rs.map(x=>x.id)):0; const best=rs.filter(r=>r.id>mx-20).sort((a,b)=>b.p-a.p)[0];
-      if(!best&&KP) return {ok:false,error:'카카오페이 머니 즉시할인 없음'};
-      if(!best&&LC) return {ok:false,error:'롯데카드 즉시할인 없음'};
-      if(!best){const c=hi(await Q('닫기',/button "닫기"/)); if(c>0){await page.click(c); await sleep(600);}}
-      else{var want=1; if(!best.on){if(LC&&page.clickNative){await page.clickNative(best.id);}else{await page.click(best.id);} await sleep(1200);}
-      const b=hi(await Q('할인혜택 받기',/button "[\d,]+원 할인혜택 받기"/)); if(b<0) return {ok:false,error:'할인혜택 받기 버튼 없음'};
-      await page.click(b); await sleep(2500);
-      const ap=hi(await Q('적용하기',/button "적용하기"/)); if(ap>0){await page.click(ap); await sleep(3500);}
-      }}
-    }
-    if((KP||typeof want!=='undefined')&&!(await disc())) return {ok:false,error:(KP?'카카오페이 머니 즉시할인':LC?'롯데카드 즉시할인':'장바구니 쿠폰')+'이 주문서에 안 붙음 — 결제하지 않음'};
-  }
-  await page.clickText(mp);
-  method = mp;
-  if(mp==='간편결제'){
-    await sleep(1200);
-    const want=String(args.easy_card||(isEasy?args.issuer:'')||'롯데카드');
-    const rl=(await page.get({query:'L.PAY 카드'})).tree.split('\n').find(l=>/^\[\d+\] radio "L\.PAY 카드"/.test(l));
-    if(rl&&!/value="on"/.test(rl)){await page.click(parseInt(rl.slice(1)));await sleep(1200);}
-    let sel='';for(let k=0;k<8&&!sel;k++){const P=(String((await page.get({})).tree||'').split('PAGE TEXT')[1]||'').replace(/\s+/g,' ');sel=((P.match(/카드선택 ([^+]{2,30}?) L\.PAY/)||[])[1]||'').trim();if(!sel)await sleep(700);}
-    if(!sel.includes(want.replace('카드',''))){
-      // 견적 단계에서 카드선택 칸을 여러 번 건드리면 결제 진입 때 비어 있다 — 롯데카드를 직접 고른다(2026-10-06)
-      for(const o of ['textbox','label']){const g=await page.get({query:'카드'});const re=o==='textbox'?/^\[(\d+)\] textbox "카드(를 선택|선택)/:/^\[(\d+)\] label "카드선택"/;const l=g.tree.split('\n').find(x=>re.test(x));if(!l)continue;await page.click(parseInt(l.slice(1)));await sleep(600);const f=(await page.get({query:want})).tree.split('\n').find(x=>/^\[\d+\] (option|listitem|clickable|button|link) /.test(x)&&x.includes(want));if(f){await page.click(parseInt(f.slice(1)));await sleep(900);break}}
-      sel='';for(let k=0;k<6&&!sel;k++){const P=(String((await page.get({})).tree||'').split('PAGE TEXT')[1]||'').replace(/\s+/g,' ');sel=((P.match(/카드선택 ([^+]{2,30}?) L\.PAY/)||[])[1]||'').trim();if(!sel)await sleep(700);}
-    }
-    if(!sel.includes(want.replace('카드','')))return {ok:false,error:'L.PAY 카드가 '+want+' 아님: '+(sel||'선택 없음')+' — 결제하지 않음',method};
-    method='간편결제/'+sel;
-  }
+ const mp = simplePays.find(p=>p.includes(card)||(card && card.length>0 && p.includes(card)));
+ if (!mp) return {ok:false, error:'payment method not found: '+card};
+ const KP=mp==='카카오페이';
+ const LC=mp==='간편결제';
+ if(!KP){await page.clickText(mp);await sleep(1500);}
+ {
+ const Q=async(q,re)=>(await page.get({query:q})).tree.split('\n').filter(l=>re.test(l));
+ const hi=ls=>ls.length?Math.max(...ls.map(l=>parseInt(l.slice(1)))):-1;
+ const disc=async()=>{const t=(await page.get({query:'주문할인금액'})).tree;const m=(t.split('PAGE TEXT')[1]||t).match(/주문할인금액\s*할인변경\s*(-?[\d,]+)원/);return m?parseInt(m[1].replace(/[,-]/g,''),10):0;};
+ if(!(await disc())){
+ const hb=await page.idOf('할인변경'); if(hb<0&&KP) return {ok:false,error:'카카오페이 할인변경 버튼 없음'};
+ if(hb>=0){await page.click(hb); await sleep(2000);
+ const rs=(KP?await Q('카카오페이 머니',/radio "카카오페이 머니\d+%/):LC?await Q('롯데카드',/radio "롯데카드\s*\d+%/):await Q('장바구니',/radio "\d+% ?장바구니 ?쿠폰/)).map(l=>({id:parseInt(l.slice(1)),p:+(l.match(/(\d+)%/)||[])[1],on:/value="on"/.test(l)}));
+ const mx=rs.length?Math.max(...rs.map(x=>x.id)):0; const best=rs.filter(r=>r.id>mx-20).sort((a,b)=>b.p-a.p)[0];
+ if(!best&&KP) return {ok:false,error:'카카오페이 머니 즉시할인 없음'};
+ if(!best&&LC) return {ok:false,error:'롯데카드 즉시할인 없음'};
+ if(!best){const c=hi(await Q('닫기',/button "닫기"/)); if(c>0){await page.click(c); await sleep(600);}}
+ else{var want=1; if(!best.on){if(LC&&page.clickNative){await page.clickNative(best.id);}else{await page.click(best.id);} await sleep(1200);}
+ const b=hi(await Q('할인혜택 받기',/button "[\d,]+원 할인혜택 받기"/)); if(b<0) return {ok:false,error:'할인혜택 받기 버튼 없음'};
+ await page.click(b); await sleep(2500);
+ const ap=hi(await Q('적용하기',/button "적용하기"/)); if(ap>0){await page.click(ap); await sleep(3500);}
+ }}
+ }
+ if((KP||typeof want!=='undefined')&&!(await disc())) return {ok:false,error:(KP?'카카오페이 머니 즉시할인':LC?'롯데카드 즉시할인':'장바구니 쿠폰')+'이 주문서에 안 붙음 — 결제하지 않음'};
+ }
+ await page.clickText(mp);
+ method = mp;
+ if(mp==='간편결제'){
+ await sleep(1200);
+ const want=String(args.easy_card||(isEasy?args.issuer:'')||'롯데카드');
+ const rl=(await page.get({query:'L.PAY 카드'})).tree.split('\n').find(l=>/^\[\d+\] radio "L\.PAY 카드"/.test(l));
+ if(rl&&!/value="on"/.test(rl)){await page.click(parseInt(rl.slice(1)));await sleep(1200);}
+ let sel='';for(let k=0;k<8&&!sel;k++){const P=(String((await page.get({})).tree||'').split('PAGE TEXT')[1]||'').replace(/\s+/g,' ');sel=((P.match(/카드선택 ([^+]{2,30}?) L\.PAY/)||[])[1]||'').trim();if(!sel)await sleep(700);}
+ if(!sel.includes(want.replace('카드',''))){
+ for(const o of ['textbox','label']){const g=await page.get({query:'카드'});const re=o==='textbox'?/^\[(\d+)\] textbox "카드(를 선택|선택)/:/^\[(\d+)\] label "카드선택"/;const l=g.tree.split('\n').find(x=>re.test(x));if(!l)continue;await page.click(parseInt(l.slice(1)));await sleep(600);const f=(await page.get({query:want})).tree.split('\n').find(x=>/^\[\d+\] (option|listitem|clickable|button|link) /.test(x)&&x.includes(want));if(f){await page.click(parseInt(f.slice(1)));await sleep(900);break}}
+ sel='';for(let k=0;k<6&&!sel;k++){const P=(String((await page.get({})).tree||'').split('PAGE TEXT')[1]||'').replace(/\s+/g,' ');sel=((P.match(/카드선택 ([^+]{2,30}?) L\.PAY/)||[])[1]||'').trim();if(!sel)await sleep(700);}
+ }
+ if(!sel.includes(want.replace('카드','')))return {ok:false,error:'L.PAY 카드가 '+want+' 아님: '+(sel||'선택 없음')+' — 결제하지 않음',method};
+ method='간편결제/'+sel;
+ }
 }
 await sleep(600);
 let receipt=null,after=null;
 try{
-  const rt=(await page.get({query:'지출증빙용'})).tree;
-  const rm=rt.match(/\[(\d+)\] radio "지출증빙용"[^\n]*/);
-  if(rm){
-    if(!/value="on"/.test(rm[0])){await page.click(parseInt(rm[1]));await sleep(900);}
-    receipt='지출증빙용';
-    let tb=null;
-    for(let k=0;k<8&&!tb;k++){tb=(await page.get({query:'10자리'})).tree.split('\n').find(l=>/^\[\d+\] textbox "[^"]*10자리/.test(l))||null;if(!tb)await sleep(700);}
-    if(!tb)receipt='지출증빙용(번호 칸 못 찾음)';
-    const cur=tb?((tb.match(/value="([^"]*)"/)||[])[1]||'').replace(/\D/g,''):'';
-    if(tb&&args.biz_no&&cur!==String(args.biz_no)){await page.type(parseInt(tb.slice(1)),String(args.biz_no),true);await sleep(500);receipt='지출증빙용(번호 입력)';}
-  }
+ const rt=(await page.get({query:'지출증빙용'})).tree;
+ const rm=rt.match(/\[(\d+)\] radio "지출증빙용"[^\n]*/);
+ if(rm){
+ if(!/value="on"/.test(rm[0])){await page.click(parseInt(rm[1]));await sleep(900);}
+ receipt='지출증빙용';
+ let tb=null;
+ for(let k=0;k<8&&!tb;k++){tb=(await page.get({query:'10자리'})).tree.split('\n').find(l=>/^\[\d+\] textbox "[^"]*10자리/.test(l))||null;if(!tb)await sleep(700);}
+ if(!tb)receipt='지출증빙용(번호 칸 못 찾음)';
+ const cur=tb?((tb.match(/value="([^"]*)"/)||[])[1]||'').replace(/\D/g,''):'';
+ if(tb&&args.biz_no&&cur!==String(args.biz_no)){await page.type(parseInt(tb.slice(1)),String(args.biz_no),true);await sleep(500);receipt='지출증빙용(번호 입력)';}
+ }
 }catch(e){receipt='확인 실패';}
 try{const st=(await page.get({query:'입력한 이름으로 선물'})).tree.split('\n').find(l=>/^\[\d+\] textbox "입력한 이름으로 선물/.test(l));
-  if(st&&!/value="[^"]+"/.test(st)){const hn=((await page.get({query:'님로그아웃'})).tree.match(/([가-힣A-Za-z]{2,10})님\s*로그아웃/)||[])[1];if(hn){await page.type(parseInt(st.slice(1)),hn,false);await sleep(500);}}}catch(e){}
+ if(st&&!/value="[^"]+"/.test(st)){const hn=((await page.get({query:'님로그아웃'})).tree.match(/([가-힣A-Za-z]{2,10})님\s*로그아웃/)||[])[1];if(hn){await page.type(parseInt(st.slice(1)),hn,false);await sleep(500);}}}catch(e){}
 try{const ra=(await page.get({query:'받는 분 주소로 보내기'})).tree.split('\n').find(l=>/^\[\d+\] radio "받는 분 주소로/.test(l));
-  if(ra&&!/value="on"/.test(ra)){await page.click(parseInt(ra.slice(1)));await sleep(1500);}}catch(e){}
+ if(ra&&!/value="on"/.test(ra)){await page.click(parseInt(ra.slice(1)));await sleep(1500);}}catch(e){}
 const payId = await page.idOf('결제하기');
 if (payId<0) return {ok:false, error:'결제하기 button not found', method};
 let pr=String(await page.click(payId));
-// 주문할인혜택 안내창이 결제하기를 가리면(covered) 받기·닫기 후 다시 누른다
-for(let k=0;k<2&&/covered/i.test(pr);k++){
+for(let k=0;k<4&&/covered/i.test(pr);k++){
 const Z=async(q,r)=>(await page.get({query:q})).tree.split(String.fromCharCode(10)).filter(l=>r.test(l)).map(l=>parseInt(l.slice(1)));
-const L=k?await Z('닫기',/button "닫기"/):[...await Z('할인혜택 받기',/button "[\d,]+원 할인혜택 받기"/),...await Z('적용하기',/button "적용하기"/)];
-if(L.length){await page.click(Math.max(...L));await sleep(2000)}
+const c=await Z('적용하기',/button "적용하기"/),b=await Z('할인혜택 받기',/button "[\d,]+원 할인혜택 받기"/),x=await Z('닫기',/button "닫기"/),t=c.length?c:b.length?b:x;
+if(t.length){await page.click(Math.max(...t));await sleep(2000)}
 const a=await page.idOf('결제하기');if(a<0)break;pr=String(await page.click(a))}
+if(/covered/i.test(pr))return{ok:false,error:'결제하기가 안내창에 가려져 눌리지 않음(결제 안 됨)',method};
 await sleep(3000);
 if (/네이버페이/.test(method)) {
-  for (let i = 0; i < 8; i++) { const ag = await page.idOf('동의하고 결제하기'); if (ag >= 0) { await page.click(ag); await sleep(3000); break; } await sleep(1000); }
+ for (let i = 0; i < 8; i++) { const ag = await page.idOf('동의하고 결제하기'); if (ag >= 0) { await page.click(ag); await sleep(3000); break; } await sleep(1000); }
 }
 try{const T=String((await page.get({})).tree||'');if(/^URL: [^\n]*orderSheet/.test(T)){const m=T.match(/사업자등록번호[^\n]{0,25}입력해 ?주세요/);if(m)after='주문서에서 막힘: '+m[0];
 else if(/네이버페이/.test(method)){const P=T.split('PAGE TEXT')[1]||'';const g=(P.match(/[^\n.]{0,30}(?:해 ?주세요|하세요|불가|없습니다|초과)[^\n.]{0,10}/)||[''])[0];after='결제하기 뒤에도 주문서(네이버페이 창 안 열림)'+(g?': '+g.trim():'');

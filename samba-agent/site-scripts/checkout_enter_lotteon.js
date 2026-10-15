@@ -107,5 +107,5 @@ else if(/네이버페이/.test(method)){const P=T.split('PAGE TEXT')[1]||'';cons
 if(after)return{ok:false,error:after,method,receipt};
 const tbs = await tabs.list();
 const popup = tbs.find(t=>t.kind==='popup');
-const DT=String((await page.get({})).tree||''),DL=DT.split(String.fromCharCode(10)).filter(l=>/^\[\d+\]/.test(l));
-return { ok:true, method, receipt, popup_url: popup? popup.url : null, keypad_in_tab: /네이버페이/.test(method), diag:(/dialog "L\.PAY 비밀번호/.test(DT)?'K':'k')+DL.length+':'+DL.slice(-3).map(l=>l.slice(0,30)).join('|') };
+const DT=String((await page.get({})).tree||'');
+return { ok:true, method, receipt, popup_url: popup? popup.url : null, keypad_in_tab: /네이버페이/.test(method), diag:(/dialog "L\.PAY 비밀번호/.test(DT)?'K':'k')+(DT.match(/button "\d"/g)||[]).length+(/결제 비밀번호/.test(DT.split('PAGE TEXT')[1]||'')?'T':'t')+DT.length };

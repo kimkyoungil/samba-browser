@@ -432,6 +432,16 @@ class PywinautoEmpUi:
                 except Exception:  # noqa: BLE001, S112 — 열거 사이에 사라진 창은 건너뛴다
                     continue
             log.info('EMP 컨트롤 진단(%s 못 찾음, %d개): %s', order_no, len(lines), ' ## '.join(lines))
+            # 화면도 한 장 남긴다 — 상태 탭·사이트 분류 선택이 어떻게 돼 있는지 사람이 바로 본다
+            from pathlib import Path
+
+            from PIL import ImageGrab
+
+            rect = self._main.rectangle()
+            out = Path(__file__).resolve().parents[4] / 'evidence' / f'emp-notfound-{dt.datetime.now():%H%M%S}.png'
+            out.parent.mkdir(parents=True, exist_ok=True)
+            ImageGrab.grab(bbox=(rect.left, rect.top, rect.right, rect.bottom), all_screens=True).save(out)
+            log.info('EMP 화면 저장: %s', out)
         except Exception as e:  # noqa: BLE001 — 진단 실패가 본 작업을 막지 않는다
             log.warning('EMP 컨트롤 진단 실패: %s', e)
 

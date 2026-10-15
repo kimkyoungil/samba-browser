@@ -87,13 +87,13 @@ try{const ra=(await page.get({query:'받는 분 주소로 보내기'})).tree.spl
  if(ra&&!/value="on"/.test(ra)){await page.click(parseInt(ra.slice(1)));await sleep(1500);}}catch(e){}
 const payId = await page.idOf('결제하기');
 if (payId<0) return {ok:false, error:'결제하기 button not found', method};
-let pr=String(await page.click(payId));
+let pr=String(await page.click(payId)),tr='';
 for(let k=0;k<4&&/covered/i.test(pr);k++){
 const Z=async(q,r)=>(await page.get({query:q})).tree.split(String.fromCharCode(10)).filter(l=>r.test(l)).map(l=>parseInt(l.slice(1)));
 const c=await Z('적용하기',/button "적용하기"/),b=await Z('할인혜택 받기',/button "[\d,]+원 할인혜택 받기"/),x=await Z('닫기',/button "닫기"/),t=c.length?c:b.length?b:x;
-if(t.length){await page.click(Math.max(...t));await sleep(2000)}
+if(t.length){const id=Math.max(...t);tr+=(c.length?'적':b.length?'받':'닫')+id+'='+String(page.clickNative?await page.clickNative(id):await page.click(id)).slice(0,40)+';';await sleep(2000)}else tr+='없음;';
 const a=await page.idOf('결제하기');if(a<0)break;pr=String(await page.click(a))}
-if(/covered/i.test(pr))return{ok:false,error:'결제하기가 안내창에 가려져 눌리지 않음(결제 안 됨)',method};
+if(/covered/i.test(pr))return{ok:false,error:'결제하기가 안내창에 가려져 눌리지 않음(결제 안 됨) '+tr+pr.slice(0,80),method};
 await sleep(3000);
 if (/네이버페이/.test(method)) {
  for (let i = 0; i < 8; i++) { const ag = await page.idOf('동의하고 결제하기'); if (ag >= 0) { await page.click(ag); await sleep(3000); break; } await sleep(1000); }

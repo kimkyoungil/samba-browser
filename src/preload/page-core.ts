@@ -1101,6 +1101,15 @@ export function captchaHint(): CaptchaHint {
 
 // 문구 판정에만 쓰므로 페이지 텍스트는 앞부분만 본다(결제 팝업은 짧다)
 const KEYPAD_TEXT_MAX = 8000
+// 앞부분이 한도를 넘으면 뒤쪽 이만큼도 본다 — 결제 키패드 창은 body 맨 끝에 붙는데, 앞쪽에 배송지 수백 줄 같은 긴 목록이
+// 있으면 키패드 문구('결제 비밀번호')가 한도 밖으로 밀려 키패드로 인정받지 못했다(실기 2026-10-15 롯데온 L.PAY)
+export const KEYPAD_TEXT_TAIL = 2000
+
+/** 키패드 판정용 페이지 글자 — 앞 KEYPAD_TEXT_MAX 자, 더 길면 끝 KEYPAD_TEXT_TAIL 자를 이어 붙인다(순수 함수) */
+export function keypadText(text: string): string {
+  if (text.length <= KEYPAD_TEXT_MAX) return text
+  return `${text.slice(0, KEYPAD_TEXT_MAX)} ${text.slice(-KEYPAD_TEXT_TAIL)}`
+}
 // 결제 비밀번호 칸으로 볼 자릿수 범위(간편결제 PIN 은 보통 4~6자리)
 const PIN_MAXLENGTH_MIN = 4
 const PIN_MAXLENGTH_MAX = 6
@@ -1131,7 +1140,7 @@ export function keypadSignals(): KeypadSignals {
   const text = ((body?.innerText || body?.textContent) ?? '').replace(/\s+/g, ' ').trim()
   return {
     url: location.href,
-    text: text.slice(0, KEYPAD_TEXT_MAX),
+    text: keypadText(text),
     digitButtons,
     pinField
   }

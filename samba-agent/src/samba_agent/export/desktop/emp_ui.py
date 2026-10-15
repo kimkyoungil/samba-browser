@@ -410,7 +410,30 @@ class PywinautoEmpUi:
             self.search()
             if any(order_matches(order_no, r.values.get(COL_ORDER_NO, '')) for r in self.rows()):
                 return
+        self._dump_controls_once(order_no)
         raise AdapterRetry(ExportFail.NOT_FOUND, 'EMP 그리드에 그 주문번호가 없다')
+
+    _controls_dumped = False
+
+    def _dump_controls_once(self, order_no: str) -> None:
+        """주문을 못 찾을 때 EMP 화면의 컨트롤(자동화 id·종류·글자)을 한 번만 로그로 남긴다 — 상태 필터 등 검색 조건이 어디 있는지
+        보려는 진단이다(실기 2026-10-15: 발송·배송완료로 넘어간 주문 66건이 EMP 에서 안 보임)."""
+        if PywinautoEmpUi._controls_dumped:
+            return
+        PywinautoEmpUi._controls_dumped = True
+        try:
+            lines: list[str] = []
+            for hwnd in _visible_children(self._main.handle)[:400]:
+                try:
+                    info = UIAElementInfo(hwnd)
+                    text = self._window_text(hwnd, 60)
+                    name = (info.name or '')[:30]
+                    lines.append(f'{info.automation_id}|{info.control_type}|{name}|{text[:40]}')
+                except Exception:  # noqa: BLE001, S112 — 열거 사이에 사라진 창은 건너뛴다
+                    continue
+            log.info('EMP 컨트롤 진단(%s 못 찾음, %d개): %s', order_no, len(lines), ' ## '.join(lines))
+        except Exception as e:  # noqa: BLE001 — 진단 실패가 본 작업을 막지 않는다
+            log.warning('EMP 컨트롤 진단 실패: %s', e)
 
     def clear_keyword(self) -> None:
         """검색어를 지우고 다시 검색해 목록을 되돌린다."""

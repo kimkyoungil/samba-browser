@@ -1335,8 +1335,12 @@ def _name_colors(name: str) -> set[str]:
 def single_item_ok(option: str | None, snap: dict[str, object]) -> bool:
     """선택란 없는 단일 상품으로 봐도 되는가 — 주문서가 열렸고(원가 있음) 주문 옵션이 프리사이즈이며,
     색상 등 나머지 글자가 있으면 그중 하나가 상품명에 있다."""
-    if not option or not snap.get('order_tab') or _as_float(snap.get('cost')) <= 0:
+    if not snap.get('order_tab') or _as_float(snap.get('cost')) <= 0:
         return False
+    if not option:
+        # 주문에 옵션이 없고(선글라스 등) 선택란도 없는데 주문서가 열렸다 — 옵션을 고르지 않고 주문서까지 갔으니
+        # 변형이 하나뿐인 상품이다(실기 2026-10-16 SSG 나이키 선글라스 2444)
+        return True
     if not _is_free_size(option):
         return False
     name = str(snap.get('product_name') or '').lower()
@@ -3945,9 +3949,9 @@ class BuyerAgent(AgentBase):
         if not options and single_item_ok(a.order.option, snap):
             # 옵션 선택란이 없는 단일 상품(프리사이즈 한 가지) — 주문서가 열렸고 색상이 상품명과 맞으면 그 상품이다
             # (실기 2026-09-30 롯데온 노스페이스 힙색 'BLK(BLACK) FREE')
-            options = [str(a.order.option)]
-            snap['selected'] = a.order.option
-            self.note('옵션 목록', f'선택란 없는 단일 상품 — 주문 옵션 [{a.order.option}] 그대로')
+            options = [str(a.order.option or '(옵션 없음)')]
+            snap['selected'] = a.order.option or ''
+            self.note('옵션 목록', f'선택란 없는 단일 상품 — 주문 옵션 [{a.order.option or "없음"}] 그대로')
         if not options:
             if snapshot_sold_out(snap):
                 # 한 계정으로만 산 경우(주문 지정 계정 등)도 상품 전체 품절 표시면 확정 품절 — 다시 돌려도 같다

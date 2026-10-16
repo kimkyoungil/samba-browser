@@ -64,8 +64,8 @@ TWO_WEEKS_BUTTON = 'ribbonToggleButton1511'
 # 2주보다 넓은 빠른 선택 '1개월'(141)·'3개월'(153) — 리본 단추 열거로 확인(2026-10-16: 15~16일 전 주문이 2주 목록에 없어 not_found)
 WIDER_PERIOD_BUTTONS = ('ribbonToggleButton141', 'ribbonToggleButton153')
 WIDE_ENOUGH_DAYS = 25
-# 상태 탭 '전체보기' — 신규주문 탭만 보면 송장·배송 단계로 넘어간 주문이 안 나온다(2026-10-16)
-ALL_STATES_BUTTON = 'O전체보기'
+# 상태 탭 '신규주문' — 사용자 지시 2026-10-16: EMP 는 신규주문 탭 주문만 처리한다(전체보기 금지)
+NEW_ORDERS_BUTTON = 'O신규주문'
 SEARCH_BUTTON = 'OrderSearchBT'
 KEYWORD_BOX = 'OrderKeyword'
 # 취소 확인 창은 30초 뒤 스스로 실행된다 — 여유를 두고 기다린다
@@ -271,6 +271,15 @@ class PywinautoEmpUi:
         self._refresh()
         if GRID_ID not in self._index:
             raise AdapterRetry(ExportFail.BLOCKED, 'EMP 주문관리 그리드가 화면에 없다')
+        if not PywinautoEmpUi._new_tab_set:
+            # 이전 실행이 남긴 '전체보기' 탭이면 신규주문 탭으로 되돌린다 — 처리 대상은 신규주문 탭 주문만이다
+            try:
+                self._invoke(NEW_ORDERS_BUTTON)
+                time.sleep(self._poll_s * 2)
+                PywinautoEmpUi._new_tab_set = True
+                log.info('EMP 상태 탭을 신규주문으로 맞췄다')
+            except AdapterRetry as e:
+                log.warning('EMP 신규주문 탭 전환 실패: %s', e)
 
     # ---- 그리드 ----
     def rows(self) -> list[GridRow]:
@@ -423,11 +432,10 @@ class PywinautoEmpUi:
             if start is not None and (today - start).days >= WIDE_ENOUGH_DAYS:
                 log.info('EMP 검색 기간을 넓혔다(%s): %s 부터', name, start)
                 try:
-                    self._invoke(ALL_STATES_BUTTON)
+                    self._invoke(NEW_ORDERS_BUTTON)
                     time.sleep(self._poll_s * 2)
-                    log.info('EMP 상태 탭을 전체보기로 바꿨다')
                 except AdapterRetry as e:
-                    log.warning('EMP 전체보기 전환 실패: %s', e)
+                    log.warning('EMP 신규주문 탭 전환 실패: %s', e)
                 return True
         return False
 
@@ -450,6 +458,7 @@ class PywinautoEmpUi:
         raise AdapterRetry(ExportFail.NOT_FOUND, 'EMP 그리드에 그 주문번호가 없다')
 
     _controls_dumped = False
+    _new_tab_set = False
 
     def _dump_controls_once(self, order_no: str) -> None:
         """주문을 못 찾을 때 EMP 화면의 컨트롤(자동화 id·종류·글자)을 한 번만 로그로 남긴다 — 상태 필터 등 검색 조건이 어디 있는지

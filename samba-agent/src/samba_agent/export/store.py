@@ -218,7 +218,9 @@ class ExportQueue:
         with self._immediate():
             row = self._db.execute(
                 f"SELECT * FROM export_requests WHERE status='pending' AND next_at<=? "
-                f"AND target IN ({marks}) ORDER BY (target LIKE '%\\_cancel' ESCAPE '\\'), "
+                # 못 찾음 재시도는 맨 뒤 — 39건이 38초씩 계속 돌아 새 취소 434건이 14시간째 못 집혔다(2026-10-16)
+                f"AND target IN ({marks}) ORDER BY (coalesce(fail_reason, '') = 'not_found'), "
+                "(target LIKE '%\\_cancel' ESCAPE '\\'), "
                 '(fail_reason IS NOT NULL), '
                 'CASE WHEN fail_reason IS NULL THEN created_at ELSE updated_at END, id LIMIT 1',
                 (now, *targets),

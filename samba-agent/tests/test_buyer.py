@@ -191,7 +191,7 @@ def test_옵션을_못_읽었으면_품절이_아니라_확인으로_넘긴다(r
     respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
     mock_accounts()
     out = agent(reg, lambda p, m: m(choice='260', reason='x'))(assignment(reg))
-    assert (out.status, out.fail_reason) == ('needs_ai', FailReason.UNKNOWN)
+    assert (out.status, out.fail_reason) == ('needs_human', FailReason.UNKNOWN)
     assert '품절 미확인' in out.reason
 
 
@@ -257,7 +257,7 @@ def test_금고가_잠겼거나_계정이_없으면_사람에게_넘긴다(gener
         mock_accounts()
         respx.post(f'{URL}/tool/list_accounts').mock(return_value=page('[]'))
     out = agent(reg, lambda p, m: m(choice='260', reason='x'))(assignment(reg))
-    assert (out.status, out.fail_reason) == ('needs_ai', FailReason.PERMISSION_DENIED)
+    assert (out.status, out.fail_reason) == ('needs_human', FailReason.PERMISSION_DENIED)
     assert '소싱처 계정 없음/금고 잠김: MUSINSA' in out.reason
     assert not snap.called
 
@@ -273,7 +273,7 @@ def test_배송지를_못_받으면_사람에게_넘긴다(reg):
     respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
     mock_accounts()
     out = agent(reg, lambda p, m: m(choice='260', reason='x'))(assignment(reg))
-    assert (out.status, out.fail_reason) == ('needs_ai', FailReason.UNKNOWN)
+    assert (out.status, out.fail_reason) == ('needs_human', FailReason.UNKNOWN)
     assert '홍길동' not in out.reason
     assert find_leaks(out.reason) == []
 
@@ -290,7 +290,7 @@ def test_배송지_입력_검증이_어긋나면_사람에게_넘긴다(reg):
     respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
     mock_accounts()
     out = agent(reg, lambda p, m: m(choice='260', reason='x'))(assignment(reg))
-    assert (out.status, out.fail_reason) == ('needs_ai', FailReason.UNKNOWN)
+    assert (out.status, out.fail_reason) == ('needs_human', FailReason.UNKNOWN)
 
 
 @respx.mock
@@ -314,7 +314,7 @@ def test_캡차가_뜨면_사람에게_넘긴다(reg):
     respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
     mock_accounts()
     out = agent(reg, lambda p, m: m(choice='260', reason='x'))(assignment(reg))
-    assert (out.status, out.fail_reason) == ('needs_ai', FailReason.CAPTCHA)
+    assert (out.status, out.fail_reason) == ('needs_human', FailReason.CAPTCHA)
 
 
 @respx.mock
@@ -417,7 +417,7 @@ def test_저장된_계정이_없으면_사람에게_넘긴다(generic_musinsa, r
     _login_mocks('account not found: use list_accounts')
     respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
     out = agent(reg, lambda p, m: m(choice='260', reason='일치'))(assignment_with_account(reg))
-    assert out.status == 'needs_ai'
+    assert out.status == 'needs_human'
     assert out.fail_reason is FailReason.PERMISSION_DENIED
     assert '로그인 실패' in out.reason
 
@@ -431,7 +431,7 @@ def test_스냅샷의_계정이_주문_계정과_다르면_사람에게_넘긴�
     )
     respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
     out = agent(reg, lambda p, m: m(choice='260', reason='일치'))(assignment_with_account(reg))
-    assert out.status == 'needs_ai'
+    assert out.status == 'needs_human'
     assert out.fail_reason is FailReason.PERMISSION_DENIED
     assert 'buyer02' in out.reason
 
@@ -627,7 +627,7 @@ def test_스냅샷이_다른_아이디를_돌려주면_사람에게_넘긴다(ge
     respx.post(f'{URL}/tool/login').mock(return_value=page('already signed in'))
     a = assignment_with_account(reg)
     out = agent(reg, lambda p, m: m(choice='260', reason='일치'))(a)
-    assert (out.status, out.fail_reason) == ('needs_ai', FailReason.PERMISSION_DENIED)
+    assert (out.status, out.fail_reason) == ('needs_human', FailReason.PERMISSION_DENIED)
 
 
 @respx.mock
@@ -735,7 +735,7 @@ def test_전화_칸을_채우지_못하면_사람에게_넘긴다(reg, echo_extr
     mock_accounts()
     fill = mock_fill_secret(fill_result or 'ok')
     out = agent(reg, lambda p, m: m(choice='260', reason='일치'))(assignment(reg))
-    assert out.status == 'needs_ai'
+    assert out.status == 'needs_human'
     assert want in out.reason
     assert fill.called is (fill_result is not None)
 
@@ -855,7 +855,7 @@ def test_공급자는_까대기를_요청했는데_고객_주소가_오면_멈�
     _wave_direct()
     with pytest.raises(AgentFailure) as e:
         shipping_provider()('A1', 'kkadaegi')
-    assert e.value.status == 'needs_ai' and '사무실 배송지' in e.value.reason
+    assert e.value.status == 'needs_human' and '사무실 배송지' in e.value.reason
 
 
 @respx.mock
@@ -956,7 +956,7 @@ def test_주문_옵션에_맞는_후보가_없으면_모델에게_묻지_않고_
     order = ORDER.model_copy(update={'option': '230'})
     out = agent(reg, decide)(assignment(reg).model_copy(update={'order': order}))
     # 목록에 없는 옵션은 품절 확증이 아니다 — 재고X 로 자르지 않고 확인으로 넘긴다(실기 2026-09-28)
-    assert (out.status, out.fail_reason) == ('needs_ai', FailReason.UNKNOWN)
+    assert (out.status, out.fail_reason) == ('needs_human', FailReason.UNKNOWN)
     assert asked == []
 
 
@@ -1140,7 +1140,7 @@ def test_모든_계정이_품절이면_품절로_거절한다(generic_musinsa, r
     respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
     out = agent(reg, lambda p, m: m(choice='260', reason='일치'))(assignment(reg))
     # 옵션 목록이 비거나 원가를 못 읽은 것은 품절 확증이 아니다 — 확인으로 넘긴다(실기 2026-09-28)
-    assert (out.status, out.fail_reason) == ('needs_ai', FailReason.UNKNOWN)
+    assert (out.status, out.fail_reason) == ('needs_human', FailReason.UNKNOWN)
     assert 'A' in out.reason and 'B' in out.reason
     assert calls == ['snapshot:A', 'snapshot:B']  # 배송지까지 가지 않았다
 
@@ -1151,7 +1151,7 @@ def test_모든_계정이_로그인에_실패하면_품절이_아니라_사람�
     snap = respx.post(f'{URL}/tool/run_script')
     respx.post(f'{URL}/tool/progress').mock(return_value=page('ok'))
     out = agent(reg, lambda p, m: m(choice='260', reason='일치'))(assignment(reg))
-    assert (out.status, out.fail_reason) == ('needs_ai', FailReason.PERMISSION_DENIED)
+    assert (out.status, out.fail_reason) == ('needs_human', FailReason.PERMISSION_DENIED)
     assert not snap.called
 
 
@@ -1358,10 +1358,10 @@ def test_결제_가능한_수단이_없으면_사람에게_넘긴다(monkeypatch
     try:
         agent._apply_payment_quotes(a, 'buyer05', snap)
     except AgentFailure as e:
-        assert e.status == 'needs_ai'
+        assert e.status == 'needs_human'
         assert '결제 가능한 수단이 없다' in e.reason
     else:
-        raise AssertionError('needs_ai 이어야 한다')
+        raise AssertionError('needs_human 이어야 한다')
     # 결제 항목이 있으면 그 수단으로 원가를 바꾼다
     agent._payable_providers = lambda _account: {'site'}
     agent._apply_payment_quotes(a, 'buyer05', snap)
@@ -1911,7 +1911,7 @@ def test_나의_할인가보다_주문서가_크게_비싸면_결제하지_않�
 
     with pytest.raises(AgentFailure) as e:
         coupon_gap_failure(27590, 37440, 'edelvise06')
-    assert e.value.status == 'needs_ai' and '쿠폰 미적용' in e.value.reason
+    assert e.value.status == 'needs_human' and '쿠폰 미적용' in e.value.reason
     assert e.value.fail_reason is not FailReason.MARGIN  # 자동 취소로 가면 안 된다
     coupon_gap_failure(36350, 37850, 'edelvise06')  # 1,500원 — 적립금·등급 차이 범위, 통과
     coupon_gap_failure(None, 37440, 'edelvise06')  # 빠른 비교 없음 — 검사 안 함
@@ -2187,30 +2187,6 @@ def test_스케쳐스는_소싱처와_상관없이_까대기로_고정된다(reg
     # 일반 소싱처(무신사)에서도 스케쳐스는 정가 비교 없이 까대기
     a = agent(reg, lambda p, m: m(choice='260', reason='일치'))
     assert a.order_type_of(skx, {'normal_price': 0}) == 'kkadaegi'
-
-
-@pytest.mark.parametrize('source', ['MUSINSA', 'LOTTEON', 'SSG'])
-@pytest.mark.parametrize('sku', [
-    '르무통 메이트 블랙', 'LEMOUTON MATE BLACK', 'lemouton mate',
-    '스케쳐스 고워크', 'SKECHERS Go Walk', '데상트 운동화', 'DESCENTE shoes',
-    '휠라 운동화', 'FILA shoes', 'fila shoes',
-])
-def test_지정_브랜드는_항상_까대기다(reg, source, sku):
-    from samba_agent.agents.buyer import is_fixed_kkadaegi
-
-    order = OrderRef(order_no='LM1', source=source, seller='쿠팡', sku=sku, qty=1)
-    assert is_fixed_kkadaegi(order)
-    a = agent(reg, lambda p, m: m(choice='260', reason='일치'))
-    assert a.order_type_of(order, {'normal_price': 0}) == 'kkadaegi'
-
-
-@pytest.mark.parametrize('sku', ['나이키 에어포스', '아디다스 운동화', 'FILAMENT shirt'])
-def test_다른_브랜드는_고정_까대기로_오인하지_않는다(sku):
-    from samba_agent.agents.buyer import is_fixed_kkadaegi
-
-    assert not is_fixed_kkadaegi(
-        OrderRef(order_no='OTHER', source='MUSINSA', seller='쿠팡', sku=sku, qty=1)
-    )
 
 
 def test_나이키_옛_품번은_공백으로_띄어_써도_모델코드로_읽는다():

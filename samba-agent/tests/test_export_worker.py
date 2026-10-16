@@ -306,6 +306,7 @@ def test_집은_주문이_화면에_없으면_나중에_다시_한다(queue):
 
 
 def test_집은_주문을_끝내_못_찾으면_실패로_끝낸다(queue, monkeypatch):
+    monkeypatch.setattr('samba_agent.export.worker.NOT_FOUND_RETRY_S', 0)
     adapter = FakeBatch(present=())
     queue.enqueue('A1', 'shopmine', 1000, 0)
     w = batch_worker(queue, adapter, retry_delay_s=0, max_attempts=2)
@@ -475,7 +476,7 @@ def test_취소_연동은_주문이_지금도_취소_상태일_때만_실행한�
 
 def test_취소_연동이_화면에_없으면_30분_뒤에_다시_본다(queue):
     # 실기 2026-10-15: 60초마다 되풀이되는 취소 연동 388건이 기입을 굶겼다 — 취소만 길게 미룬다
-    from samba_agent.export.worker import CANCEL_NOT_FOUND_RETRY_S
+    from samba_agent.export.worker import CANCEL_NOT_FOUND_RETRY_S, NOT_FOUND_RETRY_S
 
     adapter = FakeAdapter({})
     req = queue.enqueue('C1', 'emp_cancel', 0, 0)
@@ -483,4 +484,5 @@ def test_취소_연동이_화면에_없으면_30분_뒤에_다시_본다(queue):
     assert w._retry_delay_for(req, ExportFail.NOT_FOUND) == CANCEL_NOT_FOUND_RETRY_S
     assert w._retry_delay_for(req, ExportFail.BLOCKED) == 0
     fill = queue.enqueue('A1', 'emp', 1000, 0)
-    assert w._retry_delay_for(fill, ExportFail.NOT_FOUND) == 0
+    # 기입도 못 찾으면 10분 뒤에 다시 본다(60초마다 보면 같은 건을 찾느라 취소·다른 일이 굶는다, 2026-10-16)
+    assert w._retry_delay_for(fill, ExportFail.NOT_FOUND) == NOT_FOUND_RETRY_S

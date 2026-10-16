@@ -51,6 +51,8 @@ class _Outcome:
 NOT_FOUND_GIVE_UP_S = 24 * 3600
 # 취소 연동이 화면에서 주문을 못 찾았을 때 다시 보기까지의 최소 간격(기입을 굶기지 않게)
 CANCEL_NOT_FOUND_RETRY_S = 30 * 60
+# 기입·샵마인이 화면에서 주문을 못 찾았을 때 다시 보는 간격 — 60초마다 보면 같은 건을 계속 찾느라 다른 일이 굶는다(2026-10-16)
+NOT_FOUND_RETRY_S = 10 * 60
 # 취소 묶음 한 번에 넘기는 최대 주문 수
 CANCEL_BATCH_MAX = 30
 
@@ -206,6 +208,8 @@ class ExportWorker:
         """
         if reason is ExportFail.NOT_FOUND and req.target.endswith('_cancel'):
             return max(self._retry_delay_s, CANCEL_NOT_FOUND_RETRY_S)
+        if reason is ExportFail.NOT_FOUND:
+            return max(self._retry_delay_s, NOT_FOUND_RETRY_S)
         return self._retry_delay_s
 
     def _alert_auth(self, target: str, detail: str) -> None:

@@ -141,7 +141,9 @@ export function installWebstoreHook(deps: WebstoreHookDeps): WebstoreHook {
     }
   }
   enableAddButtons()
-  new MutationObserver(enableAddButtons).observe(document.documentElement, {
+  // 프리로드는 HTML 파싱 전에 돌아 document.documentElement 가 아직 null 이다 — observe(null) 이 던지면
+  // 프리로드 전체가 죽어 클릭 가로채기까지 안 걸린다(2026-10-18 실기). document 는 항상 있는 Node 라 이것을 본다
+  new MutationObserver(enableAddButtons).observe(document, {
     subtree: true,
     childList: true,
     attributes: true,

@@ -10,7 +10,7 @@ import { join, sep } from 'node:path'
 import type { Settings } from '../../shared/settings'
 import type { ExtensionDto, ExtensionError, ExtensionSource } from '../../shared/extensions'
 import { pickIconPath, readIconDataUrl, resolveExtensionName } from './import-sources'
-import { resolveActionIconPath, resolveOptionsPath, resolvePopupPath } from './action'
+import { isSidePanelPopup, resolveActionIconPath, resolveOptionsPath, resolvePopupPath } from './action'
 import { tr } from '../i18n'
 
 export type { ExtensionDto, ExtensionError, ExtensionSource }
@@ -49,6 +49,8 @@ export interface ExtensionManifest {
   actionIconPath: string | null
   /** 아이콘을 눌렀을 때 띄울 팝업 문서(없으면 null) */
   popupPath: string | null
+  /** popupPath 가 side_panel.default_path 에서 온 것인가(폭을 고정해 띄운다) */
+  sidePanel: boolean
   /** 팝업이 없을 때 새 탭으로 여는 옵션 페이지(없으면 null) */
   optionsPath: string | null
   /** `__MSG_…__` 를 풀 때 쓰는 default_locale */
@@ -91,6 +93,7 @@ export function parseManifest(raw: unknown): ExtensionManifest {
     iconPath: pickIconPath(o.icons),
     actionIconPath: resolveActionIconPath(o),
     popupPath: resolvePopupPath(o),
+    sidePanel: isSidePanelPopup(o),
     optionsPath: resolveOptionsPath(o),
     defaultLocale: typeof o.default_locale === 'string' ? o.default_locale : undefined
   }
@@ -324,6 +327,7 @@ export class ExtensionManager {
         readIconDataUrl(resolved, manifest.actionIconPath) ??
         readIconDataUrl(resolved, manifest.iconPath),
       ...(manifest.popupPath === null ? {} : { popup: manifest.popupPath }),
+      ...(manifest.sidePanel ? { sidePanel: true } : {}),
       ...(manifest.optionsPath === null ? {} : { optionsPage: manifest.optionsPath })
     }
   }

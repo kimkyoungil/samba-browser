@@ -16,6 +16,7 @@ import {
   popupBounds,
   POPUP_DEFAULT_HEIGHT,
   POPUP_DEFAULT_WIDTH,
+  SIDE_PANEL_SIZE,
   type PopupSize
 } from './action'
 
@@ -25,6 +26,8 @@ export interface ExtensionPopupOpenInput {
   url: string
   session: Session
   anchor: ExtensionAnchorDto
+  /** 사이드 패널 문서면 선호 크기를 무시하고 SIDE_PANEL_SIZE 로 띄운다 */
+  sidePanel?: boolean
 }
 
 export interface ExtensionPopupDeps {
@@ -117,7 +120,10 @@ export class ExtensionPopupHost {
     this.view = view
     this.openId = input.id
     this.anchor = input.anchor
-    this.size = { width: POPUP_DEFAULT_WIDTH, height: POPUP_DEFAULT_HEIGHT }
+    const sidePanel = input.sidePanel === true
+    this.size = sidePanel
+      ? { ...SIDE_PANEL_SIZE }
+      : { width: POPUP_DEFAULT_WIDTH, height: POPUP_DEFAULT_HEIGHT }
     const wc = view.webContents
     // 팝업은 그 확장의 문서 안에서만 움직인다. 바깥 주소로 넘어가려 하면 막는다 —
     // 팝업 창은 탭과 달리 주소 표시줄이 없어 사용자가 어디에 있는지 알 수 없고,
@@ -142,7 +148,9 @@ export class ExtensionPopupHost {
     })
     // 문서가 원하는 크기를 알려 오면 그 값으로 창을 맞춘다.
     // 신호가 오지 않는 문서라면 기본 크기(360×420)로 그대로 떠 있는다
+    // 사이드 패널 문서는 폭을 스스로 정하지 않아 선호 크기가 최소 폭으로 나온다 — 고정 크기를 유지한다
     wc.on('preferred-size-changed', (_e, preferred) => {
+      if (sidePanel) return
       this.setSize(preferred.width, preferred.height)
     })
     // 팝업 밖(웹페이지·앱 UI)을 누르면 포커스를 잃는다 — 크롬처럼 그때 닫는다.

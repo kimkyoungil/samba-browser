@@ -31,6 +31,8 @@ export interface ExtensionDto {
    * MV3 는 action.default_popup, MV2 는 browser_action/page_action.default_popup 이다
    */
   popup?: string
+  /** popup 이 side_panel.default_path 에서 온 문서면 true — 폭 400·높이 상한으로 띄운다 */
+  sidePanel?: boolean
   /** 팝업이 없는 확장을 눌렀을 때 새 탭으로 여는 옵션 페이지(options_ui.page 또는 options_page) */
   optionsPage?: string
 }

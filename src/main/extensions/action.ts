@@ -19,6 +19,14 @@ export const POPUP_MAX_HEIGHT = 600
 export const POPUP_DEFAULT_WIDTH = 360
 export const POPUP_DEFAULT_HEIGHT = 420
 
+/**
+ * 사이드 패널 문서를 팝업 자리에 띄울 때의 크기. 패널 문서는 폭을 스스로 정하지 않아(크롬이 패널 폭을 준다)
+ * 선호 크기 측정이 최소 폭(150px 안팎)으로 나와 가로 스크롤이 생겼다(IG Sorter 2026-10-18).
+ * 크롬 사이드 패널의 기본 폭에 맞추고, 높이는 팝업 상한을 다 쓴다(패널 안에서 세로 스크롤)
+ */
+export const SIDE_PANEL_WIDTH = 400
+export const SIDE_PANEL_SIZE: PopupSize = { width: SIDE_PANEL_WIDTH, height: POPUP_MAX_HEIGHT }
+
 /** 툴바 버튼과 팝업 사이 여백(px) */
 const POPUP_GAP = 6
 
@@ -90,6 +98,14 @@ export function resolvePopupPath(raw: unknown): string | null {
   if (popup) return popup
   const sidePanel = record(record(raw)?.side_panel)
   return sidePanel ? normalizeDocumentPath(sidePanel.default_path) : null
+}
+
+/** 팝업 자리에 띄우는 문서가 사이드 패널 문서인가(default_popup 이 없어 side_panel 로 내려간 경우) */
+export function isSidePanelPopup(raw: unknown): boolean {
+  const action = pickActionSection(raw)
+  if (action && normalizeDocumentPath(action.default_popup)) return false
+  const sidePanel = record(record(raw)?.side_panel)
+  return !!sidePanel && normalizeDocumentPath(sidePanel.default_path) !== null
 }
 
 /**

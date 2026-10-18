@@ -58,6 +58,7 @@ describe('확장 manifest 검증', () => {
       iconPath: null,
       actionIconPath: null,
       popupPath: null,
+      sidePanel: false,
       optionsPath: null,
       defaultLocale: undefined
     })
@@ -324,6 +325,7 @@ describe('ExtensionManager', () => {
       iconPath: null,
       actionIconPath: null,
       popupPath: null,
+      sidePanel: false,
       optionsPath: null,
       defaultLocale: undefined
     })

@@ -13,7 +13,9 @@ import {
   POPUP_MIN_WIDTH,
   resolveActionIconPath,
   resolveOptionsPath,
-  resolvePopupPath
+  resolvePopupPath,
+  isSidePanelPopup,
+  SIDE_PANEL_SIZE
 } from '../src/main/extensions/action'
 import { parseManifest } from '../src/main/extensions/manager'
 import type { ExtensionAnchorDto } from '../src/shared/extensions'
@@ -119,6 +121,17 @@ describe('resolvePopupPath / resolveOptionsPath — 눌렀을 때 무엇을 열�
     ).toBe('popup.html')
     // 폴더 밖을 노리는 값은 받지 않는다
     expect(resolvePopupPath({ side_panel: { default_path: '../x.html' } })).toBeNull()
+  })
+
+  it('사이드 패널 문서는 고정 폭(크롬 패널 폭)·높이 상한으로 띄운다 — 선호 크기가 최소 폭으로 나오기 때문', () => {
+    expect(isSidePanelPopup({ action: {}, side_panel: { default_path: 'side.html' } })).toBe(true)
+    expect(isSidePanelPopup({ action: { default_popup: 'popup.html' }, side_panel: { default_path: 'side.html' } })).toBe(false)
+    expect(isSidePanelPopup({ action: { default_popup: 'popup.html' } })).toBe(false)
+    expect(isSidePanelPopup({ side_panel: { default_path: '../x.html' } })).toBe(false)
+    expect(SIDE_PANEL_SIZE).toEqual({ width: 400, height: POPUP_MAX_HEIGHT })
+    const m = parseManifest({ name: 'IG', version: '1', manifest_version: 3, action: {}, side_panel: { default_path: 'side.html' } })
+    expect(m.popupPath).toBe('side.html')
+    expect(m.sidePanel).toBe(true)
   })
 
   it('options_ui.page 가 options_page 보다 우선이다', () => {

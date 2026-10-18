@@ -1531,7 +1531,8 @@ export function registerIpc(
           id,
           url: extensionPopupUrl(id, item.popup),
           session: ses,
-          anchor
+          anchor,
+          sidePanel: item.sidePanel === true
         })
         return { kind: 'popup', open }
       }

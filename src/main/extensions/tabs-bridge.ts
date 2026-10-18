@@ -90,7 +90,13 @@ export function isActiveTabId(wcId: number): boolean {
   return provider.tabs().some((t) => t.active && t.wc.id === wcId)
 }
 
-/** 탭·창 동작 하나. ses 는 호출한 확장 문서(서비스워커)의 세션 */
+/** 다운로드 id — chrome.downloads.download 가 돌려주는 번호(세션 수명 동안 증가) */
+let downloadSeq = 0
+
+/**
+ * 탭·창 동작 하나. ses 는 호출한 확장 문서(서비스워커)의 세션.
+ * captureVisibleTab 처럼 비동기인 것은 Promise 를 돌려준다(ipcMain.handle 이 기다린다)
+ */
 export function runTabsOp(op: string, raw: unknown, ses: Session, extensionId: string): unknown {
   if (!provider) return null
   const p = provider
@@ -136,6 +142,59 @@ export function runTabsOp(op: string, raw: unknown, ses: Session, extensionId: s
         if (t) p.close(t.wc)
       }
       return true
+    }
+    // ---- 범용 안전망(preload/chrome-shim.ts)이 쓰는 op ----
+    case 'duplicate': {
+      const t = byId(d.tabId) ?? activeOne
+      if (!t) return null
+      const wc = p.create(t.tab.url, t.profile, true)
+      return wc ? toChromeTab(wc, all.length, true) : null
+    }
+    case 'goBack':
+    case 'goForward': {
+      const t = (d.tabId === undefined || d.tabId === null ? activeOne : byId(d.tabId)) ?? null
+      if (!t) return null
+      try {
+        if (op === 'goBack') t.wc.navigationHistory.goBack()
+        else t.wc.navigationHistory.goForward()
+      } catch {
+        return null
+      }
+      return true
+    }
+    case 'highlight': {
+      const ids = Array.isArray(d.tabIds) ? d.tabIds : [d.tabIds]
+      const t = byId(ids[0])
+      if (t) p.activate(t.wc)
+      return { id: WINDOW_ID, focused: true, incognito: false, type: 'normal', state: 'normal', alwaysOnTop: false }
+    }
+    case 'captureVisibleTab': {
+      // 지금 보이는 탭의 그림 — 스크린샷 확장이 쓴다. data URL(PNG)
+      if (!activeOne) return null
+      return activeOne.wc
+        .capturePage()
+        .then((img) => img.toDataURL())
+        .catch(() => null)
+    }
+    case 'download': {
+      // chrome.downloads.download — 웹 주소만, 저장 위치·파일명은 앱의 다운로드 처리에 맡긴다
+      const url = typeof d.url === 'string' ? d.url : ''
+      if (!/^https?:\/\//i.test(url)) return null
+      try {
+        ses.downloadURL(url)
+      } catch {
+        return null
+      }
+      return typeof d.id === 'number' ? d.id : ++downloadSeq
+    }
+    case 'openOptionsPage': {
+      const manifest = (ses.extensions?.getExtension?.(extensionId) ?? ses.getExtension?.(extensionId))?.manifest as
+        | { options_ui?: { page?: string }; options_page?: string }
+        | undefined
+      const page = manifest?.options_ui?.page ?? manifest?.options_page
+      if (!page) return null
+      const wc = p.create(`chrome-extension://${extensionId}/${page.replace(/^\/+/, '')}`, p.profileOf(ses), true)
+      return wc ? toChromeTab(wc, all.length, true) : null
     }
     case 'windowGet':
       return {

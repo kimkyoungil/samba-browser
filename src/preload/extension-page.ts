@@ -6,6 +6,7 @@
 //   update({url}) 는 팝업을 이동시킨다. 크롬처럼 "사용자가 보고 있는 탭"을 가리키게 앱 탭으로 바꾼다
 // 실제 처리는 메인이 한다 — 이 파일은 호출만 넘긴다.
 import { contextBridge, ipcRenderer } from 'electron'
+import { chromeShim } from './chrome-shim'
 
 const CHANNEL = 'samba-ext-page'
 
@@ -13,6 +14,21 @@ const invoke = (api: string, op: string, details: unknown): Promise<unknown> =>
   ipcRenderer.invoke(CHANNEL, api, op, details)
 
 export function installExtensionPageApi(): void {
+  installLegacyPageApi()
+  // 범용 안전망(chrome-shim.ts) — 문서 쪽은 메인이 보내는 이벤트가 없어 구독은 비워 둔다
+  contextBridge.executeInMainWorld({
+    func: chromeShim,
+    args: [
+      (op: string, details: unknown) => invoke('tabs', op, details),
+      () => {},
+      (op: string, details: unknown) => ipcRenderer.send('samba-ext-action', op, details),
+      { context: 'page' }
+    ]
+  })
+}
+
+/** 애드픽·샵백 때 만든 쿠키·탭·창 보충(범용 안전망보다 먼저 깔린다) */
+function installLegacyPageApi(): void {
   contextBridge.executeInMainWorld({
     func: (call: (api: string, op: string, details: unknown) => Promise<unknown>): void => {
       type Cb = (v: unknown) => void

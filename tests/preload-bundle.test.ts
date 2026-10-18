@@ -75,6 +75,21 @@ describe('page-constants 는 shared 원본과 동기화되어야 한다', () => 
   })
 })
 
+describe('out/preload/extension-sw.js 번들 — chrome-shim 을 page.js 와 공유해도 청크로 쪼개지면 안 된다', () => {
+  const SW_BUNDLE = resolve(__dirname, '../out/preload/extension-sw.js')
+  if (!existsSync(SW_BUNDLE)) {
+    it('번들이 존재해야 한다', () => {
+      throw new Error('out/preload/extension-sw.js 번들이 없습니다. 먼저 pnpm build 를 실행하세요')
+    })
+  } else {
+    it('공용 청크를 require 하지 않고 chrome-shim 본체를 품고 있다', () => {
+      const code = readFileSync(SW_BUNDLE, 'utf-8')
+      expect(code).not.toMatch(/require\(["'][^"']*chunks/)
+      expect(code).toContain('actionClicked')
+    })
+  }
+})
+
 describe('out/preload/page.js 번들', () => {
   // 번들이 없다고 조용히 skip 하면 CI 가 이 검증 없이 그냥 통과해버린다.
   // 번들이 없으면 명시적으로 실패시켜 pnpm build 실행을 강제한다
@@ -86,6 +101,10 @@ describe('out/preload/page.js 번들', () => {
     it('공용 청크를 require 하지 않는다', () => {
       const code = readFileSync(BUNDLE, 'utf-8')
       expect(code).not.toMatch(/require\(["'][^"']*chunks/)
+    })
+
+    it('chrome-shim 본체를 품고 있다(확장 문서 안전망)', () => {
+      expect(readFileSync(BUNDLE, 'utf-8')).toContain('actionClicked')
     })
 
     it("'electron' 외의 require 가 없다", () => {

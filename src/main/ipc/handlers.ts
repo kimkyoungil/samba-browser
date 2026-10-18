@@ -1543,7 +1543,18 @@ export function registerIpc(
         w.tabs.create({ url: extensionPopupUrl(id, item.optionsPage), extension: true })
         return { kind: 'options', open: false }
       }
-      return { kind: 'none', open: false }
+      // 팝업도 옵션도 없으면 크롬처럼 chrome.action.onClicked 를 보낸다(범용 안전망 chrome-shim 이 받아 쏜다).
+      // 세션의 모든 워커에 가므로 확장 id 를 실어 자기 몫만 받게 한다
+      const activeWc = w.tabs.active()?.view.webContents
+      const tab = activeWc
+        ? { id: activeWc.id, index: 0, windowId: 0, active: true, highlighted: true, pinned: false, incognito: false, url: activeWc.getURL(), title: activeWc.getTitle(), status: 'complete' }
+        : undefined
+      const targets = new Set([...(activeWc ? [activeWc.session] : []), session.defaultSession])
+      for (const ses of targets) {
+        if (!sessionWithExtension(id, [ses])) continue
+        sendExtensionTabEvent(ses, 'actionClicked', { extensionId: id, tab })
+      }
+      return { kind: 'clicked', open: false }
     }
   )
   handleFromRendererWin(IPC.extPopupClose, (w) => popupHosts.get(w.id)?.close())

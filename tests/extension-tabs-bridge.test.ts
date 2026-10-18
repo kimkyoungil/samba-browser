@@ -117,3 +117,43 @@ describe('openTabFromExtension — 팝업이 연 새 창(로그인 페이지)을
     expect(provider.create).not.toHaveBeenCalled()
   })
 })
+
+describe('runTabsOp — 범용 안전망(chrome-shim)이 쓰는 op', () => {
+  it('duplicate 는 같은 주소로 새 탭을 연다', () => {
+    const tab = runTabsOp('duplicate', { tabId: 11 }, ses, EXT) as { url: string }
+    expect(provider.create).toHaveBeenCalledWith('https://www.musinsa.com/products/1', 'default', true)
+    expect(tab.url).toBe('https://www.musinsa.com/products/1')
+  })
+
+  it('goBack 은 지정 탭(없으면 보는 탭)의 이력을 뒤로 돌린다', () => {
+    const goBack = vi.fn()
+    ;(list[1].wc as unknown as { navigationHistory: unknown }).navigationHistory = { goBack, goForward: vi.fn() }
+    expect(runTabsOp('goBack', {}, ses, EXT)).toBe(true)
+    expect(goBack).toHaveBeenCalled()
+  })
+
+  it('highlight 는 첫 탭을 활성화하고 창 정보를 돌려준다', () => {
+    const w = runTabsOp('highlight', { tabIds: [11] }, ses, EXT) as { id: number }
+    expect(provider.activate).toHaveBeenCalledWith(list[0].wc)
+    expect(w.id).toBe(WINDOW_ID)
+  })
+
+  it('captureVisibleTab 은 보는 탭의 그림을 data URL 로 준다', async () => {
+    ;(list[1].wc as unknown as { capturePage: unknown }).capturePage = vi.fn(async () => ({ toDataURL: () => 'data:image/png;base64,AA==' }))
+    await expect(runTabsOp('captureVisibleTab', {}, ses, EXT)).resolves.toBe('data:image/png;base64,AA==')
+  })
+
+  it('download 은 웹 주소만 세션 다운로드로 보내고 번호를 돌려준다', () => {
+    const downloadURL = vi.fn()
+    const s = { downloadURL } as unknown as Session
+    expect(runTabsOp('download', { url: 'https://a/x.jpg', id: 3 }, s, EXT)).toBe(3)
+    expect(downloadURL).toHaveBeenCalledWith('https://a/x.jpg')
+    expect(runTabsOp('download', { url: 'file:///C:/x' }, s, EXT)).toBeNull()
+  })
+
+  it('openOptionsPage 는 manifest 의 옵션 문서를 확장 주소로 연다', () => {
+    const s = { extensions: { getExtension: () => ({ manifest: { options_ui: { page: 'options.html' } } }) } } as unknown as Session
+    const tab = runTabsOp('openOptionsPage', {}, s, EXT) as { url: string }
+    expect(tab.url).toBe(`chrome-extension://${EXT}/options.html`)
+  })
+})

@@ -41,10 +41,10 @@ export interface ExtensionDto {
  * 툴바 아이콘을 눌렀을 때 실제로 벌어진 일.
  * - popup: 팝업 문서를 띄웠거나(open=true) 이미 떠 있어 닫았다(open=false)
  * - options: 옵션 페이지를 새 탭으로 열었다
- * - none: 팝업도 옵션 페이지도 없어 아무 일도 하지 않았다
- *   (크롬이라면 chrome.action.onClicked 가 불릴 자리인데 Electron 이 지원하지 않는다)
+ * - clicked: 팝업도 옵션 페이지도 없어 크롬처럼 chrome.action.onClicked 를 확장에 보냈다
+ * - none: 보낼 곳도 없었다
  */
-export type ExtensionActionKind = 'popup' | 'options' | 'none'
+export type ExtensionActionKind = 'popup' | 'options' | 'clicked' | 'none'
 
 export interface ExtensionActionResult {
   kind: ExtensionActionKind

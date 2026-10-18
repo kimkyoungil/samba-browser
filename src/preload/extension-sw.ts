@@ -5,6 +5,7 @@
 // 실제 쿠키 읽기·쓰기는 메인 프로세스(extensions/cookies-bridge)가 확장의 세션 쿠키 저장소로 하고,
 // 여기서는 호출만 넘긴다. 메인은 manifest 에 cookies 권한이 있는 확장만 받아 준다.
 import { contextBridge, ipcRenderer } from 'electron'
+import { chromeShim } from './chrome-shim'
 
 const CHANNEL = 'samba-ext-cookies'
 
@@ -388,6 +389,13 @@ contextBridge.executeInMainWorld({
     }
   },
   args: [invokeTabs, subscribeNav, notifyAction, notifyReady]
+})
+
+// 범용 안전망(chrome-shim.ts) — 위의 확장별 보충이 다 깔린 뒤에 돈다. 없는 네임스페이스를 크롬 모양으로 채우고,
+// 아이콘 클릭(actionClicked)을 action.onClicked 로 전달하며, 그래도 없는 이름은 Proxy 가 받는다
+contextBridge.executeInMainWorld({
+  func: chromeShim,
+  args: [invokeTabs, subscribeNav, notifyAction, { context: 'sw' }]
 })
 
 // 워커 오류 보고 — 확장 백그라운드가 어디서 죽는지 앱 로그에 남긴다(실기 2026-09-28: 삼바웨이브 워커가 하루 451번 다시 떴다)

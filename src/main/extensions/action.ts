@@ -77,11 +77,19 @@ export function normalizeDocumentPath(raw: unknown): string | null {
   return path
 }
 
-/** 액션의 default_popup(MV3 action / MV2 browser_action) 상대 경로. 없으면 null */
+/**
+ * 아이콘을 눌렀을 때 띄울 문서의 상대 경로.
+ * 액션의 default_popup(MV3 action / MV2 browser_action)이 우선이고, 없으면 `side_panel.default_path` 로 내려간다 —
+ * 크롬은 사이드 패널을 옆에 붙박이로 열지만 Electron 에는 chrome.sidePanel 이 없어 아무것도 안 떴다
+ * (IG Sorter 2026-10-18). 같은 문서를 팝업 자리에 띄우면 콘텐츠 스크립트와의 메시지는 그대로 통한다.
+ * 둘 다 없으면 null
+ */
 export function resolvePopupPath(raw: unknown): string | null {
   const action = pickActionSection(raw)
-  if (!action) return null
-  return normalizeDocumentPath(action.default_popup)
+  const popup = action ? normalizeDocumentPath(action.default_popup) : null
+  if (popup) return popup
+  const sidePanel = record(record(raw)?.side_panel)
+  return sidePanel ? normalizeDocumentPath(sidePanel.default_path) : null
 }
 
 /**

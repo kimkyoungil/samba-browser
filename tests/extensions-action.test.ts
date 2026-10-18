@@ -109,6 +109,18 @@ describe('resolvePopupPath / resolveOptionsPath — 눌렀을 때 무엇을 열�
     expect(resolvePopupPath({ name: 'x' })).toBeNull()
   })
 
+  it('default_popup 이 없고 side_panel.default_path 만 있으면 그 문서를 팝업 자리에 연다(IG Sorter)', () => {
+    expect(resolvePopupPath({ action: { default_icon: 'i.png' }, side_panel: { default_path: 'side.html' } })).toBe(
+      'side.html'
+    )
+    // default_popup 이 있으면 그쪽이 우선이다
+    expect(
+      resolvePopupPath({ action: { default_popup: 'popup.html' }, side_panel: { default_path: 'side.html' } })
+    ).toBe('popup.html')
+    // 폴더 밖을 노리는 값은 받지 않는다
+    expect(resolvePopupPath({ side_panel: { default_path: '../x.html' } })).toBeNull()
+  })
+
   it('options_ui.page 가 options_page 보다 우선이다', () => {
     expect(resolveOptionsPath({ options_ui: { page: 'ui.html' }, options_page: 'old.html' })).toBe(
       'ui.html'

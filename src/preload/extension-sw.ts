@@ -366,6 +366,19 @@ contextBridge.executeInMainWorld({
         onRemoved: noEvent
       })
     }
+    // chrome.sidePanel — Electron 에 없다. IG Sorter 는 서비스워커 첫 줄에서 setPanelBehavior 를 불러
+    // TypeError 로 죽고 뒤의 메시지 리스너가 하나도 안 걸렸다(2026-10-18). 패널 문서는 앱이 팝업 자리에
+    // 띄우므로(action.ts resolvePopupPath) 여기서는 호출만 받아 주면 된다
+    if (!c.sidePanel) {
+      const ok = (_d?: unknown, cb?: unknown): unknown => reply(Promise.resolve(undefined), cb)
+      set(c, 'sidePanel', {
+        setPanelBehavior: ok,
+        getPanelBehavior: (cb?: unknown) => reply(Promise.resolve({ openPanelOnActionClick: true }), cb),
+        setOptions: ok,
+        getOptions: (_d?: unknown, cb?: unknown) => reply(Promise.resolve({ enabled: true }), cb),
+        open: ok
+      })
+    }
     // 크롬 프로필 계정 — 앱에는 없다. 빈 값을 준다
     if (!c.identity) {
       set(c, 'identity', {

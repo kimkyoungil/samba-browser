@@ -52,6 +52,26 @@ Electron 39 는 크롬 확장 API 를 일부만 구현한다(2026-10-18 실측, 
    띄운다(별도 userData). `ses.serviceWorkers.on('console-message')`, `ses.registerPreloadScript({type:'service-worker'|'frame'})`,
    `ses.extensions.loadExtension(폴더)`, `webContents.executeJavaScript` 로 상태를 읽는다. 10/18 탐침: `scratchpad/ig-probe`, `msg-probe`.
 
+## 2026-10-18 검증(별도 Electron 탐침, 확장 8종) — 안전망 없음 → 있음
+
+| 확장 | 없음 | 있음 |
+|---|---|---|
+| IG Sorter 2.4.2 | SW 첫 줄 사망(`sidePanel.setPanelBehavior`) | 오류 0 |
+| uBlock Origin Lite | SW 사망(`onRemoved`) | 오류 0 |
+| 포인트백 for ADPICK | 문서 `windows.WINDOW_ID_CURRENT` 사망 | 오류 0 |
+| Dark Reader 4.9.133 | SW 사망(`onRemoved`), 팝업 "Loading" 멈춤 | 오류 0, 팝업 렌더(버튼 25) |
+| SponsorBlock 6.1.6 | `"sync" is not available`, isReady 타임아웃 | 오류 0 |
+| 구글 번역 2.0.18 | SW 사망(`contextMenus.onClicked`) | SW 살아 있음. offscreen 문서 연결 실패 메시지만 남음(Electron offscreen 미동작) |
+| 샵백(djjj…) | SW 사망(`webNavigation.onBeforeNavigate`) | SW 살아 있음(탐침엔 다리가 없어 문서가 탭 id 를 못 받음 — 앱에선 다리 있음) |
+| vidIQ 3.228.0 | SW 사망(`onRemoved`) | SW 살아 있음. `reading 'filter'` 1건 남음(탐침엔 cookies 다리 없음 — 앱에서 `[ext-console]` 로 재확인) |
+
+재현: `scratchpad/verify/main.cjs <확장폴더…>` (`--no-shim` 이면 기준선). 결과는 `result-{plain,shim}.json` 과 stderr 의 `Extension Error` 블록을 합쳐 본다.
+
+### storage.sync
+Electron 의 `chrome.storage.sync` 는 객체는 있지만 호출 즉시 `"sync" is not available in this instance of Chrome` 로 거부한다.
+shim 이 sync·managed 를 **local 의 `__sync__:`·`__managed__:` 접두사 구역**으로 바꿔 두고, `storage.onChanged` 의 local 변경 중
+접두사 키는 areaName `sync`/`managed` 로 바꿔 전달한다. 같은 확장이 local 과 sync 에 같은 키를 써도 충돌하지 않는다.
+
 ## 알려진 한계
 
 - 배지(setBadgeText)는 메인에 알리기만 하고 아직 툴바에 그리지 않는다.
@@ -59,3 +79,5 @@ Electron 39 는 크롬 확장 API 를 일부만 구현한다(2026-10-18 실측, 
 - contextMenus 는 등록만 받고 실제 메뉴에 나오지 않는다(onClicked 는 앱이 `contextMenuClicked` 를 보내면 쏠 수 있게 준비만).
 - webRequest 리스너는 등록만 받는다(차단·수정은 안 된다). 광고 차단은 declarativeNetRequest(네이티브) 쪽만 동작한다.
 - 콘텐츠 스크립트 월드는 보충하지 못한다(위 5).
+- offscreen 문서(`chrome.offscreen.createDocument`)는 네이티브 객체는 있으나 실제로 문서가 뜨지 않는 듯하다(구글 번역이 "Receiving end does not exist").
+- 공용 모듈 복제: 프리로드가 공유하는 모듈은 `electron.vite.config.ts` 의 `duplicateSharedPreloadModules` 가 엔트리마다 복제한다(chrome-shim 만 등록). 새 공용 모듈을 만들면 거기 정규식에 추가한다.

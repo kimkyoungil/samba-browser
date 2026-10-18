@@ -88,13 +88,21 @@ export function chromeShim(
         new Promise((resolve) => resolve(typeof value === 'function' ? (value as Fn)(...a) : value)),
         lastFn(a)
       )
-  /** 앱 다리로 가는 메서드. 인자 가공이 필요하면 map 을 준다(마지막 콜백은 빼고 준다) */
+  /**
+   * 앱 다리로 가는 메서드. 인자 가공이 필요하면 map 을 준다(마지막 콜백은 빼고 준다).
+   * 다리가 없거나 실패하면(null·거부) fallback 으로 끝낸다 — 배열을 기대하는 호출(query 류)이 undefined.forEach 로 죽지 않게
+   */
   const bridged =
-    (op: string, map?: (a: unknown[]) => unknown): Fn =>
+    (op: string, map?: (a: unknown[]) => unknown, fallback?: unknown): Fn =>
     (...a: unknown[]) => {
       const cb = lastFn(a)
       const args = cb ? a.slice(0, -1) : a
-      return reply(call(op, map ? map(args) : (args[0] ?? {})), cb)
+      return reply(
+        call(op, map ? map(args) : (args[0] ?? {}))
+          .catch(() => null)
+          .then((r) => (r === null || r === undefined ? fallback : r)),
+        cb
+      )
     }
 
   /** 크롬 이벤트 모양의 레지스트리. dispatch 로 우리가 쏜다 */
@@ -194,10 +202,12 @@ export function chromeShim(
     ungroup: fixed(undefined),
     getSelected: (...a: unknown[]) =>
       reply(
-        call('query', { active: true }).then((r) => (Array.isArray(r) ? r[0] : undefined)),
+        call('query', { active: true })
+          .catch(() => null)
+          .then((r) => (Array.isArray(r) ? r[0] : undefined)),
         lastFn(a)
       ),
-    getAllInWindow: bridged('query', () => ({})),
+    getAllInWindow: bridged('query', () => ({}), []),
     // MV2 전용 — MV3 scripting 이 있어도 코드 문자열은 못 돌린다. 빈 결과로 끝낸다
     executeScript: fixed([]),
     insertCSS: fixed(undefined),
@@ -215,11 +225,16 @@ export function chromeShim(
       const cb = lastFn(a)
       const q = obj(a[0])
       return reply(
-        call('query', q).then((r) => {
-          if (Array.isArray(r)) return r
-          if (!native) return []
-          return Promise.resolve(native(q)).then((n) => (Array.isArray(n) ? n : []))
-        }),
+        call('query', q)
+          .catch(() => null)
+          .then((r) => {
+            if (Array.isArray(r)) return r
+            if (!native) return []
+            return Promise.resolve(native(q)).then(
+              (n) => (Array.isArray(n) ? n : []),
+              () => []
+            )
+          }),
         cb
       )
     })
@@ -275,11 +290,113 @@ export function chromeShim(
   if (!c.browserAction) set(c, 'browserAction', action)
   if (!c.pageAction) set(c, 'pageAction', action)
 
-  // ---- storage: sync·session·managed 가 없으면 local 로 ----------------------------
+  // ---- storage: sync·managed 는 local 의 접두사 구역으로 -------------------------------
+  // Electron 은 storage.sync 객체를 주지만 쓰는 순간 '"sync" is not available in this instance of Chrome' 로 던진다
+  // (실측 2026-10-18: Dark Reader·SponsorBlock 설정 로드가 여기서 멈춤). 크롬에서도 sync 는 프로필 저장소일 뿐이라
+  // local 안의 `__sync__:` 접두사 구역으로 대신한다. session 은 네이티브가 동작한다(없으면 local)
   const storage = obj(c.storage)
   if (storage.local) {
-    for (const area of ['sync', 'session', 'managed']) if (!storage[area]) set(storage, area, storage.local)
-    if (!storage.onChanged) set(storage, 'onChanged', ev('storage.onChanged'))
+    const local = storage.local as Dict
+    const areaOnLocal = (prefix: string): Dict => {
+      const pk = (k: string): string => prefix + k
+      const unpk = (k: string): string => k.slice(prefix.length)
+      const mine = (k: string): boolean => k.startsWith(prefix)
+      const lget = (keys: unknown): Promise<Dict> =>
+        Promise.resolve((local.get as Fn)(keys)).then((r) => obj(r))
+      const allMine = (): Promise<Dict> =>
+        lget(null).then((all) => {
+          const out: Dict = {}
+          for (const k of Object.keys(all)) if (mine(k)) out[unpk(k)] = all[k]
+          return out
+        })
+      const get = (keys: unknown): Promise<Dict> => {
+        if (keys === null || keys === undefined) return allMine()
+        const defaults: Dict = {}
+        let names: string[]
+        if (typeof keys === 'string') names = [keys]
+        else if (Array.isArray(keys)) names = keys.filter((k): k is string => typeof k === 'string')
+        else {
+          names = Object.keys(obj(keys))
+          for (const k of names) defaults[k] = (keys as Dict)[k]
+        }
+        return lget(names.map(pk)).then((r) => {
+          const out: Dict = { ...defaults }
+          for (const k of Object.keys(r)) if (mine(k)) out[unpk(k)] = r[k]
+          return out
+        })
+      }
+      const setItems = (items: unknown): Promise<void> => {
+        const src = obj(items)
+        const dst: Dict = {}
+        for (const k of Object.keys(src)) dst[pk(k)] = src[k]
+        return Promise.resolve((local.set as Fn)(dst)).then(() => undefined)
+      }
+      const remove = (keys: unknown): Promise<void> => {
+        const names = typeof keys === 'string' ? [keys] : Array.isArray(keys) ? keys : []
+        return Promise.resolve((local.remove as Fn)(names.map((k) => pk(String(k))))).then(() => undefined)
+      }
+      const clear = (): Promise<void> =>
+        lget(null).then((all) => remove(Object.keys(all).filter(mine).map(unpk)))
+      const area: Dict = {
+        get: (...a: unknown[]) => reply(get(typeof a[0] === 'function' ? null : a[0]), lastFn(a)),
+        set: (...a: unknown[]) => reply(setItems(a[0]), lastFn(a)),
+        remove: (...a: unknown[]) => reply(remove(a[0]), lastFn(a)),
+        clear: (...a: unknown[]) => reply(clear(), lastFn(a)),
+        getBytesInUse: fixed(0),
+        setAccessLevel: fixed(undefined),
+        getKeys: (...a: unknown[]) => reply(allMine().then((m) => Object.keys(m)), lastFn(a)),
+        QUOTA_BYTES: 102400,
+        QUOTA_BYTES_PER_ITEM: 8192,
+        MAX_ITEMS: 512,
+        MAX_WRITE_OPERATIONS_PER_HOUR: 1800,
+        MAX_WRITE_OPERATIONS_PER_MINUTE: 120,
+        onChanged: ev('storage.' + prefix + 'onChanged')
+      }
+      return area
+    }
+    const SYNC_PREFIX = '__sync__:'
+    const MANAGED_PREFIX = '__managed__:'
+    set(storage, 'sync', areaOnLocal(SYNC_PREFIX))
+    set(storage, 'managed', areaOnLocal(MANAGED_PREFIX))
+    if (!storage.session) set(storage, 'session', local)
+    // onChanged — local 에서 온 접두사 키 변경은 areaName 'sync'/'managed' 로 바꿔 전달한다
+    const nativeChanged = obj(storage.onChanged)
+    if (typeof nativeChanged.addListener === 'function') {
+      const origAdd = (nativeChanged.addListener as Fn).bind(nativeChanged)
+      const wrapped = new WeakMap<Fn, Fn>()
+      set(nativeChanged, 'addListener', (fn: Fn) => {
+        if (typeof fn !== 'function') return
+        const w = (changes: unknown, area: unknown): void => {
+          if (area !== 'local') {
+            fn(changes, area)
+            return
+          }
+          const ch = obj(changes)
+          const plain: Dict = {}
+          const sync: Dict = {}
+          const managed: Dict = {}
+          for (const k of Object.keys(ch)) {
+            if (k.startsWith(SYNC_PREFIX)) sync[k.slice(SYNC_PREFIX.length)] = ch[k]
+            else if (k.startsWith(MANAGED_PREFIX)) managed[k.slice(MANAGED_PREFIX.length)] = ch[k]
+            else plain[k] = ch[k]
+          }
+          if (Object.keys(plain).length) fn(plain, 'local')
+          if (Object.keys(sync).length) {
+            fn(sync, 'sync')
+            ev('storage.' + SYNC_PREFIX + 'onChanged').dispatch(sync)
+          }
+          if (Object.keys(managed).length) fn(managed, 'managed')
+        }
+        wrapped.set(fn, w)
+        origAdd(w)
+      })
+      if (typeof nativeChanged.removeListener === 'function') {
+        const origRemove = (nativeChanged.removeListener as Fn).bind(nativeChanged)
+        set(nativeChanged, 'removeListener', (fn: Fn) => origRemove(wrapped.get(fn) ?? fn))
+      }
+    } else {
+      set(storage, 'onChanged', ev('storage.onChanged'))
+    }
   }
 
   // ---- runtime·extension 보충 --------------------------------------------------
@@ -604,14 +721,22 @@ export function chromeShim(
     openOrClosedShadowRoot: (el: unknown) => (obj(el).shadowRoot as unknown) ?? null
   }))
   if (!c.windows) {
-    const win = bridged('windowGet', (a) => obj(typeof a[0] === 'number' ? a[1] : a[0]))
+    // 다리가 없을 때 돌려줄 창 하나(앱은 창 하나로 보인다)
+    const ONE_WINDOW = { id: 0, focused: true, incognito: false, type: 'normal', state: 'normal', alwaysOnTop: false }
+    const win = bridged('windowGet', (a) => obj(typeof a[0] === 'number' ? a[1] : a[0]), ONE_WINDOW)
     set(c, 'windows', {
       WINDOW_ID_NONE: -1,
       WINDOW_ID_CURRENT: -2,
       get: win,
       getCurrent: win,
       getLastFocused: win,
-      getAll: (...a: unknown[]) => reply(call('windowGet', obj(a[0])).then((w) => [w]), lastFn(a)),
+      getAll: (...a: unknown[]) =>
+        reply(
+          call('windowGet', obj(a[0]))
+            .catch(() => null)
+            .then((w) => [w ?? ONE_WINDOW]),
+          lastFn(a)
+        ),
       // 새 창 대신 새 탭으로 연다(앱은 창 하나)
       create: (...a: unknown[]) => {
         const url = obj(a[0]).url
@@ -621,7 +746,7 @@ export function chromeShim(
           lastFn(a)
         )
       },
-      update: (...a: unknown[]) => reply(call('windowGet', {}), lastFn(a)),
+      update: bridged('windowGet', () => ({}), ONE_WINDOW),
       remove: fixed(undefined),
       onCreated: ev('windows.onCreated'),
       onRemoved: ev('windows.onRemoved'),

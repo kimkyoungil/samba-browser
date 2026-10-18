@@ -93,12 +93,48 @@ describe('chromeShim — 없는 네임스페이스를 크롬 모양으로 채운
     expect((chrome.storage as Dict).local).toBe((g.chrome as Dict).storage && ((g.chrome as Dict).storage as Dict).local)
   })
 
-  it('storage.sync·session·managed 가 없으면 local 을 가리킨다', () => {
+  it('storage.sync 는 local 의 __sync__: 구역을 쓴다(Electron 의 sync 는 쓰는 순간 던진다)', async () => {
     const { chrome } = install()
     const s = chrome.storage as Dict
-    expect(s.sync).toBe(s.local)
-    expect(s.session).toBe(s.local)
-    expect(s.managed).toBe(s.local)
+    const store: Dict = { plain: 1, '__sync__:theme': 'dark', '__sync__:n': 2 }
+    const local = s.local as Dict
+    local.get = vi.fn(async (keys: unknown) => {
+      if (keys === null) return { ...store }
+      const names = typeof keys === 'string' ? [keys] : (keys as string[])
+      const out: Dict = {}
+      for (const k of names) if (k in store) out[k] = store[k]
+      return out
+    })
+    local.set = vi.fn(async (items: Dict) => Object.assign(store, items))
+    local.remove = vi.fn(async (keys: string[]) => keys.forEach((k) => delete store[k]))
+    const sync = s.sync as Dict
+    expect(sync).not.toBe(local)
+    await expect((sync.get as (k: unknown) => Promise<unknown>)(['theme', 'missing'])).resolves.toEqual({ theme: 'dark' })
+    await expect((sync.get as (k: unknown) => Promise<unknown>)({ theme: 'light', size: 3 })).resolves.toEqual({ theme: 'dark', size: 3 })
+    await expect((sync.get as (k: unknown) => Promise<unknown>)(null)).resolves.toEqual({ theme: 'dark', n: 2 })
+    await (sync.set as (i: unknown) => Promise<unknown>)({ lang: 'ko' })
+    expect(store['__sync__:lang']).toBe('ko')
+    await (sync.remove as (k: unknown) => Promise<unknown>)('n')
+    expect('__sync__:n' in store).toBe(false)
+    await (sync.clear as () => Promise<unknown>)()
+    expect(Object.keys(store)).toEqual(['plain'])
+    expect(s.session).toBe(local)
+  })
+
+  it('storage.onChanged 는 접두사 키 변경을 areaName sync 로 바꿔 전달한다', () => {
+    const c = electronLikeChrome()
+    const origAdd = (c.storage as Dict).onChanged as { addListener: ReturnType<typeof vi.fn> }
+    const nativeAdd = origAdd.addListener
+    g.chrome = c
+    chromeShim(call as unknown as (op: string, d: unknown) => Promise<unknown>, (fn) => listeners.push(fn), notify as unknown as (op: string, d: unknown) => void, { context: 'sw' })
+    const s = (g.chrome as Dict).storage as Dict
+    const fn = vi.fn()
+    ;((s.onChanged as Dict).addListener as (f: unknown) => void)(fn)
+    // 네이티브에 등록된 래퍼를 꺼내 local 변경을 흉내 낸다
+    const wrapped = (nativeAdd.mock.calls[0] as unknown[])[0] as (c: unknown, a: string) => void
+    wrapped({ plain: { newValue: 1 }, '__sync__:theme': { newValue: 'dark' } }, 'local')
+    expect(fn).toHaveBeenCalledWith({ plain: { newValue: 1 } }, 'local')
+    expect(fn).toHaveBeenCalledWith({ theme: { newValue: 'dark' } }, 'sync')
   })
 
   it('콜백·Promise 두 모양을 다 받고 실패해도 던지지 않는다', async () => {

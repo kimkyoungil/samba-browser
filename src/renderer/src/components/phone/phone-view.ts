@@ -78,10 +78,10 @@ export function sortPhones(list: readonly PhoneDto[]): PhoneDto[] {
 
 /** 수동 조작 패드 버튼 — adb keyevent 이름과 i18n 키 */
 export const PHONE_PAD_KEYS = [
-  { key: 'BACK', labelKey: 'phone.pad.back' },
-  { key: 'HOME', labelKey: 'phone.pad.home' },
-  { key: 'APP_SWITCH', labelKey: 'phone.pad.recents' },
-  { key: 'POWER', labelKey: 'phone.pad.power' }
+  { key: 'back', labelKey: 'phone.pad.back' },
+  { key: 'home', labelKey: 'phone.pad.home' },
+  { key: 'recent', labelKey: 'phone.pad.recents' },
+  { key: 'power', labelKey: 'phone.pad.power' }
 ] as const
 
 export interface ViewRect {

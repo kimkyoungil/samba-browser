@@ -15,6 +15,7 @@ import {
   transportLabelKey
 } from '../src/renderer/src/components/phone/phone-view'
 import { PHONE_STATES, PHONE_TRANSPORTS, type PhoneDto, type PhoneState } from '../src/shared/phone'
+import { isPhoneKey } from '../src/main/phone/input'
 import ko from '../src/renderer/src/i18n/ko.json'
 import en from '../src/renderer/src/i18n/en.json'
 
@@ -164,5 +165,12 @@ describe('폰 i18n 키', () => {
       expect(koKeys).toContain(key)
       expect(enKeys).toContain(key)
     }
+  })
+})
+
+describe('수동 조작 패드 키', () => {
+  it('패드 버튼이 보내는 키 이름은 모두 메인이 받는 키다', () => {
+    // 대문자(HOME·APP_SWITCH)를 보내 메인이 알 수 없는 키로 거부했다 — 홈·최근 버튼이 먹통(실기 2026-10-20)
+    for (const { key } of PHONE_PAD_KEYS) expect(isPhoneKey(key)).toBe(true)
   })
 })

@@ -20,7 +20,12 @@ def sh(*a):
 def focused():
   out = subprocess.run([ADB, '-s', DEV, 'shell', 'dumpsys', 'window'], creationflags=0x08000000, capture_output=True, text=True, encoding='utf-8', errors='replace').stdout
   m = re.search(r'mCurrentFocus=.*?(\S+)\}', out)
-  return m.group(1) if m else ''
+  f = m.group(1) if m else ''
+  if not f or 'Responding' in (m.group(0) if m else ''):                                 # ANR 창·null 이면 맨 앞 액티비티로 판정
+    out = subprocess.run([ADB, '-s', DEV, 'shell', 'dumpsys', 'activity', 'activities'], creationflags=0x08000000, capture_output=True, text=True, encoding='utf-8', errors='replace').stdout
+    m = re.search(r'(?:topResumedActivity|mResumedActivity)[=:] ?ActivityRecord\{\S+ u0 (\S+)', out)
+    f = m.group(1) if m else f
+  return f
 
 def on_sales():
   return 'MySalesActivity' in focused()

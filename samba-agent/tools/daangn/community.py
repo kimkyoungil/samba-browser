@@ -6,6 +6,8 @@ from kbd import Kbd
 
 def dismiss_overlay(nodes):
   """후후 스팸 안내 등 다른 앱 오버레이가 덮으면 닫기(X) 또는 뒤로"""
+  dec = next((n for n in nodes if n['t'] in ('안 받을래요', '다음에 할게요', '괜찮아요', '나중에')), None)   # 알림 받기 등 안내 팝업은 거절
+  if dec: tap(dec['cx'], dec['cy'], 1.5); return True
   if any('후후' in n['t'] for n in nodes):
     x = [n for n in nodes if n['click'] and n['cy'] < sy(200) and n['cx'] > sx(850)]
     if x: tap(x[0]['cx'], x[0]['cy'], 1.5)

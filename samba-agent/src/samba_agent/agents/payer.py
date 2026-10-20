@@ -586,6 +586,30 @@ def _popups_and_active_tabs(list_tabs_output: str) -> tuple[list[dict[str, objec
     return fallback, set()
 
 
+_ORDER_FORM_URL_RE = re.compile(
+    r'order/order-form|order/checkout|order/orderform|pay\.ssg\.com/order|fashionplus\.co\.kr/order/\d+|hmall\.com/mo/oda/order'
+)
+
+
+def single_order_tab(list_tabs_output: str) -> str | None:
+    """list_tabs 출력에서 주문서(checkout) 주소의 일반 탭이 정확히 하나면 그 id. 없거나 여럿이면 None."""
+    try:
+        targets = json.loads(list_tabs_output)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    if not isinstance(targets, list):
+        return None
+    ids = [
+        str(t['id'])
+        for t in targets
+        if isinstance(t, dict)
+        and t.get('kind') == 'tab'
+        and t.get('id')
+        and _ORDER_FORM_URL_RE.search(str(t.get('url') or ''))
+    ]
+    return ids[0] if len(ids) == 1 else None
+
+
 def _pay_provider_from_host(url: str) -> str | None:
     """팝업 URL 호스트로 결제 앱을 고른다. 앱의 payProviderOfUrl(tools.ts)과 같은 표를 쓴다."""
     try:
@@ -1713,6 +1737,16 @@ class PayerAgent(AgentBase):
             payload['amount'] = amount
         if a.handoff.get('order_tab'):
             payload['tab'] = str(a.handoff.get('order_tab'))
+        elif script == 'checkout_enter_29cm' and not a.dry_run:
+            # 구매 핸드오프에 주문서 탭 id 가 빠진 경우(실기 2026-10-20 29CM 2770: no tab 4회) — 열린 탭 중
+            # 주문서(checkout) 주소가 하나뿐이면 그것을 쓴다. 여럿이면 짐작하지 않는다
+            try:
+                found_tab = single_order_tab(self.tool('list_tabs'))
+            except AgentFailure:
+                found_tab = None
+            if found_tab:
+                payload['tab'] = found_tab
+                self.note('결제창', f'핸드오프에 주문서 탭이 없어 열린 탭에서 찾았다({found_tab})')
         # 결제창 진입은 AI 수리 대상이 아니다 — 비밀번호 없는 간편결제(무신사페이 카드 등)는 '결제하기' 한 번에
         # 결제가 끝난다(실기 2026-09-24: 수리 시험 중 결제하기 클릭으로 실결제 발생). 실패하면 사람에게 넘긴다
         raw_enter = self.tool(

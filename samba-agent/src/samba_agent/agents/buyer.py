@@ -2879,11 +2879,18 @@ class BuyerAgent(AgentBase):
         """
         home = self._home()
         host = source_of(self.spec.name).login_host or urlparse(home).hostname or ''
+        cache: dict[str, set[str]] = self.__dict__.setdefault('_payable_cache', {})
         try:
             raw = self.tool('list_accounts', host=host)
         except AgentFailure:
-            return None
+            # 계정 비교 때 읽은 값이 있으면 그것을 쓴다 — 최종 단계 조회만 실패해 무신사머니가 빠지고
+            # 비교에서 이긴 계정이 '낼 수 없다'로 멈췄다(실기 2026-10-21 포이즌 2775·2776 card_missing)
+            return cache.get(f'{host}|{account}')
         found = parse_account_payments(raw, account)
+        if found is not None:
+            cache[f'{host}|{account}'] = set(found)
+        else:
+            found = cache.get(f'{host}|{account}')
         if found is not None and source_of(self.spec.name).direct_card:
             # 카드 직접 결제(H몰 롯데카드)는 키마스터 결제 비밀번호 없이 카드사 결제창에서 사람이 승인한다 — 계정이 있으면 낼 수 있다
             found = found | {DIRECT_CARD_PROVIDER}

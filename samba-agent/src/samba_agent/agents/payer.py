@@ -358,6 +358,13 @@ def order_form_mismatch(
     # (실기 2026-09-30 롯데온 포이즌: 색상·상품 모두 맞는데 상품명 단어 대조로 결제를 막았다)
     if any(len(w) >= 3 and re.sub(r'[^0-9a-z가-힣]', '', w.lower()) in compact_text for w in words):
         return None
+    # 마켓 상품명의 모델 코드는 앞에 숫자(사이즈·색 코드 '1200')가 붙기도 한다 — 숫자 접두를 뗀 코드(영문 섞인 8자 이상)가
+    # 주문서에 있으면 같은 상품이다(실기 2026-10-21 무신사 휠라 키즈 '1200FK261CD01X042100' ↔ 주문서 'FK261CD01X042100':
+    # 마켓명 '다이아나핑'(티니핑 오타)이라 단어로 못 맞춰 결제가 두 번 막혔다)
+    for tok in re.split(r'\s+', product_name.lower()):
+        core = re.sub(r'^\d+', '', re.sub(r'[^0-9a-z]', '', tok))
+        if len(core) >= 8 and re.search(r'[a-z]', core) and re.search(r'\d', core) and core in compact_text:
+            return None
     site_tokens = [
         re.sub(r'[^0-9a-z가-힣]', '', tok)
         for tok in re.split(r'\s+', (site_name or '').lower())

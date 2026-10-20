@@ -5,6 +5,7 @@
 """
 
 import functools
+import os
 import json
 import logging
 import signal
@@ -489,11 +490,14 @@ def main() -> None:
             wave, idle=lambda: not any(j.state in ('queued', 'running') for j in queue.live())
         )
         # 롯데ON 선물 주문 송장 — 카카오톡 알림톡으로만 온다. 20분마다 폰에서 읽어 삼바에 넣고 마켓으로 보낸다(사용자 2026-10-02)
-        start_lotteon_gift_tracking_loop(
-            wave,
-            idle=lambda: not any(j.state in ('queued', 'running') for j in queue.live()),
-            state_dir=settings.db_path.parent,
-        )
+        # 롯데ON 선물 송장(폰 카카오톡 읽기)은 기본 꺼짐 — 폰을 다른 자동화(당근 등록)와 같이 쓰면
+        # 카톡이 앞으로 튀어나와 충돌해 2026-10-20 사용자 지시로 끔. 필요하면 SAMBA_LOTTEON_GIFT_TRACKING=1
+        if os.environ.get('SAMBA_LOTTEON_GIFT_TRACKING') == '1':
+            start_lotteon_gift_tracking_loop(
+                wave,
+                idle=lambda: not any(j.state in ('queued', 'running') for j in queue.live()),
+                state_dir=settings.db_path.parent,
+            )
     bot = SambaBot(slack_app, worker, queue, settings, _diagnose_text)
 
     # 자동 수집 — 삼바웨이브 클라이언트가 있고 켜져 있을 때만 돈다. 슬랙이 없으면 스레드 없이 큐에만 쌓인다

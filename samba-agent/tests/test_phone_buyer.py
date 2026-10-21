@@ -43,6 +43,8 @@ def _alipay(amount: str) -> list[Node]:
 def _box(phone, approved: list[int], max_cny: float = 700.0) -> PhoneToolbox:
     def approve(krw: int) -> str:
         approved.append(krw)
+        # 실제 승인 뒤에는 알리페이 완료 화면(支付成功)이 뜬다 — 코드가 이걸 확인하고서야 결제됨으로 본다
+        phone._nodes = [*phone.nodes(), Node('支付成功', '', '', 300, 100)]
         return 'ok'
 
     return PhoneToolbox(phone, approve, max_cny=max_cny, rate=200.0, sleep=lambda s: None)
@@ -169,7 +171,11 @@ def test_免密支付_버튼을_눌렀는데_비밀번호_창이_뜨면_결제�
         phone._nodes = _alipay('¥279.00') + [Node('', '密码共6位，已输入0位', '', 359, 978)]
 
     phone.tap = tap  # type: ignore[method-assign]
-    tb = PhoneToolbox(phone, lambda krw: 'ok', max_cny=366, rate=200.0, sleep=lambda s: None)
+    def approve(krw):
+        phone._nodes = [*phone._nodes, Node('支付成功', '', '', 300, 100)]
+        return 'ok'
+
+    tb = PhoneToolbox(phone, approve, max_cny=366, rate=200.0, sleep=lambda s: None)
     out = tb.pay_free('唯品会', 279.0, 360, 1446)
     assert '결제 전' in out and not tb.state.paid
     assert '완료' in tb.pay('唯品会', 279.0) and tb.state.paid
@@ -277,3 +283,25 @@ def test_결제창까지_가면_표시해_다른_판매처로_넘어가지_않�
         assert e.paid and '넘어가지 않는다' in str(e)
     else:
         raise AssertionError('결제창까지 간 건은 paid 로 멈춰야 한다')
+
+
+def test_승인_응답이_ok여도_결제완료_화면이_안_뜨면_결제된_것으로_보지_않는다():
+    tb = PhoneToolbox(
+        FakePhone(ALIPAY_PKG, _alipay('¥468.00')),
+        lambda krw: 'ok',
+        max_cny=700.0,
+        rate=200.0,
+        sleep=lambda s: None,
+    )
+    assert '支付成功' in tb.pay('得物', 468.0)
+    assert not tb.state.paid and tb.state.uncertain
+
+
+def test_주문번호에_글자가_섞이면_기록하지_않는다():
+    approved: list[int] = []
+    tb = _box(FakePhone(ALIPAY_PKG, _alipay('¥214.20')), approved)
+    tb.pay('后浪潮品奥莱折扣店', 214.2)
+    assert '숫자' in tb.finish('미확인 - 주문번호 468 HJ4497 42.5')
+    assert tb.state.order_no is None
+    tb.finish('110214979999313854')
+    assert tb.state.order_no == '110214979999313854'

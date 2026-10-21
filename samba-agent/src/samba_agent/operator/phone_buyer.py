@@ -30,6 +30,7 @@ log = logging.getLogger(__name__)
 
 # 식화 화이트리스트 가게 — kream_shadow._SUP_ALLOW_NAMES 와 같은 이름. 唯品会·得物 은 플랫폼 단위 화이트리스트다
 # 唯品会 는 플랫폼 단위 화이트리스트(식화 _SUP_ALLOW_STORES) — 唯品会 앱 구매에서 shop='唯品会' 로 결제한다
+ALIPAY_PKG = 'com.eg.android.AlipayGphone'
 ALLOWED_SHOPS = ('后浪潮品奥莱折扣店', '品牌官方店', '唯品会', '得物')
 MAX_ACTIONS = 160
 WECHAT = 'com.tencent.mm'
@@ -285,6 +286,19 @@ class PhoneToolbox:
             if not succeeded:
                 self.state.uncertain = True
                 return f'결제 승인 응답: {out[:80]} — 결제됐는지 알 수 없다. 화면과 주문내역을 확인하라(재결제 금지).'
+        # 승인 응답이 ok 여도 결제창이 그대로면 결제되지 않은 것이다(실기 2026-10-21 A-SN248530069 ¥468) — 支付成功 을 확인한다
+        succeeded = False
+        for _ in range(6):
+            shown = ' '.join((n.text or n.desc or '') for n in self.phone.nodes())
+            focus = self._focused_activity()
+            # 알리페이 창이 닫혀 결제 앱으로 돌아갔거나 결제 완료 화면이면 결제된 것이다
+            if '支付成功' in shown or 'PaymentSuccess' in focus or self.phone.top_package() != ALIPAY_PKG:
+                succeeded = True
+                break
+            self.sleep(2)
+        if not succeeded:
+            self.state.uncertain = True
+            return '결제 승인 응답은 ok 인데 支付成功 이 안 뜬다 — 결제되지 않았을 수 있다. 화면·주문내역(待付款)을 확인하라(재결제 금지).'
         self.state.paid = True
         self.state.item_cny = float(price_cny)
         self.state.paid_cny = charge
@@ -432,9 +446,10 @@ class PhoneToolbox:
     def finish(self, order_no: str) -> str:
         if not self.state.paid:
             return '결제하지 않았다 — finish 는 결제 뒤에만.'
-        digits = re.sub(r'\D', '', order_no or '')
-        if not _ORDER_NO.match(digits):
-            return '주문번호는 숫자 12~25자리다 — 주문 상세의 订单编号 를 다시 읽어라.'
+        # 글자가 섞인 문장에서 숫자만 긁으면 가짜 번호가 된다(실기 2026-10-21 A-SN248530069: 설명 문장의 숫자가 주문번호로 기록됨)
+        digits = (order_no or '').strip()
+        if not digits.isdigit() or not _ORDER_NO.match(digits):
+            return '주문번호는 숫자 12~25자리만 적는다(설명·공백 금지) — 주문 상세의 订单编号 를 다시 읽어라.'
         self.state.order_no = digits
         return '기록했다. 끝내라.'
 

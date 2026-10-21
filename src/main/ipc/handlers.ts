@@ -1839,7 +1839,13 @@ export function registerIpc(
         openExternal: (url) => void shell.openExternal(url)
       })
   })
-  registerDaangnIpc({ handle: handleFromRenderer, service: daangn, repo: daangnRepo })
+  registerDaangnIpc({
+    handle: handleFromRenderer,
+    handleWin: (channel, fn) =>
+      handleFromRendererWin(channel, (entry, ...args) => fn(entry.win, ...(args as never)) as never),
+    service: daangn,
+    repo: daangnRepo
+  })
   daangn.start()
   // 숨김 창이 남아 있으면 마지막 앱 창을 닫아도 window-all-closed 가 오지 않아 앱이 안 꺼진다(좀비) —
   // 사용자 창이 모두 닫히면 뷰와 숨김 창을 정리한다

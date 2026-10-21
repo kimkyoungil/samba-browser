@@ -1,6 +1,7 @@
 // 당근 채팅함 IPC 등록. handlers.ts 가 이 함수 하나만 부르면 되도록 묶어 두었다.
 // electron 을 직접 import 하지 않고 등록 함수를 주입받아 테스트 가능하게 남긴다
 
+import type { BrowserWindow } from 'electron'
 import { IPC } from '../../shared/ipc'
 import {
   DAANGN_TEMPLATE_MAX,
@@ -15,6 +16,11 @@ import type { DaangnService } from './service'
 export interface DaangnIpcDeps {
   /** 렌더러 전용 invoke 채널 등록(발신자 검증 + {ok,data} 포장) */
   handle: <A extends unknown[], T>(channel: string, fn: (...args: A) => T | Promise<T>) => void
+  /** 발신자 창을 함께 넘기는 invoke 채널 등록 */
+  handleWin: <A extends unknown[], T>(
+    channel: string,
+    fn: (win: BrowserWindow, ...args: A) => T | Promise<T>
+  ) => void
   service: DaangnService
   repo: DaangnRepo
 }
@@ -42,7 +48,7 @@ function asBounds(v: unknown): DaangnBounds | null {
 }
 
 export function registerDaangnIpc(deps: DaangnIpcDeps): void {
-  const { handle, service, repo } = deps
+  const { handle, handleWin, service, repo } = deps
   handle(IPC.daangnAccountsList, (): DaangnAccountDto[] => service.snapshot().accounts)
   handle(IPC.daangnChannelsList, (): DaangnChannelDto[] => service.snapshot().channels)
   handle(IPC.daangnAccountAdd, (label: unknown) => service.addAccount(asText(label ?? '', 40)))
@@ -54,7 +60,10 @@ export function registerDaangnIpc(deps: DaangnIpcDeps): void {
   handle(IPC.daangnRoomOpen, (accountId: unknown, roomId: unknown) =>
     service.openRoom(asId(accountId), asText(roomId, 200))
   )
-  handle(IPC.daangnRoomBounds, (b: unknown) => service.setRoomBounds(asBounds(b)))
+  // 영역을 보낸 창을 알아야 여러 창 중 사용자가 보는 창에 뷰를 붙인다
+  handleWin(IPC.daangnRoomBounds, (win: BrowserWindow, b: unknown) =>
+    service.setRoomBounds(asBounds(b), win)
+  )
   handle(IPC.daangnRoomClose, () => service.closeRoom())
   handle(IPC.daangnRoomFill, (accountId: unknown, text: unknown) =>
     service.fillText(asId(accountId), asText(text, DAANGN_TEMPLATE_MAX))

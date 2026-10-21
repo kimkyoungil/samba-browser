@@ -116,6 +116,8 @@ export class DaangnService {
   private readonly pending = new Set<number>()
   /** 지금 앱 창에 붙어 있는 뷰의 계정 */
   private shownId: number | null = null
+  /** 영역을 마지막으로 보낸 앱 창 — 창이 여럿이어도 사용자가 보는 창에 뷰를 붙인다 */
+  private targetWin: BrowserWindow | null = null
 
   constructor(private readonly deps: DaangnServiceDeps) {}
 
@@ -232,7 +234,12 @@ export class DaangnService {
   }
 
   /** 오른쪽 영역의 위치·크기. null 이면(다른 화면·대화상자) 뷰를 접는다 */
-  setRoomBounds(bounds: DaangnBounds | null): void {
+  setRoomBounds(bounds: DaangnBounds | null, from?: BrowserWindow): void {
+    if (from) {
+      // 영역을 보낸 창이 대상이다. 다른 창이 화면을 떠나며 보낸 접기 요청은 무시한다
+      if (bounds) this.targetWin = from
+      else if (this.targetWin && this.targetWin !== from) return
+    }
     this.bounds = bounds
     if (!this.open) return
     if (bounds) this.showOpen()
@@ -270,7 +277,8 @@ export class DaangnService {
 
   private showOpen(): void {
     if (!this.open || !this.bounds) return
-    const target = this.deps.appWindow()
+    const target =
+      this.targetWin && !this.targetWin.isDestroyed() ? this.targetWin : this.deps.appWindow()
     if (!target) return
     // 앱 창에 붙은 뷰는 언제나 하나 — 다른 계정 뷰가 붙어 있으면 먼저 뗀다
     if (this.shownId !== null && this.shownId !== this.open.accountId) {

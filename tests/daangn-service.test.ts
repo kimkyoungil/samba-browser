@@ -479,4 +479,33 @@ describe('DaangnService', () => {
     await vi.advanceTimersByTimeAsync(3000)
     expect(svc.snapshot().accounts[0].unread).toBe(0)
   })
+
+  it('영역을 보낸 창에 뷰를 붙이고, 다른 창이 보낸 접기 요청은 무시한다(창이 여럿일 때)', async () => {
+    const a = repo.addAccount({ label: 'A', partitionPrefix: 'p-' })
+    const WIN2 = { id: 'win2', isDestroyed: () => false } as unknown as BrowserWindow
+    const OTHER = { id: 'other', isDestroyed: () => false } as unknown as BrowserWindow
+    const svc = make()
+    await svc.runTick()
+    await svc.relogin(a.id)
+    svc.setRoomBounds(BOUNDS, WIN2)
+    expect(views.get(a.id)?.shown.at(-1)?.target).toBe(WIN2)
+    svc.setRoomBounds(null, OTHER) // 다른 창이 화면을 떠나며 보낸 접기 — 보고 있는 창의 뷰는 그대로
+    expect(views.get(a.id)?.hides).toBe(0)
+    svc.setRoomBounds(null, WIN2)
+    expect(views.get(a.id)?.hides).toBe(1)
+  })
+
+  it('다시 로그인(QR) 화면은 영역이 먼저든 나중이든 앱 창에 붙는다', async () => {
+    const a = repo.addAccount({ label: 'A', partitionPrefix: 'p-' })
+    const svc = make()
+    await svc.runTick()
+    await svc.relogin(a.id)
+    svc.setRoomBounds(BOUNDS) // 렌더러는 relogin 응답 뒤에 영역을 보낸다
+    expect(views.get(a.id)?.loginOpened).toBeGreaterThan(0)
+    expect(views.get(a.id)?.shown.length).toBe(1)
+    // 이어지는 틱이 이 뷰를 다시 숨기거나 닫지 않는다
+    await svc.runTick()
+    expect(views.get(a.id)?.stopped).toBe(false)
+    expect(views.get(a.id)?.hides).toBe(0)
+  })
 })

@@ -1,6 +1,7 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
+import { Switch } from '@renderer/components/ui/switch'
 import { AccountPanel } from '@renderer/components/daangn/AccountPanel'
 import { ChannelList } from '@renderer/components/daangn/ChannelList'
 import { RoomPane } from '@renderer/components/daangn/RoomPane'
@@ -10,24 +11,67 @@ import { useDaangnStore } from '@renderer/stores/daangnStore'
 export function DaangnPage(): React.JSX.Element {
   const { t } = useTranslation()
   const load = useDaangnStore((s) => s.load)
-  const subscribe = useDaangnStore((s) => s.subscribe)
 
+  // 갱신 구독은 앱 전체에서 한 번(App.tsx) — 다른 화면에서도 알림 클릭이 이 화면으로 오게
   useEffect(() => {
     void load()
-    return subscribe()
-  }, [load, subscribe])
+  }, [load])
 
   return (
     <div className="flex h-full min-w-0 flex-col">
-      <div className="border-b border-[var(--line)] bg-white px-4 py-3">
-        <div className="text-[16px] font-semibold text-[var(--text)]">{t('daangn.title')}</div>
-        <div className="text-[12px] text-[var(--text2)]">{t('daangn.subtitle')}</div>
+      <div className="flex items-center gap-4 border-b border-[var(--line)] bg-white px-4 py-3">
+        <div className="min-w-0 flex-1">
+          <div className="text-[16px] font-semibold text-[var(--text)]">{t('daangn.title')}</div>
+          <div className="text-[12px] text-[var(--text2)]">{t('daangn.subtitle')}</div>
+        </div>
+        <DaangnToggles />
       </div>
       <div className="flex min-h-0 flex-1">
         <AccountPanel />
         <ChannelList />
         <RoomPane />
       </div>
+    </div>
+  )
+}
+
+// 기능 켜기·알림 켜기 — 설정에 따로 섹션을 만들지 않고 이 화면 머리글에 둔다
+function DaangnToggles(): React.JSX.Element | null {
+  const { t } = useTranslation()
+  const [enabled, setEnabled] = useState<boolean | null>(null)
+  const [notify, setNotify] = useState(true)
+
+  useEffect(() => {
+    void window.samba.settings.get().then((r) => {
+      if (!r.ok) return
+      setEnabled(r.data.daangnEnabled)
+      setNotify(r.data.daangnNotify)
+    })
+  }, [])
+
+  if (enabled === null) return null
+  return (
+    <div className="flex items-center gap-4 text-[12px] text-[var(--text)]">
+      <label className="flex items-center gap-1.5">
+        {t('daangn.enabled')}
+        <Switch
+          checked={enabled}
+          onCheckedChange={(v) => {
+            setEnabled(v)
+            void window.samba.settings.set({ daangnEnabled: v })
+          }}
+        />
+      </label>
+      <label className="flex items-center gap-1.5">
+        {t('daangn.notify')}
+        <Switch
+          checked={notify}
+          onCheckedChange={(v) => {
+            setNotify(v)
+            void window.samba.settings.set({ daangnNotify: v })
+          }}
+        />
+      </label>
     </div>
   )
 }

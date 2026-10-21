@@ -25,6 +25,7 @@ import { ResizeHandle } from '@renderer/components/layout/ResizeHandle'
 import { canResizeSidebar, sidebarWidthOf } from '@renderer/components/layout/sidebar-view'
 import { useVaultStore } from '@renderer/stores/vaultStore'
 import { useAuthStore } from '@renderer/stores/authStore'
+import { useDaangnStore } from '@renderer/stores/daangnStore'
 import { LoginGate } from '@renderer/components/layout/LoginGate'
 
 export default function App(): React.JSX.Element {
@@ -52,6 +53,9 @@ export default function App(): React.JSX.Element {
     void loadAuth()
     return subscribeAuth()
   }, [loadAuth, subscribeAuth])
+  // 당근 채팅함 갱신·알림 클릭 구독은 앱 전체에서 한 번
+  const subscribeDaangn = useDaangnStore((s) => s.subscribe)
+  useEffect(() => subscribeDaangn(), [subscribeDaangn])
   const refreshVaultState = useVaultStore((s) => s.refreshState)
   const subscribeCapture = useVaultStore((s) => s.subscribeCapture)
   const subscribePasswordUpdated = useVaultStore((s) => s.subscribePasswordUpdated)

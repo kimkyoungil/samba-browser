@@ -1355,7 +1355,9 @@
     "templatePlaceholder": "답변 내용 (최대 {{max}}자)",
     "moveUp": "위로",
     "moveDown": "아래로",
-    "close": "닫기"
+    "close": "닫기",
+    "notify": "새 메시지 알림",
+    "enabled": "당근 채팅 읽기"
   },
   "extensions": {
     "title": "확장",

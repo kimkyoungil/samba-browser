@@ -1355,7 +1355,9 @@
     "templatePlaceholder": "Reply text (up to {{max}} chars)",
     "moveUp": "Up",
     "moveDown": "Down",
-    "close": "Close"
+    "close": "Close",
+    "notify": "New message alerts",
+    "enabled": "Read Daangn chats"
   },
   "extensions": {
     "title": "Extensions",

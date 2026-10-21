@@ -1356,6 +1356,7 @@
     "moveUp": "Up",
     "moveDown": "Down",
     "close": "Close",
+    "tooNarrow": "The window is too narrow. Widen it or collapse the right panel to see the chat",
     "notify": "New message alerts",
     "enabled": "Read Daangn chats"
   },

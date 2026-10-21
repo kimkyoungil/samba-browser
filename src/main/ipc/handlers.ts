@@ -1825,6 +1825,12 @@ export function registerIpc(
     now: () => Date.now(),
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     partitionPrefix: () => workspace.partitionPrefix(),
+    // 지운 계정의 로그인 세션(쿠키 등)이 디스크에 남지 않게 한다
+    clearPartition: (partition) => {
+      const ses = session.fromPartition(partition)
+      void ses.clearStorageData().catch(() => undefined)
+      void ses.clearCache().catch(() => undefined)
+    },
     createView: ({ accountId, partition }) =>
       new DaangnAccountView({
         accountId,
@@ -1835,6 +1841,13 @@ export function registerIpc(
   })
   registerDaangnIpc({ handle: handleFromRenderer, service: daangn, repo: daangnRepo })
   daangn.start()
+  // 숨김 창이 남아 있으면 마지막 앱 창을 닫아도 window-all-closed 가 오지 않아 앱이 안 꺼진다(좀비) —
+  // 사용자 창이 모두 닫히면 뷰와 숨김 창을 정리한다
+  windows.onClosed((_entry, remaining) => {
+    if (remaining.length > 0) return
+    daangn.dispose()
+    if (daangnHidden && !daangnHidden.isDestroyed()) daangnHidden.destroy()
+  })
   onShutdown(() => {
     daangn.dispose()
     if (daangnHidden && !daangnHidden.isDestroyed()) daangnHidden.destroy()

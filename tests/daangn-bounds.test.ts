@@ -14,12 +14,14 @@ describe('hiddenBounds', () => {
 })
 
 describe('clampBounds', () => {
-  it('좁은 폭은 최소 폭으로, 음수 높이는 1 이상으로 보정한다', () => {
-    const b = clampBounds({ x: 10, y: 20, width: 300, height: -5 })
-    expect(b.width).toBe(MIN_ROOM_WIDTH)
-    expect(b.height).toBeGreaterThanOrEqual(1)
-    expect(b.x).toBe(10)
-    expect(b.y).toBe(20)
+  it('음수 높이는 1 이상으로 보정한다', () => {
+    const b = clampBounds({ x: 10, y: 20, width: 800, height: -5 })
+    expect(b?.height).toBeGreaterThanOrEqual(1)
+    expect(b?.x).toBe(10)
+    expect(b?.y).toBe(20)
+  })
+  it('최소 폭보다 좁으면 넓히지 않고 null(접기) — 옆 패널을 덮지 않는다', () => {
+    expect(clampBounds({ x: 10, y: 20, width: MIN_ROOM_WIDTH - 1, height: 500 })).toBeNull()
   })
   it('정상 값은 정수로 반올림해 그대로 둔다', () => {
     expect(clampBounds({ x: 100.4, y: 50.6, width: 900.2, height: 700.7 })).toEqual({

@@ -24,6 +24,26 @@ const NOTIFY_COOLDOWN_MS = 120_000
 const EMPTY_FIRST_READS_BASELINE = 3
 /** 임시 뷰가 목록을 그릴 때까지 기다리는 최대 횟수(1초 간격) */
 const TEMP_WAIT_TRIES = 10
+/** 읽기(scan) 한 번의 최대 시간 — 멈춘 페이지 하나가 전체 읽기 줄을 막지 못하게 */
+const SCAN_TIMEOUT_MS = 15_000
+/** 한 번의 읽기에서 개별 알림을 낼 최대 개수. 넘으면 요약 알림 하나 */
+const MAX_NOTIFY_PER_READ = 3
+
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error('시간 초과')), ms)
+    p.then(
+      (v) => {
+        clearTimeout(t)
+        resolve(v)
+      },
+      (e: unknown) => {
+        clearTimeout(t)
+        reject(e)
+      }
+    )
+  })
+}
 
 /** DaangnAccountView 의 공개 메서드 부분집합 — 시험에서 가짜로 바꿔 끼운다 */
 export interface AccountViewLike {
@@ -57,6 +77,8 @@ export interface DaangnServiceDeps {
   /** 계정을 만들 때의 작업공간 파티션 접두사(예: 'persist:ws1-') — 그때 한 번 정해 저장한다 */
   partitionPrefix: () => string
   createView: (a: { accountId: number; partition: string }) => AccountViewLike
+  /** 지운 계정의 세션 저장소(쿠키 등)를 지운다 */
+  clearPartition?: (partition: string) => void
 }
 
 interface OpenRoom {
@@ -85,6 +107,13 @@ export class DaangnService {
   private chain: Promise<void> = Promise.resolve()
   private queued = 0
   private lastEmitted = ''
+  private disposed = false
+  /** 마지막 요청 순번 — 방을 연달아 열 때 늦게 끝난 앞 요청이 뷰를 붙이지 못하게 */
+  private openSeq = 0
+  /** 방을 여는 중인 계정 — 틱이 그 뷰를 닫지 않는다 */
+  private readonly pending = new Set<number>()
+  /** 지금 앱 창에 붙어 있는 뷰의 계정 */
+  private shownId: number | null = null
 
   constructor(private readonly deps: DaangnServiceDeps) {}
 
@@ -92,12 +121,14 @@ export class DaangnService {
 
   /** 앱 시작 때 부른다. 계정이 1개 이상일 때만 타이머를 돌린다 */
   start(): void {
+    this.disposed = false
     if (this.deps.repo.listAccounts().length === 0) return
     this.ensureTimer()
     void this.runTick()
   }
 
   dispose(): void {
+    this.disposed = true
     this.clearTimer()
     this.stopAllViews()
   }
@@ -131,13 +162,20 @@ export class DaangnService {
   }
 
   removeAccount(id: number): void {
+    const partition = this.deps.repo.listAccounts().find((a) => a.id === id)?.partition
     this.views.get(id)?.stop()
     this.views.delete(id)
     this.channelsBy.delete(id)
     this.states.delete(id)
     this.prevUnread.delete(id)
+    this.emptyFirstReads.delete(id)
+    this.identity.delete(id)
+    delete this.lastReadAt[id]
     this.warm.delete(id)
+    this.pending.delete(id)
+    if (this.shownId === id) this.shownId = null
     if (this.open?.accountId === id) this.open = null
+    if (partition) this.deps.clearPartition?.(partition)
     this.deps.repo.removeAccount(id)
     if (this.deps.repo.listAccounts().length === 0) this.clearTimer()
     this.emit(true)
@@ -158,23 +196,36 @@ export class DaangnService {
   }
 
   private async showLogin(id: number): Promise<void> {
-    const view = await this.ensureView(id)
-    await view.openLogin()
-    this.selectedId = id
-    this.hideOtherThan(id)
-    this.open = { accountId: id, roomId: null }
-    this.showOpen()
+    const seq = ++this.openSeq
+    this.pending.add(id)
+    try {
+      const view = await this.ensureView(id)
+      await view.openLogin()
+      if (seq !== this.openSeq) return
+      this.selectedId = id
+      this.open = { accountId: id, roomId: null }
+      this.showOpen()
+    } finally {
+      this.pending.delete(id)
+    }
   }
 
   // --- 방 ------------------------------------------------------------------------
 
   async openRoom(accountId: number, roomId: string): Promise<void> {
-    const view = await this.ensureView(accountId)
+    const seq = ++this.openSeq
     this.selectedId = accountId
-    this.hideOtherThan(accountId)
-    await view.openRoom(roomId)
-    this.open = { accountId, roomId }
-    this.showOpen()
+    this.pending.add(accountId)
+    try {
+      const view = await this.ensureView(accountId)
+      await view.openRoom(roomId)
+      // 그 사이 다른 방을 눌렀으면(뒤 요청이 이긴다) 이 요청은 뷰를 붙이지 않는다
+      if (seq !== this.openSeq) return
+      this.open = { accountId, roomId }
+      this.showOpen()
+    } finally {
+      this.pending.delete(accountId)
+    }
   }
 
   /** 오른쪽 영역의 위치·크기. null 이면(다른 화면·대화상자) 뷰를 접는다 */
@@ -182,11 +233,11 @@ export class DaangnService {
     this.bounds = bounds
     if (!this.open) return
     if (bounds) this.showOpen()
-    else this.views.get(this.open.accountId)?.hide()
+    else this.hideShown()
   }
 
   closeRoom(): void {
-    if (this.open) this.views.get(this.open.accountId)?.hide()
+    this.hideShown()
     this.open = null
   }
 
@@ -197,18 +248,26 @@ export class DaangnService {
   async fillText(accountId: number, text: string): Promise<boolean> {
     if (!this.open || this.open.accountId !== accountId || this.open.roomId === null) return false
     const view = this.views.get(accountId)
-    return view ? view.fillText(text) : false
+    // 뷰 안의 방이 열린 방과 다르면(빠르게 바꾸는 중·뷰 안 이동) 다른 방 입력칸에 들어가지 않게 거부
+    if (!view || view.currentRoomId() !== this.open.roomId) return false
+    return view.fillText(text)
   }
 
   private showOpen(): void {
     if (!this.open || !this.bounds) return
     const target = this.deps.appWindow()
     if (!target) return
+    // 앱 창에 붙은 뷰는 언제나 하나 — 다른 계정 뷰가 붙어 있으면 먼저 뗀다
+    if (this.shownId !== null && this.shownId !== this.open.accountId) {
+      this.views.get(this.shownId)?.hide()
+    }
     this.views.get(this.open.accountId)?.show(this.bounds, target)
+    this.shownId = this.open.accountId
   }
 
-  private hideOtherThan(accountId: number): void {
-    if (this.open && this.open.accountId !== accountId) this.views.get(this.open.accountId)?.hide()
+  private hideShown(): void {
+    if (this.shownId !== null) this.views.get(this.shownId)?.hide()
+    this.shownId = null
   }
 
   // --- 틱 ------------------------------------------------------------------------
@@ -222,6 +281,7 @@ export class DaangnService {
   }
 
   private async doTick(): Promise<void> {
+    if (this.disposed) return
     const s = this.deps.settings()
     const accounts = this.deps.repo.listAccounts()
     if (!s.daangnEnabled || accounts.length === 0) {
@@ -247,7 +307,14 @@ export class DaangnService {
 
     // 상시가 아니게 된 뷰는 닫는다(열린 방의 뷰와 이번 임시 대상은 남긴다)
     for (const [id, view] of [...this.views]) {
-      if (this.warm.has(id) || plan.temp.includes(id) || this.open?.accountId === id) continue
+      if (
+        this.warm.has(id) ||
+        plan.temp.includes(id) ||
+        this.open?.accountId === id ||
+        this.pending.has(id)
+      ) {
+        continue
+      }
       view.stop()
       this.views.delete(id)
     }
@@ -259,13 +326,13 @@ export class DaangnService {
   /** 상시가 아닌 계정을 잠깐 띄워 목록만 읽고 닫는다 */
   private async readTemp(id: number): Promise<void> {
     const view = await this.ensureView(id)
+    // 상태는 scan() 이 돌아야 바뀐다 — 한 번 읽어 보고 아직 안 그려졌으면(loading) 1초 뒤 다시
     for (let i = 0; i < TEMP_WAIT_TRIES; i++) {
-      const st = view.state()
-      if (st === 'logged_in' || st === 'expired' || st === 'read_failed') break
+      await this.readAccount(id)
+      if (view.state() !== 'loading') break
       await this.deps.sleep(1000)
     }
-    await this.readAccount(id)
-    if (this.open?.accountId !== id && !this.warm.has(id)) {
+    if (this.open?.accountId !== id && !this.pending.has(id) && !this.warm.has(id)) {
       view.stop()
       this.views.delete(id)
     }
@@ -276,7 +343,9 @@ export class DaangnService {
     if (!view) return
     this.lastReadAt[id] = this.deps.now()
     try {
-      const r = await view.scan()
+      const r = await withTimeout(view.scan(), SCAN_TIMEOUT_MS)
+      // 읽는 사이 계정이 지워졌거나 뷰가 바뀌었으면 결과를 버린다(유령 채널 방지)
+      if (this.views.get(id) !== view) return
       const st = view.state()
       if (st === 'expired' || st === 'read_failed') return this.drop(id, st)
       if (st === 'loading') return
@@ -287,6 +356,7 @@ export class DaangnService {
         this.deps.repo.setIdentity(id, r.me.displayName, r.me.profileImage)
       }
     } catch {
+      if (this.views.get(id) !== view) return
       // 한두 번 실패는 옛 목록을 그대로 둔다. 뷰가 연달아 실패로 판정하면(read_failed) 그 계정만 비운다
       const st = view.state()
       if (st === 'expired' || st === 'read_failed') this.drop(id, st)
@@ -311,11 +381,22 @@ export class DaangnService {
     const prev = this.prevUnread.get(id) ?? null
     const label = this.deps.repo.listAccounts().find((a) => a.id === id)?.label ?? `계정 ${id}`
     if (this.deps.settings().daangnNotify) {
-      for (const c of diffUnread(prev, channels)) {
-        if (!this.throttle.allow(`${c.accountId}:${c.roomId}`, this.deps.now())) continue
-        this.deps.notify(`[${label}] ${c.peerName}`, c.lastMessage, () =>
-          this.deps.send(IPC.daangnNotifyClick, { accountId: c.accountId, roomId: c.roomId })
+      const fresh = diffUnread(prev, channels).filter((c) =>
+        this.throttle.allow(`${c.accountId}:${c.roomId}`, this.deps.now())
+      )
+      if (fresh.length > MAX_NOTIFY_PER_READ) {
+        // 한꺼번에 많이 쌓였으면 요약 하나(클릭하면 첫 방)
+        const first = fresh[0]
+        const names = fresh.slice(0, 3).map((c) => c.peerName).join(', ')
+        this.deps.notify(`[${label}] 새 메시지 ${fresh.length}건`, names, () =>
+          this.deps.send(IPC.daangnNotifyClick, { accountId: first.accountId, roomId: first.roomId })
         )
+      } else {
+        for (const c of fresh) {
+          this.deps.notify(`[${label}] ${c.peerName}`, c.lastMessage, () =>
+            this.deps.send(IPC.daangnNotifyClick, { accountId: c.accountId, roomId: c.roomId })
+          )
+        }
       }
     }
     // 기준(지난번 안 읽은 수)은 목록이 실제로 채워진 읽기에서 잡는다. 첫 읽기가 빈 목록이면(아직 안 그려졌을 수 있다)
@@ -334,6 +415,7 @@ export class DaangnService {
   // --- 내부 ------------------------------------------------------------------------
 
   private async ensureView(id: number): Promise<AccountViewLike> {
+    if (this.disposed) throw new Error('종료 중이에요')
     const existing = this.views.get(id)
     if (existing) return existing
     const row = this.deps.repo.listAccounts().find((a) => a.id === id)
@@ -349,6 +431,10 @@ export class DaangnService {
     this.views.clear()
     this.warm.clear()
     this.open = null
+    this.shownId = null
+    // 꺼진 사이 쌓인 안 읽음은 "새 메시지" 가 아니다 — 다시 켠 뒤 첫 읽기를 기준으로 삼는다
+    this.prevUnread.clear()
+    this.emptyFirstReads.clear()
   }
 
   private ensureTimer(intervalMs = this.deps.settings().daangnScanIntervalMs): void {

@@ -39,6 +39,9 @@ class FakeView implements AccountViewLike {
   filled: string[] = []
   loginOpened = 0
   room: string | null = null
+  scanGate: Promise<void> | null = null
+  openGate: Promise<void> | null = null
+  scans = 0
   constructor(readonly accountId: number) {}
   async start(): Promise<void> {
     this.started = true
@@ -50,10 +53,13 @@ class FakeView implements AccountViewLike {
     return this.st
   }
   async scan(): Promise<{ me: { displayName: string; profileImage: string | null } | null; channels: DaangnChannelDto[] }> {
+    this.scans += 1
+    if (this.scanGate) await this.scanGate
     if (this.throwOnScan) throw new Error('읽기 실패')
     return { me: { displayName: `계정${this.accountId}`, profileImage: null }, channels: this.channels }
   }
   async openRoom(roomId: string): Promise<void> {
+    if (this.openGate) await this.openGate
     this.opened.push(roomId)
     this.room = roomId
   }
@@ -86,6 +92,9 @@ describe('DaangnService', () => {
   let sent: { channel: string; payload: unknown }[]
   let notices: { title: string; body: string; click: () => void }[]
   let settingsOverride: Record<string, unknown>
+  let makeView: ((id: number) => FakeView) | null
+  let sleeps: number
+  let cleared: string[]
 
   function make(): DaangnService {
     return new DaangnService({
@@ -96,10 +105,15 @@ describe('DaangnService', () => {
       send: (channel, payload) => sent.push({ channel, payload }),
       notify: (title, body, click) => notices.push({ title, body, click }),
       now: () => now,
-      sleep: async () => undefined,
+      sleep: async () => {
+        sleeps += 1
+      },
+      clearPartition: (p) => {
+        cleared.push(p)
+      },
       partitionPrefix: () => 'persist:ws1-',
       createView: ({ accountId }) => {
-        const v = new FakeView(accountId)
+        const v = makeView?.(accountId) ?? new FakeView(accountId)
         views.set(accountId, v)
         return v
       }
@@ -118,6 +132,9 @@ describe('DaangnService', () => {
     sent = []
     notices = []
     settingsOverride = {}
+    makeView = null
+    sleeps = 0
+    cleared = []
     vi.useFakeTimers()
   })
   afterEach(() => {
@@ -299,4 +316,149 @@ describe('DaangnService', () => {
     expect(vi.getTimerCount()).toBe(0)
     svc.dispose()
   })
+
+  // === 최종 리뷰 반영 ===================================================================
+
+  const BOUNDS: DaangnBounds = { x: 300, y: 100, width: 900, height: 700 }
+  const deferred = (): { p: Promise<void>; go: () => void } => {
+    let go!: () => void
+    const p = new Promise<void>((r) => (go = r))
+    return { p, go }
+  }
+
+  it('방을 연달아 열면 마지막으로 누른 방만 붙고, 늦게 끝난 앞 요청은 뷰를 붙이지 않는다', async () => {
+    const a = repo.addAccount({ label: 'A', partitionPrefix: 'p-' })
+    const b = repo.addAccount({ label: 'B', partitionPrefix: 'p-' })
+    const gate = deferred()
+    makeView = (id) => {
+      const v = new FakeView(id)
+      if (id === a.id) v.openGate = gate.p
+      return v
+    }
+    const svc = make()
+    svc.setRoomBounds(BOUNDS)
+    const first = svc.openRoom(a.id, 'RA') // 느린 계정
+    await svc.openRoom(b.id, 'RB')
+    gate.go()
+    await first
+    expect(views.get(a.id)?.shown.length).toBe(0)
+    expect(views.get(b.id)?.shown.length).toBe(1)
+    svc.setRoomBounds(null)
+    expect(views.get(b.id)?.hides).toBeGreaterThan(0)
+    expect(await svc.fillText(b.id, '안녕')).toBe(true)
+    expect(await svc.fillText(a.id, '안녕')).toBe(false)
+  })
+
+  it('열린 방이 바뀌어 뷰 안의 방이 다르면 템플릿을 채우지 않는다', async () => {
+    const a = repo.addAccount({ label: 'A', partitionPrefix: 'p-' })
+    const svc = make()
+    await svc.openRoom(a.id, 'RA')
+    ;(views.get(a.id) as FakeView).room = 'RB'
+    expect(await svc.fillText(a.id, '안녕')).toBe(false)
+  })
+
+  it('읽는 도중 지운 계정의 채널이 목록에 다시 살아나지 않는다', async () => {
+    const a = repo.addAccount({ label: 'A', partitionPrefix: 'p-' })
+    const gate = deferred()
+    makeView = (id) => {
+      const v = new FakeView(id)
+      v.scanGate = gate.p
+      v.channels = [chan(id, 'R1', 1)]
+      return v
+    }
+    const svc = make()
+    const tick = svc.runTick()
+    await Promise.resolve()
+    svc.removeAccount(a.id)
+    gate.go()
+    await tick
+    expect(svc.snapshot().channels).toEqual([])
+  })
+
+  it('끈 동안 쌓인 안 읽음은 다시 켜도 알림 폭주가 되지 않는다', async () => {
+    const a = repo.addAccount({ label: 'A', partitionPrefix: 'p-' })
+    const svc = make()
+    await svc.runTick()
+    ;(views.get(a.id) as FakeView).channels = [chan(a.id, 'R1', 0)]
+    await svc.runTick()
+    settingsOverride = { daangnEnabled: false }
+    await svc.runTick()
+    settingsOverride = {}
+    now += 10 * 60_000
+    await svc.runTick()
+    ;(views.get(a.id) as FakeView).channels = [chan(a.id, 'R1', 7), chan(a.id, 'R2', 3)]
+    await svc.runTick()
+    expect(notices.length).toBe(0)
+  })
+
+  it('한 번에 새 방이 많이 생기면 알림 하나로 묶는다', async () => {
+    const a = repo.addAccount({ label: 'A', partitionPrefix: 'p-' })
+    const svc = make()
+    await svc.runTick()
+    const v = views.get(a.id) as FakeView
+    v.channels = [chan(a.id, 'R0', 0)]
+    await svc.runTick()
+    now += 200_000
+    v.channels = [1, 2, 3, 4, 5].map((n) => chan(a.id, `N${n}`, 1))
+    await svc.runTick()
+    expect(notices.length).toBe(1)
+    expect(notices[0].title).toContain('5건')
+  })
+
+  it('dispose 뒤 진행 중이던 틱이 뷰를 다시 만들지 않는다', async () => {
+    repo.addAccount({ label: 'A', partitionPrefix: 'p-' })
+    const svc = make()
+    svc.dispose()
+    await svc.runTick()
+    expect(views.size).toBe(0)
+  })
+
+  it('임시 읽기는 이미 로그인된 뷰를 10초씩 기다리지 않는다', async () => {
+    repo.addAccount({ label: 'A', partitionPrefix: 'p-' })
+    repo.addAccount({ label: 'B', partitionPrefix: 'p-' })
+    repo.addAccount({ label: 'C', partitionPrefix: 'p-' })
+    settingsOverride = { daangnWarmViews: 1, daangnTempViews: 3 }
+    // scan() 이 한 번 돌아야 loggedIn 이 되는 뷰(실제 DaangnAccountView 와 같은 성질)
+    makeView = (id) => {
+      const v = new FakeView(id)
+      v.st = 'loading'
+      v.channels = [chan(id, 'R1', 1)]
+      const scan = v.scan.bind(v)
+      v.scan = async () => {
+        const r = await scan()
+        v.st = 'logged_in'
+        return r
+      }
+      return v
+    }
+    const svc = make()
+    await svc.runTick()
+    expect(sleeps).toBe(0)
+    expect(svc.snapshot().channels.length).toBeGreaterThanOrEqual(2)
+  })
+
+  it('멈춘 읽기 하나가 다른 계정 읽기를 영구히 막지 않는다(시간 제한)', async () => {
+    const a = repo.addAccount({ label: 'A', partitionPrefix: 'p-' })
+    const b = repo.addAccount({ label: 'B', partitionPrefix: 'p-' })
+    makeView = (id) => {
+      const v = new FakeView(id)
+      if (id === a.id) v.scanGate = new Promise<void>(() => undefined) // 영원히 안 끝남
+      v.channels = [chan(id, 'R1', 1)]
+      return v
+    }
+    const svc = make()
+    const tick = svc.runTick()
+    await vi.advanceTimersByTimeAsync(30_000)
+    await tick
+    expect(svc.snapshot().channels.some((c) => c.accountId === b.id)).toBe(true)
+  })
+
+  it('계정을 지우면 세션 파티션 저장소도 지운다', async () => {
+    const a = repo.addAccount({ label: 'A', partitionPrefix: 'p-' })
+    const partition = repo.listAccounts().find((r) => r.id === a.id)?.partition
+    const svc = make()
+    svc.removeAccount(a.id)
+    expect(cleared).toEqual([partition])
+  })
+
 })

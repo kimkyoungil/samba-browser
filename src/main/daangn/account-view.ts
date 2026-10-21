@@ -153,8 +153,11 @@ export class DaangnAccountView {
   /** target(앱 창)의 오른쪽 영역에 보이게 한다 — 숨김 창에서 떼어 맨 위에 붙인다 */
   show(bounds: DaangnBounds, target: BrowserWindow): void {
     if (!this.view) return
+    const clamped = clampBounds(bounds)
+    // 너무 좁으면 옆 패널을 덮지 않게 접어 둔다
+    if (!clamped) return this.hide()
     this.moveTo(target)
-    this.view.setBounds(clampBounds(bounds))
+    this.view.setBounds(clamped)
   }
 
   /** 다시 숨김 창으로 돌려보낸다 */
@@ -216,6 +219,10 @@ export class DaangnAccountView {
     }
     wc.on('will-navigate', block)
     wc.on('will-redirect', block)
+    // 숨김 창에서 확인 대화상자(떠나시겠어요?)가 뜨면 읽기가 영영 멈춘다 — 묻지 않고 넘어간다
+    wc.on('will-prevent-unload', (e) => e.preventDefault())
+    // 로그인 뒤 SPA 이동은 did-finish-load 가 다시 오지 않는다 — 목록 숨김 CSS 를 다시 넣는다
+    wc.on('did-navigate-in-page', () => void this.injectCss())
     wc.setWindowOpenHandler(({ url }) => {
       if (/^https?:\/\//.test(url)) this.deps.openExternal(url)
       return { action: 'deny' }

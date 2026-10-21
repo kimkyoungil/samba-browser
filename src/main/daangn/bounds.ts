@@ -14,14 +14,18 @@ export function hiddenBounds(): DaangnBounds {
   return { x: 0, y: 0, width: 1100, height: 800 }
 }
 
-/** 렌더러가 보낸 영역을 정수·최소 폭으로 보정한다. 숫자가 아니면 숨김 영역 기본값 */
-export function clampBounds(b: DaangnBounds): DaangnBounds {
+/**
+ * 렌더러가 보낸 영역을 정수로 보정한다. 숫자가 아니면 숨김 영역 기본값.
+ * 최소 폭보다 좁으면 null — 넓혀서 옆 패널(AI 패널·손잡이)을 덮는 대신 호출한 쪽이 뷰를 접는다
+ */
+export function clampBounds(b: DaangnBounds): DaangnBounds | null {
   const vals = [b.x, b.y, b.width, b.height]
   if (!vals.every((v) => typeof v === 'number' && Number.isFinite(v))) return hiddenBounds()
+  if (Math.round(b.width) < MIN_ROOM_WIDTH) return null
   return {
     x: Math.round(b.x),
     y: Math.round(b.y),
-    width: Math.max(MIN_ROOM_WIDTH, Math.round(b.width)),
+    width: Math.round(b.width),
     height: Math.max(1, Math.round(b.height))
   }
 }

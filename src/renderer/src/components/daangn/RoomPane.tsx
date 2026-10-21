@@ -3,6 +3,9 @@ import type React from 'react'
 import { useTranslation } from 'react-i18next'
 import { ArrowDown, ArrowUp, Pencil, Plus, Trash2, X } from 'lucide-react'
 import { DAANGN_TEMPLATE_MAX, type DaangnTemplateDto } from '@shared/daangn'
+
+/** 이보다 좁으면 당근 채팅이 1단으로 바뀌어 메인이 뷰를 접는다(main/daangn/bounds.ts 와 같은 값) */
+const MIN_ROOM_WIDTH = 640
 import { PrimaryButton, SecondaryButton } from '@renderer/components/settings/shared'
 import { useDaangnStore } from '@renderer/stores/daangnStore'
 
@@ -16,6 +19,7 @@ export function RoomPane(): React.JSX.Element {
   const clearError = useDaangnStore((s) => s.clearError)
   const slot = useRef<HTMLDivElement>(null)
   const [editing, setEditing] = useState(false)
+  const [narrow, setNarrow] = useState(false)
 
   useEffect(() => {
     const el = slot.current
@@ -26,6 +30,7 @@ export function RoomPane(): React.JSX.Element {
     }
     const send = (): void => {
       const r = el.getBoundingClientRect()
+      setNarrow(r.width < MIN_ROOM_WIDTH)
       void window.samba.daangn.setRoomBounds({
         x: Math.round(r.x),
         y: Math.round(r.y),
@@ -66,6 +71,11 @@ export function RoomPane(): React.JSX.Element {
         {!open && (
           <div className="flex h-full items-center justify-center px-6 text-center text-[13px] text-[var(--text2)]">
             {t('daangn.pickRoom')}
+          </div>
+        )}
+        {open && narrow && (
+          <div className="flex h-full items-center justify-center px-6 text-center text-[13px] text-[var(--text2)]">
+            {t('daangn.tooNarrow')}
           </div>
         )}
         {open && open.roomId === null && (

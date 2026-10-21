@@ -215,6 +215,27 @@ export class DaangnAccountView {
     await wc.insertCSS(buildHideListCss()).catch(() => undefined)
   }
 
+  /**
+   * 어느 프레임·어느 시점에 뜨는 alert·confirm·beforeunload 든 엔진 수준에서 바로 닫는다.
+   * (페이지 스크립트로 alert 를 덮는 방식은 하위 프레임·로드 초기에 뜨는 창을 못 막는다)
+   */
+  private autoCloseDialogs(wc: WebContents): void {
+    try {
+      wc.debugger.attach('1.3')
+    } catch {
+      return
+    }
+    wc.debugger.on('message', (_e, method) => {
+      if (method !== 'Page.javascriptDialogOpening') return
+      void wc.debugger.sendCommand('Page.handleJavaScriptDialog', { accept: true }).catch(() => undefined)
+    })
+    void wc.debugger.sendCommand('Page.enable').catch(() => undefined)
+    // 새 문서가 로드될 때마다(모든 프레임) 스크립트가 돌기 전에 대화상자 함수를 비운다
+    void wc.debugger
+      .sendCommand('Page.addScriptToEvaluateOnNewDocument', { source: SILENCE_DIALOGS_SCRIPT })
+      .catch(() => undefined)
+  }
+
   /** 당근 밖으로 못 나가게 하고, 새 창·링크는 기본 브라우저로 보낸다 */
   private guard(wc: WebContents): void {
     const block = (e: { preventDefault: () => void }, url: string): void => {
@@ -231,6 +252,7 @@ export class DaangnAccountView {
     }
     wc.on('dom-ready', silence)
     wc.on('did-navigate-in-page', silence)
+    this.autoCloseDialogs(wc)
     // 숨김 창에서 확인 대화상자(떠나시겠어요?)가 뜨면 읽기가 영영 멈춘다 — 묻지 않고 넘어간다
     wc.on('will-prevent-unload', (e) => e.preventDefault())
     // 로그인 뒤 SPA 이동은 did-finish-load 가 다시 오지 않는다 — 목록 숨김 CSS 를 다시 넣는다

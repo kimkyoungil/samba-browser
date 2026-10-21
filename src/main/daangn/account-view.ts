@@ -9,6 +9,7 @@ import { WebContentsView, session, type BrowserWindow, type WebContents } from '
 import type { DaangnAccountState, DaangnBounds, DaangnChannelDto } from '../../shared/daangn'
 import { clampBounds, hiddenBounds } from './bounds'
 import { buildFillScript, buildHideListCss, buildScanScript, parseScan, type RawScan } from './selectors'
+import { persistentCookieDetails } from './cookies'
 import { classifyChatUrl, isAllowedChatUrl, roomIdOf } from './url-guard'
 
 /** 페이지의 alert·confirm·prompt 를 무력화한다(확인 대화상자가 쌓여 읽기가 멈추는 것도 막는다) */
@@ -45,6 +46,7 @@ export interface DaangnAccountViewDeps {
 
 export class DaangnAccountView {
   private view: WebContentsView | null = null
+  private lastCookiePersistAt = 0
   /** 숨김 창 — 뷰의 집이다 */
   private host: BrowserWindow | null = null
   /** 지금 뷰가 붙어 있는 창(숨김 창이거나 보이는 앱 창) */
@@ -79,12 +81,36 @@ export class DaangnAccountView {
     view.setBounds(hiddenBounds())
     wc.on('did-navigate', (_e, url) => this.onNavigated(url))
     wc.on('did-navigate-in-page', (_e, url) => this.onNavigated(url))
-    wc.on('did-finish-load', () => void this.injectCss())
+    wc.on('did-finish-load', () => {
+      void this.injectCss()
+      void this.persistCookies()
+    })
     this.url = CHAT_HOME
     await wc.loadURL(CHAT_HOME).catch(() => undefined)
   }
 
   /** 뷰를 창에서 떼고 닫는다 */
+  /**
+   * 당근이 로그인 쿠키를 세션 쿠키(만료 없음)로 주면 앱을 끌 때 사라져 QR 로그인을 다시 해야 한다 —
+   * 만료 1년짜리 영속 쿠키로 다시 심어 재시작 뒤에도 로그인이 남게 한다. 30초에 한 번만
+   */
+  private async persistCookies(): Promise<void> {
+    const t = this.deps.now().getTime()
+    if (t - this.lastCookiePersistAt < 30_000) return
+    this.lastCookiePersistAt = t
+    try {
+      const ses = session.fromPartition(this.deps.partition)
+      const nowSec = Math.floor(t / 1000)
+      for (const c of await ses.cookies.get({})) {
+        const d = persistentCookieDetails(c, nowSec)
+        if (d) await ses.cookies.set(d).catch(() => undefined)
+      }
+      await ses.cookies.flushStore()
+    } catch {
+      // 쿠키 저장소 접근 실패는 다음 기회에 다시 한다
+    }
+  }
+
   stop(): void {
     const view = this.view
     this.view = null
@@ -113,6 +139,7 @@ export class DaangnAccountView {
   async scan(): Promise<{ me: RawScan['me']; channels: DaangnChannelDto[] }> {
     const wc = this.alive()
     if (!wc) throw new Error('뷰가 없어요')
+    void this.persistCookies()
     if (classifyChatUrl(wc.getURL()) !== 'chat') return { me: null, channels: [] }
     try {
       const raw = await wc.executeJavaScript(buildScanScript())

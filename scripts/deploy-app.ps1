@@ -39,15 +39,18 @@ Get-ChildItem $main -Directory -Filter 'out.bak-*' | Sort-Object Name -Descendin
 if (-not $Restart) { Write-Host '[4/4] 재시작 안 함(-Restart 로 재시작). 앱은 다음 시작부터 새 판이다.'; exit 0 }
 
 Write-Host '[4/4] 하네스 큐가 5분 비면 재시작'
+# 큐 검사 파이썬 조각은 파일로 만들어 부른다 — -c 에 여러 줄·따옴표를 넘기면 PowerShell 이 따옴표를 벗겨 SyntaxError 로 끝났다(2026-10-21)
+$idleCheck = Join-Path $env:TEMP 'samba-queue-idle-check.py'
+@'
+import sqlite3, datetime, sys
+j = sqlite3.connect(sys.argv[1], timeout=30)
+n = j.execute("select count(*) from jobs where state in ('queued','running')").fetchone()[0]
+m = j.execute('select max(updated_at) from jobs').fetchone()[0]
+age = (datetime.datetime.now(datetime.timezone.utc) - datetime.datetime.fromisoformat(m)).total_seconds()
+print('ok' if n == 0 and age >= 300 else 'wait')
+'@ | Set-Content -Encoding UTF8 $idleCheck
 for ($i = 0; $i -lt 180; $i++) {
-  $r = & $py -c @"
-import sqlite3,datetime
-j=sqlite3.connect(r'$jobs',timeout=30)
-n=j.execute("select count(*) from jobs where state in ('queued','running')").fetchone()[0]
-m=j.execute('select max(updated_at) from jobs').fetchone()[0]
-age=(datetime.datetime.now(datetime.timezone.utc)-datetime.datetime.fromisoformat(m)).total_seconds()
-print('ok' if n==0 and age>=300 else 'wait')
-"@
+  $r = (& $py $idleCheck $jobs | Select-Object -Last 1)
   if ($r -eq 'ok' -or $Force) { break }
   Start-Sleep -Seconds 20
 }

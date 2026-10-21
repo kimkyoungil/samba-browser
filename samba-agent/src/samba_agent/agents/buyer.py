@@ -3147,6 +3147,24 @@ class BuyerAgent(AgentBase):
                 self._quote_skips.append(f'{account}: 옵션 불일치 {options[:6]}')
             return None
         selected = str(snap.get('selected') or '').strip()
+        if a.order.option and not selected and snap.get('note') == 'nopick':
+            # 스크립트가 주문 옵션 글자로는 못 골랐지만(nopick) 후보 중 같은 옵션을 맞췄으면(AI·사이즈 표기 규칙 —
+            # '화이트 S' ↔ 'White-SM') 그 후보 글자로 한 번 다시 연다. 안 그러면 계정마다 '주문서 옵션 못 읽음' 으로 빠져
+            # 모든 계정 불가가 됐다(실기 2026-10-21 무신사 포이즌 2799, 건당 16분)
+            matched = self._match_options(options, a.order.option)
+            if matched:
+                reselected = getattr(self, '_reselected', {})
+                reselected[str(a.order.option)] = matched[0]
+                self._reselected = reselected
+                self.note('옵션 재선택', mask_text(f'{account}: [{a.order.option}] → {matched[0]} 로 주문서를 다시 연다'))
+                try:
+                    again = self._snapshot(a, account)
+                except AgentFailure as e:
+                    self.note('계정 견적', mask_text(f'{account}: 후보 옵션으로 다시 열기 실패({e.reason[:60]})'))
+                    again = None
+                if again is not None and not again.get('error'):
+                    snap = again
+                    selected = str(snap.get('selected') or '').strip()
         if a.order.option and not (selected and self._selected_matches(selected, a.order.option)):
             # 주문서에 엉뚱한 옵션이 담긴 채 사면 안 된다(실기: 110 주문에 105 결제).
             # 주문서를 아예 못 읽었으면(주문서 안 열림 등) 그 사유를 남긴다 — '불일치(모름)' 은 원인을 가렸다
@@ -4433,6 +4451,9 @@ class BuyerAgent(AgentBase):
             )
         url = str(snap.get('product_url') or a.order.product_url or '')
         selected = re.sub(r'\s*쇼핑백 신청\s*$', '', str(snap.get('selected') or '')).strip()
+        # 선물포장 추가 칸 문구('031(블랙) 선물포장 &…')가 옵션 글자에 붙어 오면 떼어 낸다 — 붙은 채 선물 진입에 넘기면
+        # 옵션을 하나로 못 찾았다(실기 2026-10-21 SSG 라코스테 양말 2803)
+        selected = re.sub(r'\s*선물\s*포장\s*&.*$', '', selected).strip()
         want = str(a.order.option or '')
         # 2단 옵션(색/사이즈)은 주문서 되읽기가 뒷단('S 쇼핑백 신청')만 잡는다 — 선물 진입 스크립트는 '색/사이즈' 를
         # 칸 순서대로 고르므로 주문 옵션 그대로 준다(실기 2026-10-05 SSG 지오다노 '03 블루/S')

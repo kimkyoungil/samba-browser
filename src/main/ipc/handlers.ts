@@ -13,8 +13,10 @@ import { applyProfileProxy, loadProfileProxies, profileOfPartition } from '../br
 import { ChatSessionStore } from '../agent/chat-session'
 import {
   app,
+  BrowserWindow as BrowserWindowCtor,
   dialog,
   ipcMain,
+  Notification,
   safeStorage,
   screen,
   session,
@@ -143,6 +145,10 @@ import { createPhoneRelay, createRelayingAdb } from '../phone/relay'
 import { PhoneRepo } from '../phone/repo'
 import { PhoneService } from '../phone/service'
 import { registerPhoneScreenIpc } from '../phone/screen-ipc'
+import { DaangnAccountView } from '../daangn/account-view'
+import { registerDaangnIpc } from '../daangn/register'
+import { DaangnRepo } from '../daangn/repo'
+import { DaangnService } from '../daangn/service'
 import { installPhoneTools, phoneToolsStatus } from '../phone/tools-install'
 import { createPhoneOps } from '../agent/tools-phone'
 import { readCodeFromImage, readKeypadLayout } from '../ai/visual'
@@ -1772,6 +1778,68 @@ export function registerIpc(
   phoneOps.openWindow = (serial) => phoneScreen.windows.open(serial)
   onShutdown(() => phoneScreen.dispose())
   // === 폰 화면 끝 ======================================================================
+
+  // === 당근 통합 채팅함 ================================================================
+  // 계정마다 숨은 채팅 뷰를 돌려 안 읽은 채팅을 한 목록으로 모은다. 배선은 daangn/ 한 곳에 모여 있다.
+  // 계정이 0개면 뷰도 타이머도 만들지 않는다
+  const daangnRepo = new DaangnRepo(db)
+  let daangnHidden: BrowserWindow | null = null
+  const daangn = new DaangnService({
+    repo: daangnRepo,
+    // 뷰의 집 — 보이지 않는 전용 창. 보이는 창의 창 밖 좌표에 두면 뷰포트가 0 이 된다(실측 2026-10-21)
+    hiddenHost: () => {
+      if (!daangnHidden || daangnHidden.isDestroyed()) {
+        daangnHidden = new BrowserWindowCtor({
+          show: false,
+          width: 1100,
+          height: 800,
+          webPreferences: { backgroundThrottling: false }
+        })
+      }
+      return daangnHidden
+    },
+    appWindow: () => {
+      try {
+        return windows.primary().win
+      } catch {
+        return null
+      }
+    },
+    settings: () => settings.get(),
+    send,
+    notify: (title, body, onClick) => {
+      const n = new Notification({ title, body })
+      n.on('click', () => {
+        try {
+          const w = windows.primary().win
+          if (w.isMinimized()) w.restore()
+          w.show()
+          w.focus()
+        } catch {
+          // 앱 창이 없으면 렌더러 이벤트만 보낸다
+        }
+        onClick()
+      })
+      n.show()
+    },
+    now: () => Date.now(),
+    sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    partitionPrefix: () => workspace.partitionPrefix(),
+    createView: ({ accountId, partition }) =>
+      new DaangnAccountView({
+        accountId,
+        partition,
+        now: () => new Date(),
+        openExternal: (url) => void shell.openExternal(url)
+      })
+  })
+  registerDaangnIpc({ handle: handleFromRenderer, service: daangn, repo: daangnRepo })
+  daangn.start()
+  onShutdown(() => {
+    daangn.dispose()
+    if (daangnHidden && !daangnHidden.isDestroyed()) daangnHidden.destroy()
+  })
+  // === 당근 통합 채팅함 끝 ===============================================================
 
   // === 화면 번역 · 이미지 번역 =========================================================
   const translate = registerTranslate({

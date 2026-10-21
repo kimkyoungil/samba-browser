@@ -68,6 +68,13 @@ import {
   type NotifySendResult
 } from '../shared/ipc'
 import type { AgentImage } from '../shared/agent-image'
+import type {
+  DaangnAccountDto,
+  DaangnBounds,
+  DaangnChannelDto,
+  DaangnStateDto,
+  DaangnTemplateDto
+} from '../shared/daangn'
 import type { AiUsage } from '../shared/ai'
 import type { AuthState, WorkspaceDto } from '../shared/sync'
 import type { ExportRequest, ExportResult } from '../shared/vault'
@@ -596,6 +603,40 @@ const api = {
       const h = (_: unknown, dto: PhoneScreenModeDto): void => cb(dto)
       ipcRenderer.on(IPC.phoneScreenMode, h)
       return () => ipcRenderer.off(IPC.phoneScreenMode, h)
+    }
+  },
+  // 당근 통합 채팅함 — 채팅 본문·세션은 메인의 숨은 뷰 안에만 있고 목록 표시값만 오간다
+  daangn: {
+    accountsList: (): Promise<IpcResult<DaangnAccountDto[]>> => invoke(IPC.daangnAccountsList),
+    addAccount: (label: string): Promise<IpcResult<DaangnAccountDto>> =>
+      invoke(IPC.daangnAccountAdd, label),
+    removeAccount: (id: number): Promise<IpcResult<void>> => invoke(IPC.daangnAccountRemove, id),
+    setAccountLabel: (id: number, label: string): Promise<IpcResult<void>> =>
+      invoke(IPC.daangnAccountSetLabel, id, label),
+    relogin: (id: number): Promise<IpcResult<void>> => invoke(IPC.daangnAccountRelogin, id),
+    channelsList: (): Promise<IpcResult<DaangnChannelDto[]>> => invoke(IPC.daangnChannelsList),
+    openRoom: (accountId: number, roomId: string): Promise<IpcResult<void>> =>
+      invoke(IPC.daangnRoomOpen, accountId, roomId),
+    setRoomBounds: (b: DaangnBounds | null): Promise<IpcResult<void>> =>
+      invoke(IPC.daangnRoomBounds, b),
+    closeRoom: (): Promise<IpcResult<void>> => invoke(IPC.daangnRoomClose),
+    fillText: (accountId: number, text: string): Promise<IpcResult<boolean>> =>
+      invoke(IPC.daangnRoomFill, accountId, text),
+    templatesList: (): Promise<IpcResult<DaangnTemplateDto[]>> => invoke(IPC.daangnTemplatesList),
+    saveTemplate: (input: { id?: number; text: string }): Promise<IpcResult<DaangnTemplateDto>> =>
+      invoke(IPC.daangnTemplateSave, input),
+    deleteTemplate: (id: number): Promise<IpcResult<void>> => invoke(IPC.daangnTemplateDelete, id),
+    reorderTemplates: (ids: number[]): Promise<IpcResult<void>> =>
+      invoke(IPC.daangnTemplatesReorder, ids),
+    onUpdated: (cb: (s: DaangnStateDto) => void): (() => void) => {
+      const h = (_: unknown, s: DaangnStateDto): void => cb(s)
+      ipcRenderer.on(IPC.daangnUpdated, h)
+      return () => ipcRenderer.off(IPC.daangnUpdated, h)
+    },
+    onNotifyClick: (cb: (p: { accountId: number; roomId: string }) => void): (() => void) => {
+      const h = (_: unknown, p: { accountId: number; roomId: string }): void => cb(p)
+      ipcRenderer.on(IPC.daangnNotifyClick, h)
+      return () => ipcRenderer.off(IPC.daangnNotifyClick, h)
     }
   },
   // 사진·영상 캡처 — 파일은 설정의 저장 폴더에만 쓰인다(경로를 렌더러가 고르지 못한다)

@@ -183,6 +183,23 @@ export const IPC = {
   phoneUpdated: 'phone:updated', // main → renderer 이벤트(목록·상태)
   phoneAuthWaiting: 'phone:authWaiting', // main → renderer 이벤트(카드 자동 펼침)
   phoneAuthEvents: 'phone:authEvents', // KPI 목록
+  // --- 당근 통합 채팅함 — 채팅 본문·세션은 숨은 뷰 안에만 있고 여기로는 목록 표시값만 흐른다 ---
+  daangnAccountsList: 'daangn:accounts:list',
+  daangnAccountAdd: 'daangn:accounts:add', // 계정 추가 + 로그인(QR) 화면 보이기
+  daangnAccountRemove: 'daangn:accounts:remove',
+  daangnAccountSetLabel: 'daangn:accounts:setLabel',
+  daangnAccountRelogin: 'daangn:accounts:relogin',
+  daangnChannelsList: 'daangn:channels:list',
+  daangnRoomOpen: 'daangn:room:open',
+  daangnRoomBounds: 'daangn:room:bounds', // 오른쪽 영역 위치·크기(null 이면 뷰 접기)
+  daangnRoomClose: 'daangn:room:close',
+  daangnRoomFill: 'daangn:room:fill', // 템플릿 글을 입력칸에 채우기(보내기는 누르지 않는다)
+  daangnTemplatesList: 'daangn:templates:list',
+  daangnTemplateSave: 'daangn:templates:save',
+  daangnTemplateDelete: 'daangn:templates:delete',
+  daangnTemplatesReorder: 'daangn:templates:reorder',
+  daangnUpdated: 'daangn:updated', // main → renderer 이벤트(계정·통합 목록)
+  daangnNotifyClick: 'daangn:notifyClick', // main → renderer 이벤트(알림 클릭 → 그 방 열기)
   phoneToolsStatus: 'phone:toolsStatus', // adb·scrcpy 설치 상태(경로·버전)
   phoneInstallTools: 'phone:installTools', // 원클릭 설치(내려받기 → 해제 → 설정 저장)
   phoneInstallProgress: 'phone:installProgress', // main → renderer 이벤트(설치 진행률)

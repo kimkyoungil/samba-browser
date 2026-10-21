@@ -276,14 +276,12 @@ if __name__ == '__main__':
   print('내 글', len(existing), '개:', [t[:12] for t in existing][:12])
   for p in posts:
     if p['title'] in existing and p['title'] not in done:
-      open(done_f, 'a', encoding='utf-8').write(p['title'] + '
-'); done.add(p['title']); print('이미 올라감, 건너뜀:', p['title'])
+      open(done_f, 'a', encoding='utf-8').write(p['title'] + '\n'); done.add(p['title']); print('이미 올라감, 건너뜀:', p['title'])
     if p['title'] in done or n >= limit: continue
     if n > 0: time.sleep(int(os.environ.get('DAANGN_POST_GAP', '600')))   # 글 사이 간격(기본 10분)
     existing = my_post_titles()                     # 매 글 직전에도 다시 확인
     if p['title'] in existing:
-      open(done_f, 'a', encoding='utf-8').write(p['title'] + '
-'); print('이미 올라감, 건너뜀:', p['title']); continue
+      open(done_f, 'a', encoding='utf-8').write(p['title'] + '\n'); print('이미 올라감, 건너뜀:', p['title']); continue
     if write_post(p['title'], p['body'], p.get('place'), p.get('tag', '생활/편의'), p.get('photo'), p.get('match')):
       open(done_f, 'a', encoding='utf-8').write(p['title'] + '\n'); n += 1
       time.sleep(20)

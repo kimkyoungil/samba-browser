@@ -111,6 +111,15 @@ describe('동기화에서 빠지는 설정은 그 PC 에만 맞는 값뿐이다'
       // 이 PC 에 붙은 폰을 다른 PC 에 중계할지 — 중계 PC 의 사정이다(phone/relay.ts)
       'phoneRelayEnabled',
       'phoneRelayRoom',
+      // 폰 화면 카드 순서 — 이 PC 의 보기 설정이다
+      'phoneCardOrder',
+      // 당근 통합 채팅함 — 이 PC 의 세션·부하 사정이다
+      'daangnEnabled',
+      'daangnWarmViews',
+      'daangnTempViews',
+      'daangnScanIntervalMs',
+      'daangnRotateIntervalSec',
+      'daangnNotify',
       'captureDir',
       'extensionPaths',
       'extensionSources',

@@ -215,6 +215,18 @@ export const DEFAULT_SETTINGS = {
   // 폰 화면 카드 순서(시리얼). 사용자가 끌어 옮기거나 화살표로 바꾼 순서를 기억한다 —
   // 없는 시리얼은 무시하고, 적히지 않은 폰은 뒤에 상태순으로 붙는다. 이 PC 의 보기 설정이라 동기화하지 않는다
   phoneCardOrder: [] as string[],
+  // === 당근 통합 채팅함(docs/superpowers/specs/2026-10-21-daangn-inbox-design.md) ==========
+  // 이 PC 의 세션·부하 사정이라 SYNCED_SETTING_KEYS 에 넣지 않는다
+  daangnEnabled: true,
+  // 상시 뷰 수(계정이 이보다 많으면 나머지는 임시 뷰로 돌아가며 읽는다)
+  daangnWarmViews: 8,
+  // 동시에 띄우는 임시 뷰 수
+  daangnTempViews: 3,
+  // 상시 뷰가 목록을 읽는 주기(ms)
+  daangnScanIntervalMs: 5000,
+  // 상시가 아닌 계정을 다시 읽기까지 최소 간격(초)
+  daangnRotateIntervalSec: 120,
+  daangnNotify: true,
   // 폰 연동 동기화(phone-registry.ts) — 폰 목록과 계정↔담당 폰. 폰 표(로컬)의 사본이라 화면에서 직접 고치지 않는다
   // 키마스터 기준 시각(ms) — "이 시각에 이 PC 의 키마스터가 기준"이라는 선언(sync/authority.ts).
   // 다른 PC 는 이보다 앞선 자기 삭제 기록·안 올린 행을 버리고 서버 내용을 그대로 받는다. 0 이면 선언 없음
@@ -429,6 +441,22 @@ export const settingsSchema = z.object({
   phoneRelayBrokerUrl: z.string().max(300).catch(''),
   phoneRelayRoom: z.string().max(200).catch(''),
   phoneCardOrder: z.array(z.string().max(120)).max(50).catch([]),
+  daangnEnabled: z.boolean().catch(DEFAULT_SETTINGS.daangnEnabled),
+  daangnWarmViews: z.number().int().min(1).max(30).catch(DEFAULT_SETTINGS.daangnWarmViews),
+  daangnTempViews: z.number().int().min(1).max(10).catch(DEFAULT_SETTINGS.daangnTempViews),
+  daangnScanIntervalMs: z
+    .number()
+    .int()
+    .min(2000)
+    .max(60000)
+    .catch(DEFAULT_SETTINGS.daangnScanIntervalMs),
+  daangnRotateIntervalSec: z
+    .number()
+    .int()
+    .min(30)
+    .max(900)
+    .catch(DEFAULT_SETTINGS.daangnRotateIntervalSec),
+  daangnNotify: z.boolean().catch(DEFAULT_SETTINGS.daangnNotify),
   keymasterBaselineAt: z.number().int().min(0).catch(0),
   phoneRegistry: z
     .array(

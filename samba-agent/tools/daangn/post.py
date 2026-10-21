@@ -139,7 +139,7 @@ def edit_text_below(nodes, label):
 
 def post(it):
   n_img = push_images(it)
-  want = category_for(it)
+  want = it.get('category') or category_for(it)
   # 1) 판매관리 화면의 글쓰기
   nodes, _ = wait_for(lambda ns: on_sales() and find(ns, text='판매관리', exact=True) and find(ns, text='글쓰기', exact=True), what='판매관리(MySalesActivity)')
   w = next(n for n in nodes if n['t'] == '글쓰기' and n['cy'] < sy(300))   # 판매관리 헤더의 글쓰기
@@ -154,15 +154,23 @@ def post(it):
     tap(pick['cx'], pick['cy'], 2.0)
   # 2) 사진 선택 화면: AI 작성 끄기, 앨범 Bunjang
   # 사진 선택창이 바로 뜨거나, 빈 폼이 먼저 뜨면 사진 칸(0/10)을 눌러 연다
+  # '여러 물건 글쓰기' 안내 시트(XCover 10/21)가 덮으면 닫는다
+  for _ in range(3):
+    nodes = dump()
+    if find(nodes, text='여러 물건의 판매 글을 쉽게 쓸 수 있어요.') or find(nodes, desc='시트 닫기'):
+      c = find(nodes, desc='닫기') or find(nodes, desc='시트 닫기'); tap(c['cx'], c['cy'], 2); continue
+    break
   nodes, hit = wait_for(lambda ns: (find(ns, rid='title') and find(ns, text='AI로 작성해요')) or find(ns, rid='tvPhotoCount'), what='사진 선택 또는 폼')
   if find(nodes, rid='tvPhotoCount') and not find(nodes, text='AI로 작성해요'):
     pc = find(nodes, rid='tvPhotoCount'); tap(pc['cx'], pc['cy'], 2.5)
     nodes, _ = wait_for(lambda ns: find(ns, rid='title') and find(ns, text='AI로 작성해요'), what='사진 선택')
   assert 'DaangnWebActivity' not in focused(), '홍보글 화면으로 튐'
-  ai = find(nodes, text='AI로 작성해요')
-  toggle = [n for n in nodes if n['click'] and abs(n['cy'] - ai['cy']) < sy(30) and n['cx'] > sx(800)]
-  if toggle and toggle[0]['chk']:
-    tap(toggle[0]['cx'], toggle[0]['cy'], 0.7)
+  for label in ('여러 물건 글쓰기', 'AI로 작성해요'):   # 둘 다 끈다(여러 물건 글쓰기가 켜지면 사진을 AI 가 나눠 글을 만듦)
+    lb = find(nodes, text=label)
+    if not lb: continue
+    toggle = [n for n in nodes if n['click'] and abs(n['cy'] - lb['cy']) < sy(60) and n['cx'] > sx(800)]
+    if toggle and toggle[0]['chk']:
+      tap(toggle[0]['cx'], toggle[0]['cy'], 0.7); nodes = dump()
   t = find(nodes, rid='title'); tap(t['cx'], t['cy'], 1.5)
   nodes, a = wait_for(lambda ns: find(ns, text='Bunjang ('), what='앨범 목록')
   assert a['t'] == f'Bunjang ({n_img})', f'앨범 사진 수 불일치: {a["t"]} vs {n_img}'
@@ -178,6 +186,10 @@ def post(it):
   nodes, b = wait_for(lambda ns: find(ns, desc=f'{n_img}장 올리기'), what=f'{n_img}장 올리기')
   tap(b['cx'], b['cy'], 3)
   # 3) 폼
+  for _ in range(20):                           # AI 작성 진행창이 뜨면 끝날 때까지(제목·내용은 어차피 덮어씀)
+    nodes = dump()
+    if not find(nodes, text='거의 다 되었어요!') and not find(nodes, text='AI가 글을'): break
+    time.sleep(2)
   nodes, pc = wait_for(lambda ns: find(ns, rid='tvPhotoCount'), what='글쓰기 폼')
   assert pc['t'] == f'{n_img}/10', pc['t']
   k = Kbd()
@@ -212,7 +224,10 @@ def post(it):
     e = edit_text_below(nodes, '자세한 설명'); tap(e['cx'], e['cy'], 0.7)
     k.paste(it['description']); time.sleep(0.7); sh('input', 'keyevent', '4'); time.sleep(1.2)
     # 옛 당근(A426N 26.36): 폼에 가격 칸 대신 '가격을 입력해주세요' 줄 → 별도 가격 설정 화면
-    nodes = dump(); old_ui = find(nodes, rid='KarrotTextField') is None and find(nodes, text='가격을 입력해주세요') is not None
+    nodes = dump()
+    def price_field(ns):   # 새 UI: KarrotTextField 또는 '가격' 힌트가 있는 EditText(XCover 10/21 은 id 없음)
+      return find(ns, rid='KarrotTextField') or next((n for n in ns if n['cls'] == 'EditText' and ('가격' in n['t'] or '￦' in n['t'] or n['t'].replace(',', '').isdigit())), None)
+    old_ui = price_field(nodes) is None and find(nodes, text='가격을 입력해주세요') is not None and find(nodes, text='가격을 입력해주세요')['cls'] != 'EditText'
     if old_ui:
       row = find(nodes, text='가격을 입력해주세요'); tap(row['cx'], row['cy'], 2)
       nodes, pf = wait_for(lambda ns: find(ns, rid='KarrotTextField'), what='가격 설정 화면')
@@ -227,14 +242,14 @@ def post(it):
       nodes, _ = wait_for(lambda ns: find(ns, rid='tvPhotoCount') or find(ns, text='거래 희망 장소'), what='폼 복귀')
     # 가격: 키보드가 닫히며 배치가 밀리므로 매번 다시 덤프해 확인, 최대 3회
     for attempt in range(0 if old_ui else 4):
-      nodes = dump(); pf = find(nodes, rid='KarrotTextField')
+      nodes = dump(); pf = price_field(nodes)
       for _ in range(4):   # 가격 칸이 화면 안에 올 때까지 스크롤
         if pf is not None and sy(300) <= pf['cy'] <= sy(1900): break
         if pf is not None and pf['cy'] < sy(300) and pf['b'][3] > 0:
           sh('input', 'swipe', str(sx(540)), str(sy(600)), str(sx(540)), str(sy(1500)), '400')      # 위쪽에 있으면 내려서 보이게
         else:
           sh('input', 'swipe', str(sx(540)), str(sy(1800)), str(sx(540)), str(sy(900)), '400')      # 아래쪽/안 보이면 올려서 보이게
-        time.sleep(1.0); nodes = dump(); pf = find(nodes, rid='KarrotTextField')
+        time.sleep(1.0); nodes = dump(); pf = price_field(nodes)
       assert pf is not None, '가격 칸 못 찾음'
       if pf['t'].replace('￦', '').replace(',', '').strip() == str(it['price']): break
       tap(pf['cx'], pf['cy'], 0.8)
@@ -259,7 +274,24 @@ def post(it):
   if old_ui:
     assert find(nodes, text=f"{it['price']:,}"), '가격 표시 확인 실패(옛 UI)'
   else:
-    pf = find(nodes, rid='KarrotTextField'); assert pf['t'].replace('￦', '').replace(',', '').strip() == str(it['price']), '가격 불일치: ' + pf['t']
+    pf = price_field(nodes); assert pf['t'].replace('￦', '').replace(',', '').strip() == str(it['price']), '가격 불일치: ' + pf['t']
+  if it.get('draft'):
+    # 임시저장: 닫기 → 저장 묻는 창에서 '저장'(저장 안 함 제외)
+    ts = find(nodes, text='임시저장', exact=True) or find(nodes, desc='임시저장')
+    if ts:                                        # 폼 우상단 '임시저장' 버튼(XCover 10/21)
+      tap(ts['cx'], ts['cy'], 3)
+    else:
+      c = find(nodes, desc='닫기') or find(nodes, text='닫기', exact=True)
+      if c: tap(c['cx'], c['cy'], 2)
+      else: sh('input', 'keyevent', '4'); time.sleep(2)
+      nodes = dump(); btns = [n for n in nodes if n['cls'] == 'Button' and n['t']]
+      print('저장 대화상자 버튼:', [b['t'] for b in btns])
+      save = next((b for b in btns if '저장' in b['t'] and '안 함' not in b['t'] and '않' not in b['t']), None)
+      assert save, '임시 저장 버튼 없음'
+      tap(save['cx'], save['cy'], 3)
+    nodes = dump(); print('저장 후 화면:', focused(), [n['t'] for n in nodes if n['t']][:6])
+    print(f'임시저장 완료 {it["pid"]} {it["title"]} {it["price"]} 사진{n_img}')
+    return
   done = find(nodes, desc='작성 완료'); tap(done['cx'], done['cy'], 4)
   # 이미지 업로드 실패 알림이면 취소 → 잠시 뒤 작성 완료 재시도 (최대 3회)
   for _ in range(3):

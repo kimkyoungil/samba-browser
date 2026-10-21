@@ -50,13 +50,14 @@ def push_photo(path):
   dst = f'/sdcard/DCIM/Place/place_{int(time.time())}.jpg'
   subprocess.run([ADB, '-s', DEV, 'push', tmp, dst], creationflags=0x08000000, capture_output=True)
   sh('content', 'call', '--uri', 'content://media/external/file', '--method', 'scan_file', '--arg', dst)
+  sh('am', 'broadcast', '-a', 'android.intent.action.MEDIA_SCANNER_SCAN_FILE', '-d', 'file://' + dst)   # 구형(G950N)은 scan_file 미지원 → 브로드캐스트
   for _ in range(10):                                        # 미디어 색인이 끝나 '가장 최근 사진' 이 우리 것일 때까지
     out = sh('content', 'query', '--uri', 'content://media/external/images/media', '--projection', '_data', '--sort', '"datetaken DESC, date_added DESC"').stdout.decode('utf-8', 'replace')
     first = next((l for l in out.splitlines() if '_data=' in l), '')
     if dst.split('/')[-1] in first: break
     time.sleep(1.0)
   else:
-    print('경고: 최근 사진이 우리 것이 아님:', first[:80])
+    raise AssertionError('사진 색인 안 됨 — 최근 사진이 우리 것이 아님: ' + first[:80])   # 엉뚱한 사진이 붙지 않게 중단
   time.sleep(1.0)
 
 def attach_photo():
@@ -64,7 +65,7 @@ def attach_photo():
   from post import W, H
   for attempt in range(3):
     nodes = dump()
-    if find(nodes, desc='첨부한 이미지'): return True
+    if (find(nodes, desc='첨부한 이미지') or find(nodes, text='첨부한 이미지', exact=True)): return True
     pb = find(nodes, desc='사진 첨부') or find(nodes, text='사진 첨부', exact=True)
     if not pb: sh('input', 'keyevent', '4'); time.sleep(1.2); continue   # 키보드가 가리면 내림
     tap(pb['cx'], pb['cy'], 3)
@@ -78,7 +79,7 @@ def attach_photo():
       print('선택 안 됨, 다시'); sh('input', 'keyevent', '4'); time.sleep(1.5); continue
     tap(up['cx'], up['cy'], 3)
     nodes = dump()
-    if find(nodes, desc='첨부한 이미지'): return True
+    if (find(nodes, desc='첨부한 이미지') or find(nodes, text='첨부한 이미지', exact=True)): return True
   raise AssertionError('사진 첨부 실패')
 
 def select_button_y():
@@ -230,18 +231,21 @@ def write_post(title, body, place=None, tag='생활/편의', photo=None, match=N
       if q and q not in cands: cands.append(q)
     found = None
     for q in cands:
-      for row in range(4):
+      for row in range(8):
         nodes = dump()
         pb = find(nodes, desc='장소 첨부') or find(nodes, text='장소 첨부', exact=True)
         if pb is None: sh('input', 'keyevent', '4'); time.sleep(1.2); nodes = dump(); pb = find(nodes, desc='장소 첨부')
         tap(pb['cx'], pb['cy'], 2.5)
-        nodes = dump(); e = next(n for n in nodes if n['cls'] == 'EditText'); tap(e['cx'], e['cy'], 0.7)
-        if e['t']: sh('input', 'keycombination', '113', '29'); sh('input', 'keyevent', '67'); time.sleep(0.3)
+        nodes = dump(); e = next(n for n in nodes if n['cls'] == 'EditText')
+        x = find(nodes, desc='텍스트 지우기') or find(nodes, text='텍스트 지우기', exact=True)   # 구형 폰은 text
+        if e['t'] and x: tap(x['cx'], x['cy'], 0.8)                     # 검색어 지우기 버튼(키 조합은 구형 폰에서 안 먹음)
+        tap(e['cx'], e['cy'], 0.7)
+        if e['t'] and not x: sh('input', 'keycombination', '113', '29'); sh('input', 'keyevent', '67'); time.sleep(0.3)
         paste(q); time.sleep(2.5); sh('input', 'keyevent', '4'); time.sleep(1.2)
         nodes = dump()
-        if find(nodes, desc='장소 등록하기') or find(nodes, text='검색결과가 없어요'):
+        if find(nodes, desc='장소 등록하기') or find(nodes, text='장소 등록하기', exact=True) or find(nodes, text='검색결과가 없어요'):
           print('장소 검색 없음:', q); sh('input', 'keyevent', '4'); time.sleep(1.2); break
-        tap(sx(540), sy(458 + 186 * row), 2.5)        # row 번째 결과 행
+        tap(sx(540), round(H * (0.205 + 0.083 * row)), 2.5)   # row 번째 결과 행(첫 행 0.205H, 간격 0.083H — 폰 공통)
         nodes = dump()
         if find(nodes, text='지도보기'):               # 행이 없는 자리 → 이 검색어는 끝
           print('행 없음:', q, row); sh('input', 'keyevent', '4'); time.sleep(1.2); break

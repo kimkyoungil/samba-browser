@@ -104,7 +104,9 @@ if __name__ == '__main__':
     cm = json.load(open(sys.argv[2], encoding='utf-8'))
     done_f = sys.argv[3]; done = set(open(done_f, encoding='utf-8').read().split('\n')) if os.path.exists(done_f) else set()
     limit = int(sys.argv[4]) if len(sys.argv) > 4 else 5; n = 0
+    ours = set(json.load(open('our_titles.json', encoding='utf-8'))) if os.path.exists('our_titles.json') else set()
     for title, text in cm.items():
+      if title in ours: print('우리 글이라 건너뜀:', title[:20]); continue      # 본인(우리 계정) 작성 글엔 댓글 금지
       if title in done or n >= limit: continue
       if write_comment(title, text):
         open(done_f, 'a', encoding='utf-8').write(title + '\n'); n += 1; time.sleep(15)

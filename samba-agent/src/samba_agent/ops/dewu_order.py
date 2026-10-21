@@ -53,11 +53,13 @@ class DewuResult:
     rate: float
     # 웨이신페이로 결제됨(국제카드 수수료 면제 — 원가에 ×1.03 을 붙이지 않는다, 2026-10-09)
     fee_free: bool = False
+    # 알리페이 잔액으로 결제하면 카드 청구할인이 없다 — 곱하지 않는다(사용자 2026-10-21)
+    billing_factor: float = HYUNDAI_BILLING_FACTOR
 
     @property
     def cost_krw(self) -> int:
-        # 원가 = 알리페이 최종 청구 위안 × 환율 × 카드 청구할인(현대 ×0.973)
-        return round(self.paid_cny * self.rate * HYUNDAI_BILLING_FACTOR)
+        # 원가 = 알리페이 최종 청구 위안 × 환율 × 카드 청구할인(현대 ×0.973, 잔액 결제는 ×1)
+        return round(self.paid_cny * self.rate * self.billing_factor)
 
 
 def cny_krw_rate() -> float:
@@ -529,6 +531,9 @@ def buy_on_dewu(
             f'알리페이 결제창 금액 ¥{charge:g} 이 구매창 가격 ¥{price:g} 과 다르다 — 결제하지 않음'
         )
     paid_hint = round(price * 1.03 * rate)
+    # 결제 수단이 알리페이 잔액('계정 잔액'·'余额')이면 카드 청구할인을 곱하지 않는다
+    pay_nodes = phone.nodes()
+    by_balance = has_text(pay_nodes, '계정 잔액') or has_text(pay_nodes, '余额')
     out = approve(paid_hint).strip()
     if not out.startswith('ok'):
         raise DewuOrderError(f'알리페이 결제 승인 실패: {out[:80]}')
@@ -551,7 +556,13 @@ def buy_on_dewu(
         raise DewuOrderError(
             f'결제는 됐는데(¥{paid_cny}) 得物 주문번호를 못 읽었다 — 주문내역 확인', paid=True
         )
-    return DewuResult(order_no=order_no, paid_cny=paid_cny, item_cny=price, rate=rate)
+    return DewuResult(
+        order_no=order_no,
+        paid_cny=paid_cny,
+        item_cny=price,
+        rate=rate,
+        billing_factor=1.0 if by_balance else HYUNDAI_BILLING_FACTOR,
+    )
 
 
 def _latest_order_no(
@@ -968,8 +979,9 @@ def make_shihuo_handler(
                     fail = 'margin' if '마진' in reasons else 'unknown'
                     return 'needs_ai', fail, reasons
         note = (
-            f'{shop} 앱(임성희폰) 결제 ¥{res.paid_cny:g}(상품 ¥{res.item_cny:g}+알리페이 카드수수료) × {res.rate:g} × 현대카드 청구할인 {HYUNDAI_BILLING_FACTOR}'
-            f' · 중국 배송비 {CN_SHIPPING_FEE:,} 고정'
+            f'{shop} 앱(임성희폰) 결제 ¥{res.paid_cny:g}(상품 ¥{res.item_cny:g}+알리페이 수수료) × {res.rate:g} × '
+            + ('알리페이 잔액 결제(청구할인 없음)' if res.billing_factor == 1.0 else f'현대카드 청구할인 {HYUNDAI_BILLING_FACTOR}')
+            + f' · 중국 배송비 {CN_SHIPPING_FEE:,} 고정'
         )
         # 주문계정(得物 계정)을 같이 넣어야 삼바 상태가 배송대기중으로 넘어간다(사용자 2026-10-01: 계정을 안 골라
         # 주문접수로 남았다)

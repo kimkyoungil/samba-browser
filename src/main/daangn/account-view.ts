@@ -187,8 +187,12 @@ export class DaangnAccountView {
     const clamped = clampBounds(bounds)
     // 너무 좁으면 옆 패널을 덮지 않게 접어 둔다
     if (!clamped) return this.hide()
+    const becameVisible = this.current !== target
     this.moveTo(target)
     this.view.setBounds(clamped)
+    // 포커스가 없으면 당근이 "보고 있는 창이 아니다" 로 보고 읽음 처리를 하지 않는다.
+    // 숨김에서 보임으로 바뀔 때만 준다 — 영역 조절 때마다 주면 다른 입력칸의 포커스를 뺏는다
+    if (becameVisible && !this.view.webContents.isDestroyed()) this.view.webContents.focus()
   }
 
   /** 다시 숨김 창으로 돌려보낸다 */

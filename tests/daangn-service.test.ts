@@ -461,4 +461,22 @@ describe('DaangnService', () => {
     expect(cleared).toEqual([partition])
   })
 
+
+  it('방을 열고 잠시 뒤 목록을 다시 읽어 읽음 처리된 안 읽음 배지를 바로 지운다', async () => {
+    const a = repo.addAccount({ label: 'A', partitionPrefix: 'p-' })
+    makeView = (id) => {
+      const v = new FakeView(id)
+      v.channels = [chan(id, 'R1', 1)]
+      return v
+    }
+    const svc = make()
+    await svc.runTick()
+    expect(svc.snapshot().accounts[0].unread).toBe(1)
+    svc.setRoomBounds(BOUNDS)
+    await svc.openRoom(a.id, 'R1')
+    // 당근이 읽음 처리를 하면 다음 읽기에서 0 이 된다
+    ;(views.get(a.id) as FakeView).channels = [chan(a.id, 'R1', 0)]
+    await vi.advanceTimersByTimeAsync(3000)
+    expect(svc.snapshot().accounts[0].unread).toBe(0)
+  })
 })

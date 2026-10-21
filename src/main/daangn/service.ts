@@ -28,6 +28,8 @@ const TEMP_WAIT_TRIES = 10
 const SCAN_TIMEOUT_MS = 15_000
 /** 한 번의 읽기에서 개별 알림을 낼 최대 개수. 넘으면 요약 알림 하나 */
 const MAX_NOTIFY_PER_READ = 3
+/** 방을 연 뒤 목록을 다시 읽는 시점(ms) */
+const REREAD_AFTER_OPEN_MS = [1500, 5000]
 
 function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
   return new Promise<T>((resolve, reject) => {
@@ -223,6 +225,7 @@ export class DaangnService {
       if (seq !== this.openSeq) return
       this.open = { accountId, roomId }
       this.showOpen()
+      this.rereadSoon()
     } finally {
       this.pending.delete(accountId)
     }
@@ -251,6 +254,18 @@ export class DaangnService {
     // 뷰 안의 방이 열린 방과 다르면(빠르게 바꾸는 중·뷰 안 이동) 다른 방 입력칸에 들어가지 않게 거부
     if (!view || view.currentRoomId() !== this.open.roomId) return false
     return view.fillText(text)
+  }
+
+  /**
+   * 방을 열면 당근이 잠시 뒤 읽음 처리를 한다 — 5초 주기를 기다리지 않고 곧 목록을 다시 읽어
+   * 안 읽음 배지가 바로 지워지게 한다(늦게 처리될 때를 위해 한 번 더)
+   */
+  private rereadSoon(): void {
+    for (const ms of REREAD_AFTER_OPEN_MS) {
+      setTimeout(() => {
+        if (!this.disposed) void this.runTick()
+      }, ms)
+    }
   }
 
   private showOpen(): void {

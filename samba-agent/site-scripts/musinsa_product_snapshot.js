@@ -6,16 +6,18 @@ for(let i=0;i<15&&!(pid&&(await page.url()).includes(pid));i++)await sleep(1000)
 }
 const onOrder=/order-form/.test(await page.url())
 if(!onOrder)await page.waitFor('구매하기',12000).catch(()=>{})
-const safe=async(fn,d)=>{for(let i=0;i<3;i++){try{return await fn()}catch{await page.dismissOverlay().catch(()=>{});await sleep(1500)}}return d}
+const safe=async(fn,d)=>{for(let i=0;i<3;i++){try{return await fn()}catch{await sleep(1500)}}return d}
 const text=async(s)=>{const t=(await page.get(s?{selector:s}:{})).tree;return t.slice(t.indexOf('PAGE TEXT'))}
 const it=async()=>(await safe(()=>page.get({interactive:true}),{tree:''})).tree.split('\n')
 let ln=await it()
+const ID=l=>+l.match(/^\[(\d+)\]/)[1]
+const ck=i=>page.click(i)
 const idL=(arr,re)=>{const l=arr.find(x=>re.test(x));const m=l&&l.match(/^\[(\d+)\]/);return m?Number(m[1]):null}
 const hs=ln.some(l=>/선택 목록 열기|선택 목록 닫기/.test(l))
 let op=[],chosen='',pk=!hs
-const norm=s=>s.toLowerCase().replace(/[\s_\-·]/g,'').replace(/gray/g,'grey')
-const w=norm(String(args.size||''))
-const KO={블랙:'black',화이트:'white',그레이:'grey',핑크:'pink',베이지:'beige',네이비:'navy',코코아:'cocoa'}
+const norm=s=>s.toLowerCase().replace(/[\s_\-·]/g,'')
+const w=norm(String(args.size||'')).replace(/gray/g,'grey')
+const KO={블랙:'black',화이트:'white',그레이:'grey',핑크:'pink',베이지:'beige',네이비:'navy'}
 const wEn=Object.keys(KO).reduce((s,k)=>s.split(k).join(KO[k]),w)
 const ch=n=>{n=norm(n);return !!n&&(w.includes(n)||wEn.includes(n))}
 const CRE=/textbox "(색상|컬러|컬러\(Color\)|Color)"/i
@@ -42,7 +44,6 @@ return R
 }
 const rd3=async()=>{
 let p=await text('[class*=Option]')
-if(!/도착|발송/.test(p))p=await text('[class*=Select]')
 const k=p.lastIndexOf('비밀글 제외')
 const seg=k>=0?p.slice(k):p
 const re=/(?:^|\s)((?:[A-Za-z가-힣]+\s)?\d{2,3}(?:mm)?|[A-Z]{1,3}|FREE|프리)\s+(?:(?:\S+\([^)]*\)\s+)?(?:이내 )?(?:발송 예정|도착보장|도착 예정)|(\(품절\)))/g
@@ -72,7 +73,7 @@ const ci=L.findIndex(l=>CRE.test(l))
 if(ci<0||/textbox "[^"]+" value="[^"]+"/.test(L[ci]))return
 if(!segOf(L).some(l=>/선택 목록 닫기/.test(l))){
 const oid=idL(segOf(L),/button "선택 목록 열기"/)
-if(oid){await page.click(oid);await sleep(1200)}
+if(oid){await ck(oid);await sleep(1200)}
 L=await it()
 }
 const cands=segOf(L).map(l=>l.match(/^\[(\d+)\] clickable "([^"]+)"/)).filter(Boolean).map(m=>({id:Number(m[1]),name:m[2]}))
@@ -92,12 +93,11 @@ if(ln.some(l=>/옵션 삭제/.test(l))){pk=true;break}
 const after=ln.slice(ln.findIndex(l=>SRE.test(l))+1)
 if(!after.some(l=>/선택 목록 닫기/.test(l))){
 const oi=idL(after,/button "선택 목록 열기"/)
-if(oi){await page.click(oi);await sleep(1200)}
+if(oi){await ck(oi);await sleep(1200)}
 }
 ln=await it()
-for(let rf=0,rid;rf<3&&(rid=idL(ln,/button "새로고침"/));rf++){await page.click(rid);await sleep(2500);ln=await it()}
-const ids=L=>L.slice(L.findIndex(l=>SRE.test(l))+1).filter(l=>ARRRE.test(l)).map(l=>Number(l.match(/^\[(\d+)\]/)[1]))
-for(let k=0;k<4&&ids(ln)[0];k++){try{await page.scroll('up',ids(ln)[0])}catch{break}ln=await it()}
+for(let rf=0,rid;rf<3&&(rid=idL(ln,/button "새로고침"/));rf++){await ck(rid);await sleep(2500);ln=await it()}
+const ids=L=>L.slice(L.findIndex(l=>SRE.test(l))+1).filter(l=>ARRRE.test(l)).map(l=>ID(l))
 let ri=ids(ln)
 let R=await safe(rd1,[])
 if(!R.length||R.length<ri.length||R.some(r=>r.name.length>80)){
@@ -119,10 +119,10 @@ if(best<0||bs<1)break
 if(txo){
 const k=R.slice(0,best).filter(r=>!r.so).length
 let L3=await it()
-if(!L3.some(l=>/선택 목록 닫기/.test(l))){const o=idL(L3.slice(L3.findIndex(l=>SRE.test(l))+1),/button "선택 목록 열기"/);if(o){await page.click(o);await sleep(1200);L3=await it()}}
-const tids=L3.slice(L3.findIndex(l=>SRE.test(l))+1).filter(l=>/clickable "[^"]*(발송 예정|도착보장|도착 예정)/.test(l)).map(l=>Number(l.match(/^\[(\d+)\]/)[1]))
-if(tids[k])await page.click(tids[k])
-else try{await page.clickText('도착',k)}catch{break}
+if(!L3.some(l=>/선택 목록 닫기/.test(l))){const o=idL(L3.slice(L3.findIndex(l=>SRE.test(l))+1),/button "선택 목록 열기"/);if(o){await ck(o);await sleep(1200);L3=await it()}}
+const tids=L3.slice(L3.findIndex(l=>SRE.test(l))+1).filter(l=>/clickable "[^"]*(발송 예정|도착보장|도착 예정)/.test(l)).map(l=>ID(l))
+if(tids[k])await ck(tids[k])
+else break
 }else{
 const all=[]
 let tg=0
@@ -137,26 +137,26 @@ ln=await it()
 if(ids(ln).join()===cur.join())break
 }
 if(!tg)break
-await page.click(tg)
+await ck(tg)
 }
 chosen=R[best].name
 let l2=await it()
 for(let q=0;q<6&&!l2.some(l=>/옵션 삭제/.test(l));q++){await sleep(1200);l2=await it()}
 pk=l2.some(l=>/옵션 삭제/.test(l))
 const cl=!pk&&idL(l2,/button "선택 목록 닫기"/)
-if(cl)await page.click(cl)
+if(cl)await ck(cl)
 }
 }
 if(!pk)return{options:op,note:'nopick'}
 if(!onOrder){
 ln=await it()
 const bi=idL(ln,/button "(?![^"]*장바구니)[^"]*구매하기[^"]*"/)
-if(bi)await page.click(bi)
+if(bi)await ck(bi)
 else if(!hs){try{await page.clickText('구매하기',0)}catch{return{options:op,note:'no buy button'}}}
 else return{options:op,note:'no buy button'}
 await sleep(1200)
 const bb=idL(await it(),/button "바로 구매하기"/)
-if(bb)await page.click(bb)
+if(bb)await ck(bb)
 }
 let t=''
 for(let i=0;i<12;i++){
@@ -171,10 +171,10 @@ const sm=tail.match(/(\S+(?:\s*·\s*\S+)+)\s*\/\s*\d+개/)||t.match(/주문 상�
 let selected=sm?sm[1].trim():''
 if(sm&&/·/.test(sm[1])){const b=tail.slice(0,tail.indexOf(sm[0])).trim().split(/\s+/);const e=[];for(let i=b.length-1;i>=0&&b[i]&&!/_|^·$/.test(b[i])&&norm(b[i])&&(w.includes(norm(b[i]))||wEn.includes(norm(b[i])));i--)e.unshift(b[i]);if(e.length)selected=e.concat(sm[1]).join(' ')}
 const pn=(String(args.size||'').match(/[A-Z][A-Z0-9]{5,}\s*$/)||[])[0]
-if(selected&&pn&&!selected.includes(pn)&&tail.slice(0,300).includes(pn))selected+=' '+pn
+if(selected&&pn&&!selected.includes(pn)){const ns=norm(selected);if(tail.slice(0,300).includes(pn)||args.size.replace(pn,'').split(/\s+/).filter(Boolean).every(x=>ns.includes(norm(x))))selected+=' '+pn}
 const si0=t.lastIndexOf('결제 수단')
 const ms=si0>=0?t.slice(si0,si0+400):t
 const MN=['무신사머니','무신사페이','토스페이','카카오페이','페이코','네이버페이','카드','가상계좌']
 const methods=MN.filter(n=>ms.includes(n))
 if(!op.length)op=selected?[selected.split(/\s+/).pop()]:[]
-return{cost,options:op,methods,selected,chosen:chosen||op[0]||''}
+return{cost,options:op,methods,selected,chosen:chosen||op[0]||'',qty:+(tail.match(/\/\s*(\d+)개/)||[])[1]||null}

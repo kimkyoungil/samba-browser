@@ -58,7 +58,8 @@ def tap(x, y, wait=1.0):
   sh('input', 'tap', str(x), str(y)); time.sleep(wait)
 
 def dump():
-  uif = 'ui_' + re.sub(r'\W', '', DEV)[-12:] + '.xml'   # 기기별 파일(두 폰 동시 실행 때 충돌 방지)
+  import hashlib
+  uif = 'ui_' + hashlib.md5(DEV.encode()).hexdigest()[:10] + '.xml'   # 기기별 파일(mDNS 이름은 끝이 같아 해시로 구분)
   root = None
   for attempt in range(4):   # 덤프가 비면(기기 순간 끊김·하네스와 겹침) 잠깐 쉬고 다시
     sh('rm', '-f', '/sdcard/ui_daangn.xml')                  # 덤프 실패 때 옛 파일을 읽지 않도록 먼저 지움

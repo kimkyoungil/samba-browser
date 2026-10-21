@@ -1,6 +1,6 @@
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
-import { Globe, ListChecks, PanelLeft, ScrollText, Settings } from 'lucide-react'
+import { Globe, ListChecks, MessageCircle, PanelLeft, ScrollText, Settings } from 'lucide-react'
 import { cn } from '@renderer/lib/utils'
 import logo from '@renderer/assets/logo.png'
 import { useUiStore, type MainView } from '@renderer/stores/uiStore'
@@ -16,6 +16,7 @@ import { WorkspaceSwitcher } from '@renderer/components/workspace/WorkspaceSwitc
 const ICONS: Record<(typeof SIDEBAR_ITEMS)[number]['key'], typeof Globe> = {
   browser: Globe,
   tasks: ListChecks,
+  daangn: MessageCircle,
   logs: ScrollText
 }
 

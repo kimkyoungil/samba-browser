@@ -85,8 +85,8 @@ describe('사이드바 이동 항목', () => {
     expect(SIDEBAR_ITEMS.find((i) => i.key === 'tasks')?.view).toBe('tasks')
   })
 
-  it('폰은 사이드바에 두지 않는다(설정 → 폰 연동으로 옮겼다)', () => {
-    expect(SIDEBAR_ITEMS.map((i) => i.key)).toEqual(['browser', 'tasks', 'logs'])
+  it('폰은 사이드바에 두지 않는다(설정 → 폰 연동으로 옮겼다). 당근 채팅함은 매일 보므로 둔다', () => {
+    expect(SIDEBAR_ITEMS.map((i) => i.key)).toEqual(['browser', 'tasks', 'daangn', 'logs'])
   })
 
   it('항목 키가 겹치지 않는다', () => {

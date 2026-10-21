@@ -19,6 +19,7 @@ export type MainView =
   | 'personal'
   | 'bookmarks'
   | 'phones'
+  | 'daangn'
   | 'extensions'
   | 'automation'
   | 'settings'

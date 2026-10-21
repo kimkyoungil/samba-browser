@@ -12,6 +12,7 @@ import { LoginSaveBar } from '@renderer/components/vault/LoginSaveBar'
 import { PersonalInfoPage } from '@renderer/pages/PersonalInfoPage'
 import { BookmarksPage } from '@renderer/pages/BookmarksPage'
 import { PhonesPage } from '@renderer/pages/PhonesPage'
+import { DaangnPage } from '@renderer/pages/DaangnPage'
 import { ExtensionsPage } from '@renderer/pages/ExtensionsPage'
 import { AutomationPage } from '@renderer/pages/AutomationPage'
 import { SettingsPage } from '@renderer/pages/SettingsPage'
@@ -155,6 +156,8 @@ export default function App(): React.JSX.Element {
             <BookmarksPage />
           ) : view === 'phones' ? (
             <PhonesPage />
+          ) : view === 'daangn' ? (
+            <DaangnPage />
           ) : view === 'extensions' ? (
             <ExtensionsPage />
           ) : view === 'automation' ? (

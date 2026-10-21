@@ -191,6 +191,28 @@ export const accountPhones = sqliteTable('account_phones', {
   updatedAt: integer('updated_at').notNull()
 })
 
+// 당근 통합 채팅함의 계정 — 계정마다 전용 세션 파티션을 가진다. 세션은 이 PC 에만 있어 동기화하지 않는다
+export const daangnAccounts = sqliteTable('daangn_accounts', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  label: text('label').notNull(),
+  // 만들 때 한 번 정해 저장하는 세션 파티션 이름('persist:ws1-__daangn-<id>__')
+  partition: text('partition').notNull().unique(),
+  displayName: text('display_name').notNull().default(''),
+  profileImage: text('profile_image'),
+  // 'loading' | 'logged_in' | 'expired' | 'read_failed'
+  state: text('state').notNull().default('loading'),
+  lastSeenAt: integer('last_seen_at').notNull().default(0),
+  createdAt: integer('created_at').notNull()
+})
+
+// 자주 쓰는 답변 템플릿(계정 공통). 동기화하지 않는다
+export const daangnTemplates = sqliteTable('daangn_templates', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  text: text('text').notNull(),
+  sortOrder: integer('sort_order').notNull(),
+  createdAt: integer('created_at').notNull()
+})
+
 // 동기화 부가 상태. 'lastPulledAt' | 'deviceId' | 'userId' | 'settings:<key>:updatedAt'
 export const syncState = sqliteTable('sync_state', {
   key: text('key').primaryKey(),

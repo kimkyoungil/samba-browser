@@ -147,5 +147,15 @@ export const migrations: Migration[] = [
     tag: '0010_auth_events_pay_method',
     optional: true,
     sql: ['ALTER TABLE `auth_events` ADD `pay_method` text;']
+  },
+  {
+    // 당근 통합 채팅함 — 계정(세션 파티션 이름 포함)과 답변 템플릿. PC 로컬 전용이다
+    tag: '0011_daangn',
+    optional: true,
+    sql: [
+      "CREATE TABLE IF NOT EXISTS `daangn_accounts` (\n\t`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,\n\t`label` text NOT NULL,\n\t`partition` text NOT NULL,\n\t`display_name` text DEFAULT '' NOT NULL,\n\t`profile_image` text,\n\t`state` text DEFAULT 'loading' NOT NULL,\n\t`last_seen_at` integer DEFAULT 0 NOT NULL,\n\t`created_at` integer NOT NULL\n);",
+      'CREATE UNIQUE INDEX IF NOT EXISTS `daangn_accounts_partition_unique` ON `daangn_accounts` (`partition`);',
+      'CREATE TABLE IF NOT EXISTS `daangn_templates` (\n\t`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,\n\t`text` text NOT NULL,\n\t`sort_order` integer NOT NULL,\n\t`created_at` integer NOT NULL\n);'
+    ]
   }
 ]

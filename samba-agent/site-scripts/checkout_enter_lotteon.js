@@ -29,7 +29,7 @@ const mp = simplePays.find(p=>p.includes(card)||(card && card.length>0 && p.incl
 if (!mp) return {ok:false, error:'payment method not found: '+card};
 const KP=mp==='카카오페이';
 const LC=mp==='간편결제';
-if(!KP){await page.clickText(mp);await sleep(1500);}
+await page.clickText(mp);await sleep(1500);
 {
 const Q=async(q,re)=>(await page.get({query:q})).tree.split('\n').filter(l=>re.test(l));
 const hi=ls=>ls.length?Math.max(...ls.map(l=>parseInt(l.slice(1)))):-1;
@@ -42,7 +42,7 @@ const mx=rs.length?Math.max(...rs.map(x=>x.id)):0; const best=rs.filter(r=>r.id>
 if(!best&&KP) return {ok:false,error:'카카오페이 머니 즉시할인 없음'};
 if(!best&&LC) return {ok:false,error:'롯데카드 즉시할인 없음'};
 if(!best){const c=hi(await Q('닫기',/button "닫기"/)); if(c>0){await page.click(c); await sleep(600);}}
-else{var want=1; if(!best.on){if(LC&&page.clickNative){await page.clickNative(best.id);}else{await page.click(best.id);} await sleep(1200);}
+else{var want=1; if(!best.on){if(LC&&page.clickNative){await page.clickNative(best.id);}else{await page.click(KP?best.id+1:best.id);} await sleep(1200);}
 const b=hi(await Q('할인혜택 받기',/button "[\d,]+원 할인혜택 받기"/)); if(b<0) return {ok:false,error:'할인혜택 받기 버튼 없음'};
 await page.click(b); await sleep(2500);
 const ap=hi(await Q('적용하기',/button "적용하기"/)); if(ap>0){await page.click(ap); await sleep(3500);}

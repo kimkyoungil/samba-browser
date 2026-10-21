@@ -78,7 +78,8 @@ export const KNOWN_LOGIN_URLS: Record<string, string> = {
   // --- 국내 쇼핑/커머스 ---
   'coupang.com': 'https://login.coupang.com/login/login.pang',
   'kream.co.kr': 'https://kream.co.kr/login',
-  'musinsa.com': 'https://member.one.musinsa.com/login',
+  // member.one.musinsa.com/login 을 바로 열면 에러 페이지다(2026-10 실측: 진입 토큰이 있어야 한다). 이 주소가 토큰을 붙여 넘겨 준다
+  'musinsa.com': 'https://www.musinsa.com/auth/login',
   '11st.co.kr': 'https://login.11st.co.kr/auth/front/login.tmall',
   'gmarket.co.kr': 'https://member.gmarket.co.kr/login/login.asp',
   'auction.co.kr': 'https://signin.auction.co.kr/login/',

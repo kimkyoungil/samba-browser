@@ -31,7 +31,7 @@ describe('knownLoginUrl', () => {
   })
 
   it('E2E 에서 loginUrl 이 어긋났던 국내 사이트 규칙이 채워져 있다', () => {
-    expect(knownLoginUrl('www.musinsa.com')).toBe('https://member.one.musinsa.com/login')
+    expect(knownLoginUrl('www.musinsa.com')).toBe('https://www.musinsa.com/auth/login')
     expect(knownLoginUrl('www.29cm.co.kr')).toBe('https://www.29cm.co.kr/mypage/login')
     expect(knownLoginUrl('www.fashionplus.co.kr')).toBe('https://www.fashionplus.co.kr/auth/login')
     expect(knownLoginUrl('with.gsshop.com')).toBe('https://with.gsshop.com/login/loginForm.gs')
@@ -85,7 +85,7 @@ describe('correctLoginUrl', () => {
       correctLoginUrl('samba-wave.vercel.app', 'https://samba-wave.vercel.app/samba/sign-up')
     ).toBe('https://samba-wave.vercel.app/samba/login')
     // URL 이 비어 있어도 알려진 로그인 URL 로 채운다
-    expect(correctLoginUrl('www.musinsa.com', '')).toBe('https://member.one.musinsa.com/login')
+    expect(correctLoginUrl('www.musinsa.com', '')).toBe('https://www.musinsa.com/auth/login')
   })
 
   it('이미 로그인 페이지이거나 규칙이 없으면 원본을 유지한다', () => {

@@ -129,6 +129,26 @@ def test_검색부터_알리페이_결제와_주문번호까지():
     assert res.cost_krw == round(580.92 * 202.16 * 0.973)
 
 
+def test_missing_payment_success_never_records_same_price_order(monkeypatch):
+    phone = FakePhone(
+        [HOME, SEARCH, RESULT, PRODUCT, SHEET, SHEET, SHEET2,
+         ALIPAY_SCREEN, [n('支付失败')]],
+        [ALIPAY],
+    )
+    ticks = iter(range(0, 10000, 30))
+    monkeypatch.setattr(dewu_order.time, 'monotonic', lambda: next(ticks))
+    lookups = []
+    monkeypatch.setattr(
+        dewu_order, '_latest_order_no',
+        lambda *args: lookups.append(True) or '110213474374883854',
+    )
+    with pytest.raises(DewuOrderError, match='재결제 금지') as err:
+        buy_on_dewu(phone, 'IE7426', '41⅓', max_cny=900,
+                    approve=lambda krw: 'ok', rate=202.16, sleep=lambda s: None)
+    assert err.value.paid is True
+    assert lookups == []
+
+
 def test_상한을_넘으면_결제하지_않는다():
     phone = FakePhone([HOME, SEARCH, RESULT, PRODUCT, SHEET, SHEET, SHEET2], [DEWU])
     with pytest.raises(DewuOrderError, match='마진'):
@@ -157,7 +177,7 @@ def test_得物_외_판매처도_得物을_검색한다(monkeypatch):
     handle = make_shihuo_handler(wave, lambda krw: 'ok', rate_of=lambda: 202.16)
     outcome, _fail, line = handle(None, SimpleNamespace(order_no='A1'))
     # 판매처 게이트를 지나 폰 연결 단계까지 간다
-    assert outcome == 'needs_human' and '폰' in line and '판매처' not in line
+    assert outcome == 'needs_ai' and '폰' in line and '판매처' not in line
 
 
 def test_성공하면_원가와_배송비_8500을_기록한다(monkeypatch):
@@ -208,7 +228,7 @@ def test_판매처가_得物이_아니면_품절이어도_재고X_하지_않고_
     monkeypatch.setattr('samba_agent.ops.ssg_gift_accept.find_phone_serial', lambda adb, want: 'S1')
     handle = make_shihuo_handler(wave, lambda krw: 'ok', rate_of=lambda: 202.16)
     outcome, _fail, line = handle(None, SimpleNamespace(order_no='A1'))
-    assert outcome == 'needs_human' and '淘宝' in line
+    assert outcome == 'needs_ai' and '淘宝' in line
     assert flagged == []
 
 
@@ -425,6 +445,30 @@ def test_최저가_판매처가_淘宝이면_폰_구매_AI가_사고_득물을_�
     assert '1203A667-100' in buyer.ctx and '淘宝' in buyer.ctx
 
 
+@pytest.mark.parametrize('paid', [False, True])
+def test_득물_화면오류는_결제전만_폰_AI가_복구한다(monkeypatch, paid):
+    _patch_phone(monkeypatch)
+    def broken(*a, **kw):
+        raise DewuOrderError('상품 화면에서 立即购买 를 못 찾았다', paid=paid)
+    monkeypatch.setattr('samba_agent.ops.dewu_order.buy_on_dewu', broken)
+    records = []
+    calls = []
+    buyer = _Buyer(result=dewu_order.DewuResult('D1', 300.0, 291.0, 200.0))
+    def factory():
+        calls.append(True)
+        return buyer
+    handle = make_shihuo_handler(_wave_for('得物', records), lambda krw: 'ok',
+                                 rate_of=lambda: 200.0, phone_repair_enabled=True,
+                                 buyer_factory=factory)
+    result, code, _ = handle(None, SimpleNamespace(order_no='A1'))
+    if paid:
+        assert result == 'needs_ai' and code == 'pay_interrupted'
+        assert calls == [] and records == []
+    else:
+        assert result == 'done' and len(calls) == 1 and records
+        assert '1203A667-100' in buyer.ctx
+
+
 def test_폰_구매_AI가_못_사면_다음_순위_得物으로_넘어간다(monkeypatch):
     _patch_phone(monkeypatch)
     calls: list[float] = []
@@ -461,7 +505,7 @@ def test_폰_구매_AI가_결제한_뒤_실패하면_득물로_넘어가지_않�
         phone_buyer_enabled=True,
     )
     result, code, _ = handle(None, SimpleNamespace(order_no='A1'))
-    assert result == 'needs_human' and code == 'pay_interrupted'
+    assert result == 'needs_ai' and code == 'pay_interrupted'
 
 
 def test_폰_구매_AI가_꺼져_있으면_淘宝_최저가_주문은_득물도_열지_않고_사람에게_넘긴다(monkeypatch):
@@ -474,7 +518,7 @@ def test_폰_구매_AI가_꺼져_있으면_淘宝_최저가_주문은_득물도_
     )
     handle = make_shihuo_handler(_wave_for('淘宝', []), lambda krw: 'ok', rate_of=lambda: 200.0)
     result, code, line = handle(None, SimpleNamespace(order_no='A1'))
-    assert result == 'needs_human' and code == 'unknown' and '샵백' in line
+    assert result == 'needs_ai' and code == 'unknown' and '샵백' in line
 
 
 def test_淘宝_최저가면_PC_샵백_경로로_사고_淘宝_계정으로_기입한다(monkeypatch):
@@ -518,7 +562,7 @@ def test_淘宝_PC_구매가_결제됐을_수_있으면_다음_순위로_넘어�
         _wave_for('淘宝', []), lambda krw: 'ok', rate_of=lambda: 200.0, pc_call=lambda t, a: ''
     )
     result, code, _ = handle(None, SimpleNamespace(order_no='A1'))
-    assert result == 'needs_human' and code == 'pay_interrupted'
+    assert result == 'needs_ai' and code == 'pay_interrupted'
 
 
 def test_95分_중고_표시가_있으면_중고로_본다():
@@ -666,3 +710,17 @@ def test_금액_글자가_띄어_쓰여도_읽는다():
     assert dewu_order._price_of('¥ 4 8 8') == 488.0
     assert dewu_order._price_of('￥ 659.00') == 659.0
     assert dewu_order._price_of('实付款') is None
+
+
+def test_알리페이_새_결제창_금액은_통화기호_옆_소수점_숫자로_읽는다():
+    """라벨('订单金额') 없이 가게 이름 아래 '¥' 와 '311.00' 이 따로 뜨는 결제창(2026-10-21 실기 덤프)."""
+    nodes = [
+        Node('更改付款方式', '', '', 618, 851),
+        Node('得物-得到美好事物', '', '', 360, 939),
+        Node('¥', '', '', 242, 1021),
+        Node('311.00', '', '', 376, 1013),
+        Node('极速付款', '', '', 384, 1388),
+    ]
+    assert dewu_order.alipay_order_amount(nodes) == 311.0
+    # 소수점 없는 숫자(주소·번호)는 금액으로 보지 않는다
+    assert dewu_order.alipay_order_amount([Node('¥', '', '', 10, 10), Node('1234', '', '', 40, 10)]) is None

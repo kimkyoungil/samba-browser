@@ -186,7 +186,17 @@ def alipay_order_amount(nodes: list[Node]) -> float | None:
                         return float(found.group(1).replace(',', ''))
                     except ValueError:
                         return None
-    return None
+    # 새 알리페이 결제창(2026-10-21): '订单金额' 라벨 없이 가게 이름 아래에 '¥' 와 '311.00' 이 따로 뜬다 —
+    # 위에서 가장 가까운 '¥' 옆 소수점 금액을 결제금액으로 읽는다(이걸 못 읽어 得物 식화 주문 결제가 막혔다)
+    money = re.compile(r'^\d+(?:,\d{3})*\.\d{2}$')
+    for sym in sorted((n for n in nodes if shown(n) in ('¥', '￥')), key=lambda n: (n.y, n.x)):
+        near = [m for m in nodes if money.match(shown(m)) and abs(m.y - sym.y) <= 80 and m.x > sym.x]
+        if near:
+            best = min(near, key=lambda m: abs(m.y - sym.y) + abs(m.x - sym.x))
+            try:
+                return float(shown(best).replace(',', ''))
+            except ValueError:
+                return None
     return None
 
 
@@ -525,15 +535,11 @@ def buy_on_dewu(
     # 6) 支付成功 + 청구 위안 → 완료
     nodes = wait_for(lambda ns: has_text(ns, '支付成功'), 20)
     if not has_text(nodes, '支付成功'):
-        # 완료 화면을 놓쳐도 결제는 됐을 수 있다 — 주문 목록에서 같은 금액 주문을 찾아 바로 기입한다
-        # (실기 2026-10-09 A-SW242585599: 결제됐는데 여기서 멈춰 9시간 기입 안 됨. 사용자: 구매하면 즉시 입력이 최우선)
-        found = _latest_order_no(phone, sleep, price)
-        if found is None:
-            raise DewuOrderError(
-                '알리페이 완료 화면(支付成功)이 안 보이고 주문 목록에서도 못 찾았다 — 得物 주문내역 확인(재결제 금지)',
-                paid=True,
-            )
-        return DewuResult(order_no=found, paid_cny=round(price * 1.03, 2), item_cny=price, rate=rate)
+        # 금액만 같은 과거 주문은 이번 결제의 증거가 아니다.
+        raise DewuOrderError(
+            '알리페이 완료 화면(支付成功) 미확인 — 得物 주문내역 대조 전 이행 기입 금지(재결제 금지)',
+            paid=True,
+        )
     amounts = [float(n.text) for n in nodes if re.fullmatch(r'\d+\.\d{2}', n.text)]
     paid_cny = amounts[0] if amounts else round(price * 1.03, 2)
     done = find_text(nodes, '완료') or find_text(nodes, '完成')
@@ -709,9 +715,10 @@ def make_shihuo_handler(
     buyer_factory: Callable[[], Any] | None = None,
     approve_other: Callable[[int], str] | None = None,
     phone_buyer_enabled: bool = False,
+    phone_repair_enabled: bool = False,
     pc_call: Callable[[str, dict[str, object]], str] | None = None,
 ) -> Callable[[object, object], tuple[str, str | None, str]]:
-    """워커가 SHIHUO 주문에 부르는 처리기 — (작업, 주문) → (결과 'done'|'needs_human', 오류 코드, 보고 한 줄)."""
+    """워커가 SHIHUO 주문에 부르는 처리기 — (작업, 주문) → (결과 'done'|'needs_ai', 오류 코드, 보고 한 줄)."""
     import os
 
     from samba_agent.ops.ssg_gift_accept import DEFAULT_ADB, DEFAULT_PHONE, find_phone_serial
@@ -725,25 +732,25 @@ def make_shihuo_handler(
         wave_key = str(getattr(order, 'wave_key', '') or order_no)
         detail = wave.get_order(wave_key)  # type: ignore[attr-defined]
         # 식화 판매처가 唯品会·淘宝 라도 得物에서 같은 품번을 팔 수 있다(사용자 2026-10-06: 조던 IB7256-010) —
-        # 판매처로 거르지 않고 得物을 검색한다. 없으면 검색 단계가 needs_human 으로 돌려준다
+        # 판매처로 거르지 않고 得物을 검색한다. 없으면 검색 단계가 needs_ai 으로 돌려준다
         eu = (detail.registered_option or '').strip()
         model = (detail.source_product_code or '').strip()
         if not eu or not model:
             return (
-                'needs_human',
+                'needs_ai',
                 'unknown',
                 f'EU 사이즈({eu or "-"})·품번({model or "-"})이 없어 살 수 없다',
             )
         if model.upper().startswith('SH-'):
             # 식화 자체 코드(SH-상품-스타일)는 得物 검색어가 못 된다 — 엉뚱한 첫 상품을 열고 사이즈를 고를 뻔했다(2026-10-04)
             return (
-                'needs_human',
+                'needs_ai',
                 'unknown',
                 f'품번이 식화 코드({model})라 得物 검색 불가 — 삼바 상품관리에 진짜 품번(스타일 코드)을 넣어야 한다',
             )
         rate = rate_of()
         if rate <= 0:
-            return 'needs_human', 'unknown', '위안 환율을 못 받아 원가를 낼 수 없다 — 결제하지 않음'
+            return 'needs_ai', 'unknown', '위안 환율을 못 받아 원가를 낼 수 없다 — 결제하지 않음'
         revenue = float(detail.revenue or 0)
         sale = float(getattr(detail, 'sale_price', 0) or 0)
         if sale > 0 and revenue >= sale:
@@ -757,11 +764,11 @@ def make_shihuo_handler(
             else 0
         )
         if max_cny <= 0:
-            return 'needs_human', 'margin', '정산금을 몰라 마진을 볼 수 없다 — 결제하지 않음'
+            return 'needs_ai', 'margin', '정산금을 몰라 마진을 볼 수 없다 — 결제하지 않음'
         seller_name = str(getattr(detail, 'source_seller', '') or '').strip()
         serial = find_phone_serial(adb_path, want)
         if serial is None:
-            return 'needs_human', 'unknown', '결제 폰(임성희폰)이 연결돼 있지 않다'
+            return 'needs_ai', 'unknown', '결제 폰(임성희폰)이 연결돼 있지 않다'
         # 식화 화이트리스트 판매처 중 최저가에서 산다. 최저가가 淘宝·唯品会 이면 폰 구매 AI 가 식화 앱 링크로 들어가 사고
         # (淘宝 검색으로 사면 블랙리스트 가게를 고른다 — 사용자 2026-10-08), 거기서 못 사면(품절·상한 초과) 다음 순위인 得物로
         # 넘어간다. 어디서든 마진이 남는 가격(max_cny 이내)일 때만 결제한다
@@ -797,7 +804,7 @@ def make_shihuo_handler(
                     f'淘宝 {order_no} 원가 {cost:,}원 + 배송비 {CN_SHIPPING_FEE:,} · 마진 {margin:.1f}%',
                 )
             if pc is not None and pc[0] == 'paid?':
-                return 'needs_human', 'pay_interrupted', pc[1]
+                return 'needs_ai', 'pay_interrupted', pc[1]
             # 淘宝 에서 못 샀다(품절·상한·화면) — 다음 순위 得物 로 넘어간다(마진 상한은 得物 쪽도 그대로)
             log.info('淘宝 PC 구매 실패 — 다음 순위 得物: %s', pc[1] if pc else '')
             seller_name = '得物'
@@ -837,7 +844,7 @@ def make_shihuo_handler(
                     vip = (buyer_factory() if buyer_factory else PhoneBuyer()).buy(tb, vip_ctx)
             except DewuOrderError as e:
                 if e.paid:
-                    return 'needs_human', 'pay_interrupted', f'唯品会: {e}'
+                    return 'needs_ai', 'pay_interrupted', f'唯品会: {e}'
                 log.info('唯品会 구매 실패 — 다음 순위 得物: %s', e)
                 seller_name = '得物'
             else:
@@ -872,7 +879,7 @@ def make_shihuo_handler(
             # PC 샵백 구매 흐름이 생기기 전까지 득물도 열지 않고 사람에게 넘긴다
             price = float(getattr(detail, 'source_price_cny', 0) or 0)
             return (
-                'needs_human',
+                'needs_ai',
                 'unknown',
                 f'식화 최저가 판매처가 {seller_name}{f" ¥{price:g}" if price else ""} 이다 — 샵백을 켠 PC 구매 흐름이 '
                 '아직 없어 폰 앱·得物으로 사지 않았다. 사람이 샵백 경유로 구매',
@@ -903,7 +910,7 @@ def make_shihuo_handler(
                 shop = f'{seller_name}(식화 링크, 폰 AI)'
             except DewuOrderError as e:
                 if e.paid:
-                    return 'needs_human', 'pay_interrupted', str(e)
+                    return 'needs_ai', 'pay_interrupted', str(e)
                 failures.append(f'{seller_name}: {e}')
         if res is None:
             try:
@@ -919,8 +926,29 @@ def make_shihuo_handler(
                     )
             except DewuOrderError as e:
                 if e.paid:
-                    return 'needs_human', 'pay_interrupted', str(e)
+                    return 'needs_ai', 'pay_interrupted', str(e)
                 reasons = ' / '.join([*failures, f'得物: {e}'])
+                if phone_repair_enabled and not e.out_of_stock and '마진' not in reasons:
+                    from samba_agent.operator.phone_buyer import PhoneBuyer, PhoneToolbox
+
+                    ctx = LINE_BREAK.join([
+                        '# 得物 결제 전 화면 오류 복구',
+                        f'지정 품번 {model} · 지정 사이즈 {eu} · 상한 ¥{max_cny:g}',
+                        f'기존 함수 실패: {e}',
+                        '得物 앱에서 같은 품번의 새상품·같은 사이즈만 확인한다. 중고·포장하자 상품은 금지.',
+                        '다른 판매처로 바꾸지 않는다. 결제창에서는 pay 도구만 사용한다.',
+                        '품번과 사이즈를 화면에서 확인할 수 없으면 give_up 한다.',
+                    ])
+                    try:
+                        with PHONE_BUSY:
+                            tb = PhoneToolbox(Phone(adb_path, serial), approve,
+                                              max_cny=max_cny, rate=rate, expected_model=model)
+                            res = (buyer_factory() if buyer_factory else PhoneBuyer()).buy(tb, ctx)
+                        shop = '得物(폰 AI 복구)'
+                    except DewuOrderError as repair_error:
+                        if repair_error.paid:
+                            return 'needs_ai', 'pay_interrupted', str(repair_error)
+                        reasons += f' / 폰 AI 복구: {repair_error}'
                 if e.out_of_stock and not failures:
                     # 得物 화면에서 확인한 품절 — 재고X·취소중 으로 마감하고 근거를 메모에 남긴다(사용자 2026-10-07)
                     flagged = ''
@@ -935,9 +963,10 @@ def make_shihuo_handler(
                         )
                     except Exception as exc:  # noqa: BLE001 — 표시 실패가 보고를 막으면 안 된다
                         flagged = f'재고X 표시 실패: {type(exc).__name__}'
-                    return 'needs_human', 'out_of_stock', f'{e} · {flagged}'.strip(' ·')
-                fail = 'margin' if '마진' in reasons else 'unknown'
-                return 'needs_human', fail, reasons
+                    return 'needs_ai', 'out_of_stock', f'{e} · {flagged}'.strip(' ·')
+                if res is None:
+                    fail = 'margin' if '마진' in reasons else 'unknown'
+                    return 'needs_ai', fail, reasons
         note = (
             f'{shop} 앱(임성희폰) 결제 ¥{res.paid_cny:g}(상품 ¥{res.item_cny:g}+알리페이 카드수수료) × {res.rate:g} × 현대카드 청구할인 {HYUNDAI_BILLING_FACTOR}'
             f' · 중국 배송비 {CN_SHIPPING_FEE:,} 고정'

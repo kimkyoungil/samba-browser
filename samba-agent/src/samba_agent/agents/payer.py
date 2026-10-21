@@ -352,7 +352,7 @@ def order_form_mismatch(
     chosen_letters = size_letters(selected or '')
     if ordered_letters and chosen_letters and ordered_letters != chosen_letters:
         return f'옵션 사이즈 {sorted(ordered_letters)} 주문인데 주문서엔 {sorted(chosen_letters)} 이 담겼다'
-    if ordered_letters and not chosen_letters:
+    if ordered_letters and not chosen_letters and not (ordered_letters <= {'FREE', 'ONE'}):
         # 구매가 담긴 옵션을 못 넘긴 경우 — 주문서 화면에 사이즈 글자가 보이는데 주문 사이즈 글자가 하나도 없으면 다른 사이즈다
         page_letters = size_letters(text)
         if page_letters and not (ordered_letters & page_letters):

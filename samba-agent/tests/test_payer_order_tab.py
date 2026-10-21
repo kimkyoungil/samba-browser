@@ -30,3 +30,12 @@ def test_글자_사이즈가_다르게_담긴_주문서는_막는다():
     ok = page.replace(' S ', ' M ')
     assert order_form_mismatch(ok, name, opt, '01아이보리+미드헤더그레이 M') is None
     assert order_form_mismatch(ok, name, opt, '') is None
+
+
+def test_프리사이즈_주문은_화면의_다른_사이즈_글자로_막지_않는다():
+    """주문 FREE 인데 주문서의 다른 'S' 글자(문구 일부)를 사이즈로 읽어 결제를 막았다(실기 2026-10-21 SSG 라코스테 양말)."""
+    from samba_agent.agents.payer import order_form_mismatch
+
+    page = '라코스테 삭스 031(블랙) 1개 S 쇼핑백 신청 14,595원'
+    assert order_form_mismatch(page, '라코스테 삭스', '031(블랙) FREE RA195E-56G', '031(블랙)') is None
+    assert order_form_mismatch(page, '라코스테 삭스', '031(블랙) FREE RA195E-56G', '') is None

@@ -11,6 +11,10 @@ import { clampBounds, hiddenBounds } from './bounds'
 import { buildFillScript, buildHideListCss, buildScanScript, parseScan, type RawScan } from './selectors'
 import { classifyChatUrl, isAllowedChatUrl, roomIdOf } from './url-guard'
 
+/** 페이지의 alert·confirm·prompt 를 무력화한다(확인 대화상자가 쌓여 읽기가 멈추는 것도 막는다) */
+const SILENCE_DIALOGS_SCRIPT =
+  'window.alert = () => undefined; window.confirm = () => true; window.prompt = () => null'
+
 const CHAT_HOME = 'https://chat.daangn.com/'
 const LOGIN_URL = 'https://chat.daangn.com/login'
 /** 읽기가 이만큼 연달아 실패하면 화면 읽기 실패로 본다 */
@@ -219,6 +223,14 @@ export class DaangnAccountView {
     }
     wc.on('will-navigate', block)
     wc.on('will-redirect', block)
+    // 당근 웹이 알림음 파일을 못 찾으면 alert("timer_HtmlChk Function error…") 를 계정마다 계속 띄운다 —
+    // 숨은 뷰의 대화상자는 사람이 볼 일이 없으니 막고, 소리도 끈다
+    wc.setAudioMuted(true)
+    const silence = (): void => {
+      void wc.executeJavaScript(SILENCE_DIALOGS_SCRIPT).catch(() => undefined)
+    }
+    wc.on('dom-ready', silence)
+    wc.on('did-navigate-in-page', silence)
     // 숨김 창에서 확인 대화상자(떠나시겠어요?)가 뜨면 읽기가 영영 멈춘다 — 묻지 않고 넘어간다
     wc.on('will-prevent-unload', (e) => e.preventDefault())
     // 로그인 뒤 SPA 이동은 did-finish-load 가 다시 오지 않는다 — 목록 숨김 CSS 를 다시 넣는다

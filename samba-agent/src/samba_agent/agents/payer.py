@@ -12,7 +12,12 @@ from urllib.parse import urlparse, urlsplit
 
 from samba_agent import local_aliases
 from samba_agent.agents.base import AgentBase, AgentFailure, run_agent, split_page_dialogs
-from samba_agent.agents.buyer import DIRECT_CARD_METHODS, POINTS_ONLY_METHOD, product_no_of
+from samba_agent.agents.buyer import (
+    DIRECT_CARD_METHODS,
+    POINTS_ONLY_METHOD,
+    product_no_of,
+    size_letters,
+)
 from samba_agent.agents.contracts import AgentResult, Assignment
 from samba_agent.export.desktop import toast
 from samba_agent.failures import FailReason
@@ -341,6 +346,17 @@ def order_form_mismatch(
     sizes = _sizes(option, selected)
     if sizes and not any(re.search(rf'(?<![\d.]){re.escape(x)}(?![\d.])', text) for x in sizes):
         return f'옵션 {sorted(set(sizes))} 이 주문서에 없다'
+    # 글자 사이즈(S·M·L…) — 구매가 고른 옵션(selected)의 사이즈 글자가 주문과 다르면 결제하지 않는다
+    # (실기 2026-10-18 무신사 지오다노 2건: 주문 M 인데 S 로 담겨 결제됐다 — 숫자 사이즈만 대조해 통과했다)
+    ordered_letters = size_letters(option or '')
+    chosen_letters = size_letters(selected or '')
+    if ordered_letters and chosen_letters and ordered_letters != chosen_letters:
+        return f'옵션 사이즈 {sorted(ordered_letters)} 주문인데 주문서엔 {sorted(chosen_letters)} 이 담겼다'
+    if ordered_letters and not chosen_letters:
+        # 구매가 담긴 옵션을 못 넘긴 경우 — 주문서 화면에 사이즈 글자가 보이는데 주문 사이즈 글자가 하나도 없으면 다른 사이즈다
+        page_letters = size_letters(text)
+        if page_letters and not (ordered_letters & page_letters):
+            return f'옵션 사이즈 {sorted(ordered_letters)} 주문인데 주문서엔 {sorted(page_letters)} 만 보인다'
     pno = re.sub(r'\D', '', product_no or '')
     if len(pno) >= 6 and _has_number(text, pno):
         return None

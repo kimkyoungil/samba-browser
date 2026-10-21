@@ -2287,3 +2287,14 @@ def test_결제_항목_조회가_나중에_실패해도_비교_때_읽은_값을
         assert agent._payable_providers('other') is None
     finally:
         bm.parse_account_payments = orig
+
+
+def test_색에만_붙은_첫_사이즈_후보로_다른_사이즈를_고르지_않는다():
+    """2단 옵션 목록이 ['02블랙 S', 'M'] 처럼 첫 사이즈만 색에 붙어도 M 주문에 S 를 고르면 안 된다(실기 2026-10-18)."""
+    from samba_agent.agents.buyer import matching_options
+
+    assert matching_options(['02블랙 S', 'M'], '02블랙 / M') == ['M']
+    assert matching_options(['02블랙 S', 'M'], '02블랙 / S') == ['02블랙 S']
+    assert matching_options(['02블랙 S', '02블랙 M'], '02블랙 / M') == ['02블랙 M']
+    # M 이 품절이면 S 로 대신하지 않는다
+    assert matching_options(['02블랙 S', 'M (품절)'], '02블랙 / M') == []

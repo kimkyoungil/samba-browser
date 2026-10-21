@@ -798,6 +798,11 @@ def matching_options(options: list[str], wanted: str | None) -> list[str]:
             if tl:
                 # 사이즈 글자 조각(XL)은 사이즈 글자가 같은 선택지에만(2XL·XXL 제외)
                 by_tok = [o for o in by_tok if not size_letters(o) or size_letters(o) == tl]
+            if wl:
+                # 색 조각('02블랙')만 걸린 후보라도 사이즈 글자가 주문과 다르면 아니다 — 2단 옵션 목록이
+                # ['02블랙 S', 'M'] 처럼 첫 사이즈만 색에 붙어 나와 M 주문에 S 를 골랐다(실기 2026-10-18 무신사 지오다노 2건 사이즈 오구매)
+                by_piece = [o for o in by_piece if not size_letters(o) or size_letters(o) == wl]
+                by_tok = [o for o in by_tok if not size_letters(o) or size_letters(o) == wl]
             # 모든 선택지에 든 조각(색상 'YEL' ↔ 'YEL 230'…'YEL 290')은 가르는 힘이 없다 — 다음 조각으로 본다
             # (실기 2026-09-29 패션플러스: 주문 'YEL 270' 에 12개 전부가 후보가 돼 없는 270 을 골랐다)
             if len(live) > 1 and len(by_piece or by_tok) == len(live):
@@ -824,6 +829,10 @@ def matching_options(options: list[str], wanted: str | None) -> list[str]:
     digits = re.findall(r'\d+', w)
     if len(digits) == 1:
         by_digit = [o for o in live if re.findall(r'\d+', o) == digits]
+        # 색 번호('02')만 같은 후보는 사이즈 글자가 다르면 아니다(M 주문에 '02블랙 S')
+        wl_all = size_letters(w)
+        if wl_all:
+            by_digit = [o for o in by_digit if not size_letters(o) or size_letters(o) == wl_all]
         if by_digit:
             return by_digit
     return []

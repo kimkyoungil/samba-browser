@@ -82,6 +82,9 @@ export function PhonesPage(): React.JSX.Element {
   // 끌어 옮기기 — 끌고 있는 카드의 시리얼만 기억하고, 놓은 카드 자리로 옮긴다
   const [dragging, setDragging] = useState<string | null>(null)
   const [dragOver, setDragOver] = useState<string | null>(null)
+  // 카드 머리글(data-drag-handle)에서 누르기 시작했을 때만 끌기를 켠다 — 카드 전체가 끌리면 폰 화면 위에서
+  // 마우스로 끄는 스와이프(스크롤)가 카드 끌기로 가로채진다(실기 2026-10-21)
+  const [armed, setArmed] = useState<string | null>(null)
   const onDrop = (targetSerial: string): void => {
     const from = ordered.findIndex((p) => p.serial === dragging)
     const to = ordered.findIndex((p) => p.serial === targetSerial)
@@ -221,10 +224,16 @@ export function PhonesPage(): React.JSX.Element {
         ) : (
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3" title={t('phone.dragHint')}>
             {ordered.map((phone, i) => (
-              // 카드 자체를 끌 수 있다. 입력칸·버튼에서 시작한 드래그는 브라우저가 알아서 막는다
+              // 카드 머리글을 끌어 자리를 옮긴다(화면·조작 패드 위의 끌기는 폰 스와이프로 간다)
               <div
                 key={phone.id}
-                draggable
+                draggable={armed === phone.serial}
+                onMouseDown={(e) =>
+                  setArmed(
+                    (e.target as HTMLElement).closest('[data-drag-handle]') ? phone.serial : null
+                  )
+                }
+                onMouseUp={() => setArmed(null)}
                 onDragStart={(e) => {
                   setDragging(phone.serial)
                   e.dataTransfer.effectAllowed = 'move'
@@ -233,6 +242,7 @@ export function PhonesPage(): React.JSX.Element {
                 onDragEnd={() => {
                   setDragging(null)
                   setDragOver(null)
+                  setArmed(null)
                 }}
                 onDragOver={(e) => {
                   if (!dragging || dragging === phone.serial) return

@@ -84,7 +84,7 @@ export function PhoneCard({
     >
       {/* 머리글은 이름·모델만 보여 준다. 화면은 아래 '화면 보기' 버튼으로 연다 —
           모델명을 눌러야 열린다는 걸 알기 어려웠다(사용자 요청) */}
-      <div className="flex items-start gap-2">
+      <div data-drag-handle className="flex cursor-grab items-start gap-2 active:cursor-grabbing">
         <span className="min-w-0 flex-1">
           <span className="flex items-center gap-1.5">
             <span className={cn('h-[7px] w-[7px] shrink-0 rounded-full', phoneStateDotClass(phone.state))} />

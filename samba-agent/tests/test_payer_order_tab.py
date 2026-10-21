@@ -39,3 +39,14 @@ def test_프리사이즈_주문은_화면의_다른_사이즈_글자로_막지_�
     page = '라코스테 삭스 031(블랙) 1개 S 쇼핑백 신청 14,595원'
     assert order_form_mismatch(page, '라코스테 삭스', '031(블랙) FREE RA195E-56G', '031(블랙)') is None
     assert order_form_mismatch(page, '라코스테 삭스', '031(블랙) FREE RA195E-56G', '') is None
+
+
+def test_상품명_속_글자_M_Logo_때문에_S_주문을_막지_않는다():
+    """상품명 'M Logo' 의 M 이 선택 글자에 섞여 ['M','S'] 로 읽혀 S 주문이 멈췄다(실기 2026-10-21 무신사 지프 맨투맨)."""
+    from samba_agent.agents.payer import order_form_mismatch
+
+    name = '매장정품 지프 JEEP JR5TSU838BT 360g M Logo 반집업 맨투맨 스웨트셔츠'
+    page = f'{name} S / 1개 74,000원'
+    assert order_form_mismatch(page, name, 'S', f'{name} S') is None
+    # 진짜 다른 사이즈(주문 S 인데 L 이 담김)는 여전히 막는다
+    assert order_form_mismatch(page.replace(' S / ', ' L / '), name, 'S', f'{name} L')

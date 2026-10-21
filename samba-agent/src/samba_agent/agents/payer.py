@@ -350,6 +350,10 @@ def order_form_mismatch(
     # (실기 2026-10-18 무신사 지오다노 2건: 주문 M 인데 S 로 담겨 결제됐다 — 숫자 사이즈만 대조해 통과했다)
     ordered_letters = size_letters(option or '')
     chosen_letters = size_letters(selected or '')
+    # 선택 글자에 상품명 속 글자(예: 'M Logo' 의 M)가 섞여 들어온 경우 — 주문 사이즈가 그 안에 있으면 상품명 글자는 뺀다
+    # (실기 2026-10-21 무신사 지프 맨투맨: 주문 S, 상품명 'M Logo' → ['M','S'] 로 읽혀 멈췄다)
+    if ordered_letters and ordered_letters < chosen_letters:
+        chosen_letters = chosen_letters - (size_letters(product_name or '') - ordered_letters)
     if ordered_letters and chosen_letters and ordered_letters != chosen_letters:
         return f'옵션 사이즈 {sorted(ordered_letters)} 주문인데 주문서엔 {sorted(chosen_letters)} 이 담겼다'
     if ordered_letters and not chosen_letters and not (ordered_letters <= {'FREE', 'ONE'}):

@@ -212,6 +212,9 @@ export const DEFAULT_SETTINGS = {
   phoneRelayBrokerUrl: '',
   // 이 PC 가 중계 방을 여는 데 쓰는 방 id·열쇠('room:key'). 다른 PC 는 등록 정보(relayHost)로 받는다 — 동기화하지 않는다
   phoneRelayRoom: '',
+  // 폰 화면 카드 순서(시리얼). 사용자가 끌어 옮기거나 화살표로 바꾼 순서를 기억한다 —
+  // 없는 시리얼은 무시하고, 적히지 않은 폰은 뒤에 상태순으로 붙는다. 이 PC 의 보기 설정이라 동기화하지 않는다
+  phoneCardOrder: [] as string[],
   // 폰 연동 동기화(phone-registry.ts) — 폰 목록과 계정↔담당 폰. 폰 표(로컬)의 사본이라 화면에서 직접 고치지 않는다
   // 키마스터 기준 시각(ms) — "이 시각에 이 PC 의 키마스터가 기준"이라는 선언(sync/authority.ts).
   // 다른 PC 는 이보다 앞선 자기 삭제 기록·안 올린 행을 버리고 서버 내용을 그대로 받는다. 0 이면 선언 없음
@@ -425,6 +428,7 @@ export const settingsSchema = z.object({
   phoneRelayEnabled: z.boolean().catch(false),
   phoneRelayBrokerUrl: z.string().max(300).catch(''),
   phoneRelayRoom: z.string().max(200).catch(''),
+  phoneCardOrder: z.array(z.string().max(120)).max(50).catch([]),
   keymasterBaselineAt: z.number().int().min(0).catch(0),
   phoneRegistry: z
     .array(

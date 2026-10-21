@@ -1,8 +1,10 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
 import { Settings2 } from 'lucide-react'
 import type { Settings } from '@shared/settings'
+import type { PhoneDto } from '@shared/phone'
+import { moveItem } from '@shared/reorder'
 import { PhoneCard } from '@renderer/components/phone/PhoneCard'
 import { ToolsInstallCard } from '@renderer/components/phone/ToolsInstallCard'
 import { PhoneSettingsPanel } from '@renderer/components/phone/PhoneSettingsPanel'
@@ -45,13 +47,13 @@ export function PhonesPage(): React.JSX.Element {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [settings, setSettings] = useState<Settings | null>(null)
 
-  // 패널을 처음 열 때만 설정을 읽어 온다
+  // 설정은 처음 한 번 읽어 온다 — 카드 순서(phoneCardOrder)를 그리려면 패널을 열기 전에도 필요하다
   useEffect(() => {
-    if (!settingsOpen || settings) return
+    if (settings) return
     void window.samba.settings.get().then((r) => {
       if (r.ok) setSettings(r.data)
     })
-  }, [settingsOpen, settings])
+  }, [settings])
 
   // 낙관적으로 먼저 반영하고, 메인이 정규화한 값으로 덮어쓴다
   const updateSettings = useCallback((patch: Partial<Settings>): void => {
@@ -65,6 +67,28 @@ export function PhonesPage(): React.JSX.Element {
     void load()
     return subscribe()
   }, [load, subscribe])
+
+  // 카드 순서: 사용자가 정한 순서(시리얼) 먼저, 거기 없는 폰은 스토어 순서(상태순) 그대로 뒤에
+  const cardOrder = settings?.phoneCardOrder ?? []
+  const ordered = useMemo(() => orderPhones(list, cardOrder), [list, cardOrder])
+  const saveOrder = useCallback(
+    (next: readonly PhoneDto[]) => updateSettings({ phoneCardOrder: next.map((p) => p.serial) }),
+    [updateSettings]
+  )
+  const movePhone = (from: number, to: number): void => {
+    if (from === to || from < 0 || to < 0 || to >= ordered.length) return
+    saveOrder(moveItem(ordered, from, to))
+  }
+  // 끌어 옮기기 — 끌고 있는 카드의 시리얼만 기억하고, 놓은 카드 자리로 옮긴다
+  const [dragging, setDragging] = useState<string | null>(null)
+  const [dragOver, setDragOver] = useState<string | null>(null)
+  const onDrop = (targetSerial: string): void => {
+    const from = ordered.findIndex((p) => p.serial === dragging)
+    const to = ordered.findIndex((p) => p.serial === targetSerial)
+    setDragging(null)
+    setDragOver(null)
+    if (from >= 0 && to >= 0) movePhone(from, to)
+  }
 
   // 폰이 하나도 안 잡히고 도구도 없을 때만 설치 카드를 맨 위로 올린다
   const needsTools = list.length === 0 && toolsInstalled === false
@@ -195,19 +219,54 @@ export function PhonesPage(): React.JSX.Element {
             {t('phone.empty')}
           </p>
         ) : (
-          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-            {list.map((phone) => (
-              <PhoneCard
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3" title={t('phone.dragHint')}>
+            {ordered.map((phone, i) => (
+              // 카드 자체를 끌 수 있다. 입력칸·버튼에서 시작한 드래그는 브라우저가 알아서 막는다
+              <div
                 key={phone.id}
-                phone={phone}
-                expanded={expandedIds.includes(phone.id)}
-                highlighted={
-                  authWaiting?.waiting === true &&
-                  (authWaiting.phoneId === null || authWaiting.phoneId === phone.id)
-                }
-                screenMode={screenModes[phone.serial] ?? null}
-                onToggle={() => toggleExpand(phone.id)}
-              />
+                draggable
+                onDragStart={(e) => {
+                  setDragging(phone.serial)
+                  e.dataTransfer.effectAllowed = 'move'
+                  e.dataTransfer.setData('text/plain', phone.serial)
+                }}
+                onDragEnd={() => {
+                  setDragging(null)
+                  setDragOver(null)
+                }}
+                onDragOver={(e) => {
+                  if (!dragging || dragging === phone.serial) return
+                  e.preventDefault()
+                  e.dataTransfer.dropEffect = 'move'
+                  if (dragOver !== phone.serial) setDragOver(phone.serial)
+                }}
+                onDragLeave={() => {
+                  if (dragOver === phone.serial) setDragOver(null)
+                }}
+                onDrop={(e) => {
+                  e.preventDefault()
+                  onDrop(phone.serial)
+                }}
+                className={cn(
+                  'rounded-2xl transition-shadow',
+                  dragging === phone.serial && 'opacity-50',
+                  dragOver === phone.serial && 'ring-2 ring-[var(--text)]/40'
+                )}
+              >
+                <PhoneCard
+                  phone={phone}
+                  expanded={expandedIds.includes(phone.id)}
+                  highlighted={
+                    authWaiting?.waiting === true &&
+                    (authWaiting.phoneId === null || authWaiting.phoneId === phone.id)
+                  }
+                  screenMode={screenModes[phone.serial] ?? null}
+                  onToggle={() => toggleExpand(phone.id)}
+                  onMove={(dir) => movePhone(i, i + dir)}
+                  canMoveBack={i > 0}
+                  canMoveForward={i < ordered.length - 1}
+                />
+              </div>
             ))}
           </div>
         )}
@@ -216,6 +275,16 @@ export function PhonesPage(): React.JSX.Element {
       </div>
     </div>
   )
+}
+
+/** 사용자가 정한 순서(시리얼 목록)대로 앞에 두고, 목록에 없는 폰은 원래 순서로 뒤에 붙인다 */
+export function orderPhones(list: readonly PhoneDto[], order: readonly string[]): PhoneDto[] {
+  if (order.length === 0) return [...list]
+  const rank = new Map(order.map((serial, i) => [serial, i]))
+  const known = list.filter((p) => rank.has(p.serial))
+  const rest = list.filter((p) => !rank.has(p.serial))
+  known.sort((a, b) => (rank.get(a.serial) ?? 0) - (rank.get(b.serial) ?? 0))
+  return [...known, ...rest]
 }
 
 // 안내 줄 — 메인이 보낸 경고·오류·연결 결과를 같은 모양으로 보여 준다

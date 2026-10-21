@@ -1316,7 +1316,12 @@
     "pairDone": "Paired. The phone will connect automatically in a moment",
     "pairFailed": "Could not pair: {{message}}",
     "remove": "Remove",
-    "removeConfirm": "Click again to remove"
+    "removeConfirm": "Click again to remove",
+    "editLabel": "Rename",
+    "labelPlaceholder": "Alias (e.g. Mom's phone)",
+    "moveBack": "Move earlier",
+    "moveForward": "Move later",
+    "dragHint": "Drag a card to reorder"
   },
   "extensions": {
     "title": "Extensions",

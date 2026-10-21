@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
-import { Monitor, MonitorOff, Trash2 } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Monitor, MonitorOff, Pencil, Trash2 } from 'lucide-react'
 import type { PhoneDto, ScreenMode } from '@shared/phone'
 import { cn } from '@renderer/lib/utils'
 import { SecondaryButton, StatusBadge } from '@renderer/components/settings/shared'
@@ -28,17 +28,37 @@ export function PhoneCard({
   expanded,
   highlighted,
   screenMode,
-  onToggle
+  onToggle,
+  onMove,
+  canMoveBack = false,
+  canMoveForward = false
 }: {
   phone: PhoneDto
   expanded: boolean
   highlighted: boolean
   screenMode: ScreenMode | null
   onToggle: () => void
+  /** 카드 자리 옮기기(-1 앞으로 · +1 뒤로). 없으면 화살표를 그리지 않는다 */
+  onMove?: (dir: -1 | 1) => void
+  canMoveBack?: boolean
+  canMoveForward?: boolean
 }): React.JSX.Element {
   const { t } = useTranslation()
   const recover = usePhoneStore((s) => s.recover)
   const remove = usePhoneStore((s) => s.remove)
+  const setLabel = usePhoneStore((s) => s.setLabel)
+  // 별칭 바로 고치기 — 이름을 누르거나 연필을 누르면 입력칸으로 바뀐다. Enter·칸 벗어나면 저장, Esc 는 취소
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState(phone.label)
+  const startEdit = (): void => {
+    setDraft(phone.label)
+    setEditing(true)
+  }
+  const commitEdit = (): void => {
+    setEditing(false)
+    const next = draft.trim()
+    if (next && next !== phone.label) void setLabel(phone.id, next, phone.country)
+  }
   // 지우기는 두 번 눌러야 한다. 첫 번째는 확인 문구로 바뀌고, 몇 초 안에 다시 누르지 않으면 되돌아간다
   const [confirmingRemove, setConfirmingRemove] = useState(false)
   useEffect(() => {
@@ -67,16 +87,63 @@ export function PhoneCard({
       <div className="flex items-start gap-2">
         <span className="min-w-0 flex-1">
           <span className="flex items-center gap-1.5">
-            <span className={cn('h-[7px] w-[7px] rounded-full', phoneStateDotClass(phone.state))} />
-            <span className="truncate text-[13px] font-semibold text-[var(--text)]">
-              {phone.label || phone.serial}
-            </span>
+            <span className={cn('h-[7px] w-[7px] shrink-0 rounded-full', phoneStateDotClass(phone.state))} />
+            {editing ? (
+              <input
+                autoFocus
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                onBlur={commitEdit}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') commitEdit()
+                  else if (e.key === 'Escape') setEditing(false)
+                }}
+                placeholder={t('phone.labelPlaceholder')}
+                maxLength={40}
+                className="h-[26px] min-w-0 flex-1 rounded-[7px] border border-[var(--line)] px-2 text-[13px] font-semibold text-[var(--text)] outline-none focus:border-[var(--text)]"
+              />
+            ) : (
+              <button
+                type="button"
+                onClick={startEdit}
+                title={t('phone.editLabel')}
+                className="group inline-flex min-w-0 items-center gap-1 text-left"
+              >
+                <span className="truncate text-[13px] font-semibold text-[var(--text)]">
+                  {phone.label || phone.serial}
+                </span>
+                <Pencil className="h-3 w-3 shrink-0 text-[var(--text2)] opacity-60 group-hover:opacity-100" />
+              </button>
+            )}
             <StatusBadge label={countryBadge(phone.country)} />
           </span>
           <span className="mt-0.5 block truncate text-[11.5px] text-[var(--text2)]">
             {phone.model || phone.serial}
           </span>
         </span>
+        {onMove && (
+          <span className="flex shrink-0 items-center gap-0.5">
+            {/* 자리 옮기기 — 끌어 옮기기가 어려운 때를 위한 화살표 */}
+            <button
+              type="button"
+              disabled={!canMoveBack}
+              onClick={() => onMove(-1)}
+              title={t('phone.moveBack')}
+              className="rounded-[6px] p-1 text-[var(--text2)] hover:bg-[var(--bg2)] hover:text-[var(--text)] disabled:opacity-25 disabled:hover:bg-transparent"
+            >
+              <ChevronLeft className="h-3.5 w-3.5" />
+            </button>
+            <button
+              type="button"
+              disabled={!canMoveForward}
+              onClick={() => onMove(1)}
+              title={t('phone.moveForward')}
+              className="rounded-[6px] p-1 text-[var(--text2)] hover:bg-[var(--bg2)] hover:text-[var(--text)] disabled:opacity-25 disabled:hover:bg-transparent"
+            >
+              <ChevronRight className="h-3.5 w-3.5" />
+            </button>
+          </span>
+        )}
       </div>
 
       <div className="flex flex-wrap items-center gap-1.5">

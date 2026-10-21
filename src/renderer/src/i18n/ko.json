@@ -1316,7 +1316,12 @@
     "pairDone": "페어링됐어요. 잠시 뒤 폰이 자동으로 연결돼요",
     "pairFailed": "페어링하지 못했어요: {{message}}",
     "remove": "지우기",
-    "removeConfirm": "한 번 더 누르면 지워요"
+    "removeConfirm": "한 번 더 누르면 지워요",
+    "editLabel": "별칭 고치기",
+    "labelPlaceholder": "별칭 (예: 임성희 폰)",
+    "moveBack": "앞으로 옮기기",
+    "moveForward": "뒤로 옮기기",
+    "dragHint": "카드를 끌어서 자리를 바꿀 수 있어요"
   },
   "extensions": {
     "title": "확장",

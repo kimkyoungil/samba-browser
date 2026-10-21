@@ -351,17 +351,36 @@ def buy_on_dewu(
         title = find_text(ns, '商品') or (find_text(ns, '综合') if find_text(ns, '筛选') else None)
         # 한 줄의 두 카드는 y 가 몇 px 다르다(실기 2026-10-05: 613 / 610) — y 로만 세우면 오른쪽 카드(다른 상품)를
         # 먼저 연다. 60px 단위 줄로 묶어 왼쪽 카드부터
+        # 카드 제목에 '定制'(커스텀 가공품)가 있으면 건너뛴다 — 같은 품번 검색 첫 카드가 【定制球鞋】 이라 ¥1039 짜리를
+        # 열어 '마진'으로 멈췄다(실기 2026-10-21 A-SN248530069)
+        def _is_custom(price: Node) -> bool:
+            return any(
+                '定制' in t.text and price.y - 90 <= t.y < price.y and abs(t.x - price.x) < 170
+                for t in ns
+            )
+
         return next(
             (
                 n
                 for n in sorted(ns, key=lambda n: (n.y // 60, n.x))
-                if title and n.y > title.y and _PRICE.match(n.text.replace(' ', ''))
+                if title
+                and n.y > title.y
+                and _PRICE.match(n.text.replace(' ', ''))
+                and not _is_custom(n)
             ),
             None,
         )
 
     nodes = wait_for(lambda ns: _first_card(ns) is not None, 20)
     card = _first_card(nodes)
+    if card is None:
+        # '全部' 탭 상단 가로 목록이 전부 커스텀이면 '商品' 탭의 목록에서 다시 찾는다
+        tab = next((n for n in nodes if n.text == '商品' and n.y < 250), None)
+        if tab is not None:
+            phone.tap(tab.x, tab.y)
+            sleep(2)
+            nodes = wait_for(lambda ns: _first_card(ns) is not None, 12)
+            card = _first_card(nodes)
     if card is None:
         raise DewuOrderError(f'得物 검색 결과에 {model} 상품이 없다')
     phone.tap(card.x, card.y)

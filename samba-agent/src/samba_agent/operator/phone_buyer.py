@@ -30,7 +30,7 @@ log = logging.getLogger(__name__)
 
 # 식화 화이트리스트 가게 — kream_shadow._SUP_ALLOW_NAMES 와 같은 이름. 唯品会·得物 은 플랫폼 단위 화이트리스트다
 # 唯品会 는 플랫폼 단위 화이트리스트(식화 _SUP_ALLOW_STORES) — 唯品会 앱 구매에서 shop='唯品会' 로 결제한다
-ALLOWED_SHOPS = ('后浪潮品奥莱折扣店', '品牌官方店', '唯品会')
+ALLOWED_SHOPS = ('后浪潮品奥莱折扣店', '品牌官方店', '唯品会', '得物')
 MAX_ACTIONS = 160
 WECHAT = 'com.tencent.mm'
 # 웨이신페이 결제창에서 사람이 비밀번호를 넣을 때까지 기다리는 시간(사용자 2026-10-09 "결제비밀번호 입력은 내가 할게")

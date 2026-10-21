@@ -939,7 +939,9 @@ def make_shihuo_handler(
                 if e.paid:
                     return 'needs_ai', 'pay_interrupted', str(e)
                 reasons = ' / '.join([*failures, f'得物: {e}'])
-                if phone_repair_enabled and not e.out_of_stock and '마진' not in reasons:
+                # 기본 노출 판매자 가격만 상한을 넘은 경우('得物 가격 …')는 다른 판매자 최저가가 상한 안일 수 있어 복구에 맡긴다
+                over_cap = '得物 가격' in str(e) and '마진' in str(e)
+                if phone_repair_enabled and not e.out_of_stock and ('마진' not in reasons or over_cap):
                     from samba_agent.operator.phone_buyer import PhoneBuyer, PhoneToolbox
 
                     ctx = LINE_BREAK.join([
@@ -947,6 +949,7 @@ def make_shihuo_handler(
                         f'지정 품번 {model} · 지정 사이즈 {eu} · 상한 ¥{max_cny:g}',
                         f'기존 함수 실패: {e}',
                         '得物 앱에서 같은 품번의 새상품·같은 사이즈만 확인한다. 중고·포장하자 상품은 금지.',
+                        '기본 노출 판매자가 상한을 넘으면 사이즈 선택창의 商家·다른 판매자 목록에서 같은 사이즈 새상품 중 상한 이하 판매자를 고른다. 없으면 give_up.',
                         '다른 판매처로 바꾸지 않는다. 결제창에서는 pay 도구만 사용한다.',
                         '품번과 사이즈를 화면에서 확인할 수 없으면 give_up 한다.',
                     ])

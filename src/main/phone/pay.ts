@@ -156,7 +156,8 @@ export const PAY_PROVIDERS: Record<PayProvider, PayProviderSpec> = {
     // 'PIN번호 결제' = 카드사(현대카드) 인증 화면에서 앱카드 대신 PIN 으로 간다(실기 2026-10-03 唯品会)
     // '다음' = 카드사 인증의 백신(V3) 확인 페이지에서 설치돼 있으니 넘어가는 버튼(실기 2026-10-03)
     // 영어 표시(알리페이 '일반버전'은 한국어가 없어 영어로 뜬다, 2026-10-03)도 함께 본다
-    confirmText: /^(?:결제|확인|确认付款|立即付款|付款|PIN번호 결제|다음|Pay|Confirm|Next|OK)$/,
+    // '极速付款' = 새 알리페이 결제창의 결제 버튼(실기 2026-10-21 得物 식화 — 이 글자가 없어 결제 버튼을 못 눌렀다)
+    confirmText: /^(?:결제|확인|确认付款|立即付款|极速付款|付款|PIN번호 결제|다음|Pay|Confirm|Next|OK)$/,
     // 한국어 알리페이 결제창(唯品会 국제카드)은 '支付密码' 글자 없이 금액·수수료·숫자 키패드만 보인다(실기 2026-10-03)
     passwordHint:
       /CVV를 입력|결제 ?비밀번호|支付密码|请输入|주문금액|국제카드 수수료|Enter CVV|Order total|International Card|Payment Password/i,

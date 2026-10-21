@@ -8,6 +8,7 @@ import { DAANGN_TEMPLATE_MAX, type DaangnTemplateDto } from '@shared/daangn'
 const MIN_ROOM_WIDTH = 640
 import { PrimaryButton, SecondaryButton } from '@renderer/components/settings/shared'
 import { useDaangnStore } from '@renderer/stores/daangnStore'
+import { useUiStore } from '@renderer/stores/uiStore'
 
 // 오른쪽 방 영역 — 위에 답변 템플릿 줄, 아래는 메인의 네이티브 뷰가 올라오는 자리.
 // 이 div 의 위치·크기를 메인에 알리고, 대화상자가 떠 있으면(네이티브 뷰가 HTML 위를 덮으므로) 접는다
@@ -15,6 +16,7 @@ export function RoomPane(): React.JSX.Element {
   const { t } = useTranslation()
   const open = useDaangnStore((s) => s.open)
   const modalCount = useDaangnStore((s) => s.modalCount)
+  const resizing = useUiStore((s) => s.resizing)
   const error = useDaangnStore((s) => s.error)
   const clearError = useDaangnStore((s) => s.clearError)
   const slot = useRef<HTMLDivElement>(null)
@@ -24,7 +26,8 @@ export function RoomPane(): React.JSX.Element {
   useEffect(() => {
     const el = slot.current
     if (!el) return
-    if (!open || modalCount > 0) {
+    // 대화상자가 떠 있거나 손잡이를 끄는 중이면 네이티브 뷰가 포인터를 가로채지 않게 접는다
+    if (!open || modalCount > 0 || resizing) {
       void window.samba.daangn.setRoomBounds(null)
       return
     }
@@ -46,7 +49,7 @@ export function RoomPane(): React.JSX.Element {
       ro.disconnect()
       window.removeEventListener('resize', send)
     }
-  }, [open, modalCount])
+  }, [open, modalCount, resizing])
 
   // 화면을 떠나면 뷰를 숨기고 닫는다
   useEffect(() => {

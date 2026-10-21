@@ -6,6 +6,22 @@ import type {
   DaangnTemplateDto
 } from '@shared/daangn'
 import { useUiStore } from '@renderer/stores/uiStore'
+import { PANEL_WIDTHS, clampPanelWidth } from '@renderer/components/daangn/daangn-view'
+
+const WIDTH_KEY = 'samba.daangn.panelWidths'
+
+// 보는 사람(이 PC)마다 다른 편의라 브라우저 저장소에 둔다 — 막혀 있어도 기본 폭으로 동작
+function loadWidths(): { account: number; list: number } {
+  try {
+    const raw = JSON.parse(localStorage.getItem(WIDTH_KEY) ?? '{}') as Record<string, unknown>
+    return {
+      account: clampPanelWidth('account', Number(raw.account ?? PANEL_WIDTHS.account.def)),
+      list: clampPanelWidth('list', Number(raw.list ?? PANEL_WIDTHS.list.def))
+    }
+  } catch {
+    return { account: PANEL_WIDTHS.account.def, list: PANEL_WIDTHS.list.def }
+  }
+}
 
 // 당근 통합 채팅함 스토어. 진실 원천은 메인이고 여기 값은 daangn:* IPC 응답과 daangn:updated 이벤트를 비춘다.
 // 채팅 본문·세션은 어느 경로로도 여기에 오지 않는다(목록 표시값만)
@@ -22,6 +38,8 @@ interface DaangnStoreState {
   templates: DaangnTemplateDto[]
   selectedAccountId: number | null
   unreadOnly: boolean
+  accountWidth: number
+  listWidth: number
   open: OpenRoom | null
   /** 템플릿 편집 대화상자 같은 모달이 열려 있는 수 — 0 보다 크면 오른쪽 네이티브 뷰를 접는다 */
   modalCount: number
@@ -31,6 +49,8 @@ interface DaangnStoreState {
   subscribe: () => () => void
   selectAccount: (id: number | null) => void
   setUnreadOnly: (v: boolean) => void
+  setPanelWidth: (kind: 'account' | 'list', w: number) => void
+  savePanelWidths: () => void
   openChannel: (c: Pick<DaangnChannelDto, 'accountId' | 'roomId'>) => Promise<void>
   addAccount: (label: string) => Promise<void>
   removeAccount: (id: number) => Promise<void>
@@ -52,6 +72,8 @@ export const useDaangnStore = create<DaangnStoreState>((set, get) => ({
   templates: [],
   selectedAccountId: null,
   unreadOnly: true,
+  accountWidth: loadWidths().account,
+  listWidth: loadWidths().list,
   open: null,
   modalCount: 0,
   error: null,
@@ -90,6 +112,16 @@ export const useDaangnStore = create<DaangnStoreState>((set, get) => ({
 
   selectAccount: (id) => set({ selectedAccountId: id }),
   setUnreadOnly: (v) => set({ unreadOnly: v }),
+  setPanelWidth: (kind, w) =>
+    set(kind === 'account' ? { accountWidth: clampPanelWidth(kind, w) } : { listWidth: clampPanelWidth(kind, w) }),
+  savePanelWidths: () => {
+    try {
+      const { accountWidth, listWidth } = get()
+      localStorage.setItem(WIDTH_KEY, JSON.stringify({ account: accountWidth, list: listWidth }))
+    } catch {
+      // 저장이 막혀 있으면 이번 실행에서만 유지
+    }
+  },
 
   openChannel: async (c) => {
     const r = await window.samba.daangn.openRoom(c.accountId, c.roomId)

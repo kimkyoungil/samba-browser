@@ -5,6 +5,7 @@ import { Switch } from '@renderer/components/ui/switch'
 import { AccountPanel } from '@renderer/components/daangn/AccountPanel'
 import { ChannelList } from '@renderer/components/daangn/ChannelList'
 import { RoomPane } from '@renderer/components/daangn/RoomPane'
+import { ResizeHandle } from '@renderer/components/layout/ResizeHandle'
 import { useDaangnStore } from '@renderer/stores/daangnStore'
 
 // 당근 통합 채팅함 — 왼쪽 계정, 가운데 통합 목록, 오른쪽 방(메인의 네이티브 뷰가 올라온다)
@@ -28,10 +29,28 @@ export function DaangnPage(): React.JSX.Element {
       </div>
       <div className="flex min-h-0 flex-1">
         <AccountPanel />
+        <PanelHandle kind="account" />
         <ChannelList />
+        <PanelHandle kind="list" />
         <RoomPane />
       </div>
     </div>
+  )
+}
+
+// 패널 사이 손잡이 — 끄는 동안은 uiStore.resizing 으로 방 뷰가 접힌다(RoomPane)
+function PanelHandle({ kind }: { kind: 'account' | 'list' }): React.JSX.Element {
+  const setWidth = useDaangnStore((s) => s.setPanelWidth)
+  const save = useDaangnStore((s) => s.savePanelWidths)
+  return (
+    <ResizeHandle
+      side="right"
+      getWidth={() =>
+        kind === 'account' ? useDaangnStore.getState().accountWidth : useDaangnStore.getState().listWidth
+      }
+      onWidth={(w) => setWidth(kind, w)}
+      onEnd={save}
+    />
   )
 }
 

@@ -16,10 +16,14 @@ export function ChannelList(): React.JSX.Element {
   const setUnreadOnly = useDaangnStore((s) => s.setUnreadOnly)
   const open = useDaangnStore((s) => s.open)
   const openChannel = useDaangnStore((s) => s.openChannel)
+  const width = useDaangnStore((s) => s.listWidth)
   const list = visibleChannels({ channels, selectedAccountId, unreadOnly })
 
   return (
-    <div className="flex w-[320px] shrink-0 flex-col border-r border-[var(--line)] bg-white">
+    <div
+      style={{ width }}
+      className="flex shrink-0 flex-col border-r border-[var(--line)] bg-white"
+    >
       <div className="flex gap-1 border-b border-[var(--line)] p-2">
         <Tab active={unreadOnly} onClick={() => setUnreadOnly(true)}>
           {t('daangn.unreadOnly')}

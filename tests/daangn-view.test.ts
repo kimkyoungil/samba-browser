@@ -1,6 +1,11 @@
 // 당근 채팅함 화면의 순수 계산 — 통합 목록에 무엇이 어떤 순서로 보이는가
 import { describe, expect, it } from 'vitest'
-import { accountLabelOf, visibleChannels } from '../src/renderer/src/components/daangn/daangn-view'
+import {
+  PANEL_WIDTHS,
+  accountLabelOf,
+  clampPanelWidth,
+  visibleChannels
+} from '../src/renderer/src/components/daangn/daangn-view'
 import type { DaangnAccountDto, DaangnChannelDto } from '../src/shared/daangn'
 
 function ch(accountId: number, roomId: string, lastAt: number, unread: number): DaangnChannelDto {
@@ -46,5 +51,19 @@ describe('accountLabelOf', () => {
   it('별칭을 돌려주고 없는 계정은 빈 글', () => {
     expect(accountLabelOf(accounts, 1)).toBe('황놀')
     expect(accountLabelOf(accounts, 9)).toBe('')
+  })
+})
+
+describe('clampPanelWidth', () => {
+  it('범위 안이면 정수로 돌려주고, 밖이면 범위로 맞춘다', () => {
+    expect(clampPanelWidth('account', 200.4)).toBe(200)
+    expect(clampPanelWidth('account', 10)).toBe(PANEL_WIDTHS.account.min)
+    expect(clampPanelWidth('account', 9999)).toBe(PANEL_WIDTHS.account.max)
+    expect(clampPanelWidth('list', 10)).toBe(PANEL_WIDTHS.list.min)
+    expect(clampPanelWidth('list', 9999)).toBe(PANEL_WIDTHS.list.max)
+  })
+  it('숫자가 아니면 기본 폭', () => {
+    expect(clampPanelWidth('list', Number.NaN)).toBe(PANEL_WIDTHS.list.def)
+    expect(clampPanelWidth('account', Number('x'))).toBe(PANEL_WIDTHS.account.def)
   })
 })

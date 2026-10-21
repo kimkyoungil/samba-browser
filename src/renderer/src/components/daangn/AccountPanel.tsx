@@ -17,6 +17,7 @@ export function AccountPanel(): React.JSX.Element {
   const selected = useDaangnStore((s) => s.selectedAccountId)
   const select = useDaangnStore((s) => s.selectAccount)
   const addAccount = useDaangnStore((s) => s.addAccount)
+  const width = useDaangnStore((s) => s.accountWidth)
   const total = accounts.reduce((n, a) => n + a.unread, 0)
   const [adding, setAdding] = useState(false)
   const [label, setLabel] = useState('')
@@ -29,7 +30,10 @@ export function AccountPanel(): React.JSX.Element {
   }
 
   return (
-    <div className="flex w-[190px] shrink-0 flex-col border-r border-[var(--line)] bg-white">
+    <div
+      style={{ width }}
+      className="flex shrink-0 flex-col border-r border-[var(--line)] bg-white"
+    >
       <div className="border-b border-[var(--line)] px-3 py-2.5 text-[13px] font-semibold text-[var(--text)]">
         {t('daangn.accounts')}
       </div>

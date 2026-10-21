@@ -161,7 +161,8 @@ export const PAY_PROVIDERS: Record<PayProvider, PayProviderSpec> = {
     // 한국어 알리페이 결제창(唯品会 국제카드)은 '支付密码' 글자 없이 금액·수수료·숫자 키패드만 보인다(실기 2026-10-03)
     passwordHint:
       /CVV를 입력|결제 ?비밀번호|支付密码|请输入|주문금액|국제카드 수수료|Enter CVV|Order total|International Card|Payment Password/i,
-    successHint: /결제 ?(?:완료|성공)|支付成功|付款成功|完成|Payment Successful|Paid/,
+    // 맨 '完成' 은 결제창 설명('按支付顺序完成付款')에도 있어 결제 전 창을 성공으로 오판했다(실기 2026-10-21 得物 ¥452) — 지급 완료 문구만 본다
+    successHint: /결제 ?(?:완료|성공)|支付成功|付款成功|支付完成|付款完成|Payment Successful|Paid/,
     openBy: 'app',
     keepIfForeground: true,
     hostPackages: ['com.taobao.taobao'],

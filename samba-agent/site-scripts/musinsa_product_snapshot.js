@@ -1,138 +1,180 @@
-const nz=s=>String(s||'').replace(/\s+/g,' ').trim()
-const lc=s=>nz(s).toLowerCase()
-const nsl=s=>lc(s).replace(/\s*\/\s*/g,'/')
-const OF=/musinsa\.com\/order\/order-form/
-const IT='[class*=dropdown] [data-button-name]:not(button)'
-const notes=[]
-const O={options:[],color:null,selected:null,cost:null,methods:[],coupons:{},sold_out:false}
-const done=n=>{if(n)notes.push(n);O.note=notes.join('; ')||null;return O}
-const lines=t=>t.split('PAGE TEXT')[0].split('\n').filter(l=>/^\[\d+\]/.test(l))
-const textOf=t=>nz(t.split('PAGE TEXT:')[1])
-const safe=async f=>{try{return await f()}catch{}}
-const get=async o=>{for(let i=0;i<6;i++){try{return await page.get(o)}catch{await sleep(600)}}return{tree:''}}
-const itree=async()=>(await get({interactive:1})).tree+'\n'+(await get({selector:'[class*=Purchase],[class*=Option]',interactive:1})).tree
-const code=(String(args.sku||'').match(/products\/(\d+)|^(\d{5,})$/)||[]).slice(1).find(Boolean)
-if(!code)return done('no code')
-O.product_url='https://www.musinsa.com/products/'+code
-const want=nz(String(args.size||'').replace(/（/g,'(').replace(/）/g,')').replace(/\b(\d{1,2})\s+(\d)\s*\/\s*(\d)\b/g,'$1$2$3').replace(/\b\d{7,}\b/g,' ').replace(/옵션\s*\d?\s*[:：]/g,' ').replace(/\//g,' / '))
-const CM={블랙:'black',화이트:'white',네이비:'navy',그레이:'gray',베이지:'beige'}
-const FREE=/^(free|f|one|onesize|os|프리|프리사이즈|원사이즈)$/i
-const isFree=s=>FREE.test(lc(s).replace(/\s/g,''))
-const toks=s=>lc(s).split(/[\s/·,:]+/).filter(Boolean)
-const ol=dd=>dd.items.map(x=>x.so?x.label+' (품절)':x.label)
-function hits(av,w){
-if(!av.length||!w)return[]
-const W=lc(w),T=toks(w),L=o=>lc(o.label)
-const eng=T.map(t=>CM[t]||CM[Object.keys(CM).find(k=>t.includes(k))]).filter(Boolean)
-const lead=s=>(s.match(/^\d+(?:\.\d+)?/)||[])[0]
-for(const t of[
-o=>nsl(o.label)===nsl(W),
-o=>T.includes(L(o)),
-o=>L(o).length>1&&(' '+W+' ').includes(' '+L(o)+' '),
-o=>T.includes(lc((o.label.match(/\(([^)]+)\)/)||[])[1])),
-o=>{const n=lead(L(o));return!!n&&n.length>1&&T.some(x=>lead(x)===n)},
-o=>eng.some(e=>L(o).includes(e)),
-o=>isFree(o.label)&&T.some(x=>FREE.test(x)),
-]){const h=av.filter(t);if(h.length)return h}
-return[]
+const pid=(String(args.sku||'').match(/products\/(\d+)/)||[])[1]
+const cu=await page.url()
+if(args.sku&&!/order-form/.test(cu)&&!(pid&&cu.includes(pid))){
+await tabs.open({url:args.sku,profile:args.profile||args.account})
+for(let i=0;i<15&&!(pid&&(await page.url()).includes(pid));i++)await sleep(1000)
 }
-const pick=(av,w)=>{const h=hits(av,w);return h.length===1?h[0]:null}
-const TAIL=/\s*(\(품절\)|품절|무신사 ?직|재입고 ?알림|[가-힣]{0,3}\([월화수목금토일]\)|\d\d\.\d\d|오늘|내일|모레|도착|발송|\d+ ?개 ?남음|\(?[+-]\s?[\d,]+원).*$/
-async function readDD(){
-const items=[]
-for(let k=1;k<80;k++){
-const t=(await page.get({selector:IT+':nth-of-type('+k+')',interactive:1})).tree
-const id=+((lines(t).find(l=>/ clickable/.test(l))||'').match(/^\[(\d+)\]/)||[])[1]||0
-if(!id)break
-const raw=textOf(t)
-items.push({id,label:nz(raw.replace(TAIL,'')),so:/품절(?!\s?임박)|재입고/.test(raw)})
+const onOrder=/order-form/.test(await page.url())
+if(!onOrder)await page.waitFor('구매하기',12000).catch(()=>{})
+const safe=async(fn,d)=>{for(let i=0;i<3;i++){try{return await fn()}catch{await page.dismissOverlay().catch(()=>{});await sleep(1500)}}return d}
+const text=async(s)=>{const t=(await page.get(s?{selector:s}:{})).tree;return t.slice(t.indexOf('PAGE TEXT'))}
+const it=async()=>(await safe(()=>page.get({interactive:true}),{tree:''})).tree.split('\n')
+let ln=await it()
+const idL=(arr,re)=>{const l=arr.find(x=>re.test(x));const m=l&&l.match(/^\[(\d+)\]/);return m?Number(m[1]):null}
+const hs=ln.some(l=>/선택 목록 열기|선택 목록 닫기/.test(l))
+let op=[],chosen='',pk=!hs
+const norm=s=>s.toLowerCase().replace(/[\s_\-·]/g,'').replace(/gray/g,'grey')
+const w=norm(String(args.size||''))
+const KO={블랙:'black',화이트:'white',그레이:'grey',핑크:'pink',베이지:'beige',네이비:'navy',코코아:'cocoa'}
+const wEn=Object.keys(KO).reduce((s,k)=>s.split(k).join(KO[k]),w)
+const ch=n=>{n=norm(n);return !!n&&(w.includes(n)||wEn.includes(n))}
+const CRE=/textbox "(색상|컬러|컬러\(Color\)|Color)"/i
+const SRE=/textbox "(사이즈|size)"/i
+const ARRRE=/clickable "(.*(?:발송 예정|도착보장|도착 예정)|.*\(품절\))"/
+const rd1=async()=>{
+const p=await text()
+const end=p.search(/장바구니\s+(?:\S+\s+)?구매하기/)
+const head=p.slice(0,end<0?p.length:end)
+let st=-1
+const pr=/\d+%\s*[\d,]+원|[\d,]+원/g
+let pm
+while((pm=pr.exec(head)))st=pm.index+pm[0].length
+if(st<0)st=Math.max(0,head.lastIndexOf('LV.'))
+let seg=head.slice(st)
+const mi=seg.lastIndexOf('더보기')
+if(mi>=0&&/이내 발송|도착보장|발송 예정|도착 예정/.test(seg.slice(mi)))seg=seg.slice(mi+3)
+else seg=seg.replace(/^.*?LV\.\d+\s*\S+\s*/,m=>m.length<200?'':m)
+const re=/(.+?)\s*(?:(?:\S+\([^)]*\)\s+)?(?:이내 )?(?:발송 예정|도착보장|도착 예정|출발)(?:\s*오늘출발)?(?:\s*\d+개 남음)?|\(품절\))/g
+const R=[]
+let m
+while((m=re.exec(seg))){let nm=m[1].replace(/재입고 알림|마지막 \d+개|\d+개 남음/g,'').trim().replace(/^.*?추가\s*적립\s*/,'').trim();if(nm.length>40)nm=nm.split(/\s+/).pop();R.push({name:nm,so:/\(품절\)/.test(m[0])})}
+return R
 }
-return{items,ok:items.length>0&&items.every(x=>x.label)}
+const rd3=async()=>{
+let p=await text('[class*=Option]')
+if(!/도착|발송/.test(p))p=await text('[class*=Select]')
+const k=p.lastIndexOf('비밀글 제외')
+const seg=k>=0?p.slice(k):p
+const re=/(?:^|\s)((?:[A-Za-z가-힣]+\s)?\d{2,3}(?:mm)?|[A-Z]{1,3}|FREE|프리)\s+(?:(?:\S+\([^)]*\)\s+)?(?:이내 )?(?:발송 예정|도착보장|도착 예정)|(\(품절\)))/g
+const R=[],seen=new Set()
+let m
+while((m=re.exec(seg))){const nm=m[1].trim();if(seen.has(nm))break;seen.add(nm);R.push({name:nm,so:!!m[2]})}
+return R
 }
-const pickers=t=>[...t.matchAll(/^\[\d+\] textbox "([^"]*)".*\n\[(\d+)\] button "선택 목록 (?:열기|닫기)"/gm)].map(m=>({name:m[1],btn:+m[2]})).filter((p,i,a)=>a.findIndex(q=>q.btn==p.btn)==i)
-const before=new Set((await tabs.list()).map(t=>t.id))
-const pid=(String(await tabs.open({profile:args.profile,url:O.product_url})).match(/tab (\S+)/)||[])[1]
-if(!pid)return done('tab not opened')
-const closeP=()=>safe(()=>tabs.close(pid))
-await tabs.switch(pid)
-await safe(()=>page.waitFor(/나의 할인가|구매하기|판매 ?종료|재입고 알림/,10000))
-const buyId=t=>+((t.match(/^\[(\d+)\] button "(?:구매하기|바로구매)"/m)||t.match(/^\[\d+\] button "장바구니"\n(?:\[\d+\] clickable.*\n)*\[(\d+)\] button "(?![^"]*(?:좋아요|공유|삭제|재입고|품절|선물|쿠폰|찜|알림|판매 ?종료))[^"]+"/m)||[])[1]||0)
-let tree=await itree()
-for(let i=0;i<8&&!buyId(tree);i++){await sleep(400);tree=await itree()}
-const pname=O.product_name=nz(((tree.match(/^TITLE: (.*)$/m)||[])[1]||'').replace(/ - 사이즈 & 후기.*$| \| 무신사$/g,''))
-if(!/"로그아웃"/.test(tree)&&/link "로그인/.test(tree)){await closeP();O.error='login_required';return done('로그인 필요')}
-if(!buyId(tree)){
-const sold=/^\[\d+\] button "(?:품절|일시품절|재입고 ?알림 ?신청|판매 ?종료)"/m.test(tree)
-await closeP()
-if(!sold)return done('buy button not found')
-O.sold_out=true;O.options=[(want||'옵션')+' (품절)']
-return done('product sold out')
+const rd2=(L)=>{
+const start=Math.max(0,L.findIndex(l=>SRE.test(l)))
+let endI=L.findIndex((l,i)=>i>start&&/button "(좋아요|장바구니|[^"]*구매하기[^"]*)"/.test(l))
+if(endI<0)endI=L.length
+const R=[]
+for(const l of L.slice(start+1,endI)){
+const m=l.match(/^\[(\d+)\] clickable "([^"]+)"/)
+if(!m||/선택 목록/.test(m[2])||/^(\d+개 남음|마지막 \d+개)$/.test(m[2]))continue
+const so=/\(품절\)/.test(m[2])
+R.push({id:Number(m[1]),name:!so&&/도착|발송|배송|출고/.test(m[2])?'(옵션'+(R.length+1)+')':m[2].replace(/\(품절\)/,'').trim(),so})
 }
-const chosen=[]
-let rest=want,spent=false
-const boxes=pickers(tree),n=boxes.length
-for(let lv=0;lv<n;lv++){
-const cur=boxes[lv]
-await page.click(cur.btn)
-await safe(()=>page.waitFor(/도착|발송|품절|재입고|남음/,3000))
-let dd=await readDD()
-if(!dd.ok){await sleep(500);dd=await readDD()}
-if(!dd.ok){await closeP();return done(`option list ${cur.name} 읽지 못함`)}
-const last=lv===n-1,av=dd.items.filter(x=>!x.so)
-if(last&&!spent)O.options=ol(dd)
-let c=pick(av,rest)||(av.length===1&&(!last||!want||spent||(dd.items.length===1&&isFree(av[0].label)))?av[0]:null)
-if(!c&&last&&spent&&av.length){c=av[0];notes.push('size not given')}
-if(!c){
-await closeP()
-if(!last)O.options=ol(dd)
-if(hits(av,rest).length>1){O.options=dd.items.map(x=>x.label);return done(`option ambiguous: ${want}`)}
-const sh=pick(dd.items.filter(x=>x.so),rest)
-return done(sh?`option sold out: ${sh.label}`:av.length?`option not matched: ${want}`:'all options sold out')
+return R
 }
-if(!last)O.color=c.label
-chosen.push(c.label)
-const r2=nz(nsl(rest).replace(new RegExp(nsl(c.label).replace(/[.*+?^${}()|[\]\\]/g,'\\$&'),'i'),' ').replace(/^\s*\/\s*|\s*\/\s*$/g,''))
-if(r2)rest=r2;else{spent=true;O.options=ol(dd)}
-await page.click(c.id)
-await sleep(400)
+const segOf=L=>{const a=L.findIndex(l=>CRE.test(l)),b=L.findIndex(l=>SRE.test(l));return L.slice(a+1,b>a?b:a+8)}
+const pc=async()=>{
+for(let tr=0;tr<2;tr++){
+let L=await it()
+const ci=L.findIndex(l=>CRE.test(l))
+if(ci<0||/textbox "[^"]+" value="[^"]+"/.test(L[ci]))return
+if(!segOf(L).some(l=>/선택 목록 닫기/.test(l))){
+const oid=idL(segOf(L),/button "선택 목록 열기"/)
+if(oid){await page.click(oid);await sleep(1200)}
+L=await it()
 }
-const WQ=Math.max(1,+args.qty||1),QR=/\[(\d+)\] button\n(?:\[\d+\] clickable.*\n)*\[\d+\] textbox value="(\d+)"(?:\n\[\d+\] clickable.*)*\n\[(\d+)\] button/
-for(let k=0,lv=0;k<24&&WQ>1;k++){const q=(await itree()).match(QR)
-if(!q){await sleep(500);continue}const v=+q[2];if(v===WQ)break;if(v===lv){await sleep(300);continue}lv=v;await page.clickNative(+(v<WQ?q[3]:q[1]));await sleep(300)}
-const bi=buyId(await itree())
-if(!bi){await closeP();return done('buy button gone')}
-page.click(bi).catch(()=>{})
-let of=null,bs=null
-for(let i=0;i<40&&!of;i++){
-await sleep(250)
-of=(await tabs.list()).find(t=>!before.has(t.id)&&OF.test(t.url||''))
-if(!of&&i%10==6){bs=bs||[...(await itree()).matchAll(/^\[(\d+)\] button "바로 ?구매하기"/gm)].map(m=>+m[1]);const b=bs.pop();if(b)page.click(b).catch(()=>{})}
+const cands=segOf(L).map(l=>l.match(/^\[(\d+)\] clickable "([^"]+)"/)).filter(Boolean).map(m=>({id:Number(m[1]),name:m[2]}))
+let pick=cands.filter(c=>ch(c.name)).sort((a,b)=>norm(b.name).length-norm(a.name).length)[0]
+if(!pick&&cands.length===1)pick=cands[0]
+if(!pick)return
+await(tr?page.clickNative(pick.id):page.click(pick.id))
+await sleep(1500)
 }
-if(!of){O.error='no_checkout';return done('no order form')}
-await tabs.switch(of.id)
-await safe(()=>page.waitFor('총 결제 금액',10000))
-O.order_tab=of.id
-if(of.id!==pid)await closeP()
-const MN=['무신사머니','무신사페이','토스페이','카카오페이','페이코','네이버페이']
-let tx=''
-for(let i=0;i<8;i++){
-tx=textOf((await get({})).tree)
-O.methods=MN.filter(m=>tx.slice(Math.max(tx.search(/결제 ?수단/),0)).includes(m))
-if(O.methods.length)break
-await sleep(600)
 }
-const seg=nz((tx.match(/주문 ?상품\s*\d+\s*개\s*(.*?)\s*\/\s*\d+\s*개/)||[])[1])
-O.order_item=seg||null
-O.qty=+((tx.match(/주문 ?상품\s*\d+\s*개.*?\/\s*(\d+)\s*개/)||[])[1]||0)||null
-const join=chosen.join(' · ')
-const sg=seg.replace(/\s*\(?[+-]\s?[\d,]+원\)?$/,'')
-O.selected=sg?(join&&lc(sg).endsWith(lc(join))?sg.slice(sg.length-join.length):(sg.match(/(?:\S+ · )*\S+$/)||[''])[0])||null:null
-const wf=toks(want).find(t=>FREE.test(t)),sf=O.selected&&toks(O.selected).find(t=>FREE.test(t))
-if(wf&&sf&&wf!==sf)O.selected+=` (=${wf.toUpperCase()})`
-else if(O.selected&&(' '+lc(want).replace(/\s*\/\s*/g,' ')+' ').includes(' '+lc(O.selected)+' '))O.selected=want
-if(seg&&!pname.split(/[\s/()[\],·_-]+/).some(w=>w.length>2&&lc(seg).includes(lc(w)))){
-notes.push('order form item mismatch');O.selected=null
+if(onOrder)pk=true
+else if(hs){
+await pc()
+for(let at=0;at<3&&!pk;at++){
+ln=await it()
+if(ln.some(l=>/옵션 삭제/.test(l))){pk=true;break}
+const after=ln.slice(ln.findIndex(l=>SRE.test(l))+1)
+if(!after.some(l=>/선택 목록 닫기/.test(l))){
+const oi=idL(after,/button "선택 목록 열기"/)
+if(oi){await page.click(oi);await sleep(1200)}
 }
-if(!n&&O.selected)O.options=[O.selected]
-O.cost=+((tx.match(/총 결제 금액\s*(?:\d+%\s*)?([\d,]+)\s*원/)||[])[1]||'').replace(/,/g,'')||null
-return done(null)
+ln=await it()
+for(let rf=0,rid;rf<3&&(rid=idL(ln,/button "새로고침"/));rf++){await page.click(rid);await sleep(2500);ln=await it()}
+const ids=L=>L.slice(L.findIndex(l=>SRE.test(l))+1).filter(l=>ARRRE.test(l)).map(l=>Number(l.match(/^\[(\d+)\]/)[1]))
+for(let k=0;k<4&&ids(ln)[0];k++){try{await page.scroll('up',ids(ln)[0])}catch{break}ln=await it()}
+let ri=ids(ln)
+let R=await safe(rd1,[])
+if(!R.length||R.length<ri.length||R.some(r=>r.name.length>80)){
+const r3=await safe(rd3,[])
+if(r3.length&&r3.length>=ri.length)R=r3
+else{R=rd2(ln);ri=R.map(r=>r.id)}
+}
+op=R.map(r=>r.name+(r.so?' (품절)':''))
+const txo=!ri.length&&R.length&&!R.some(r=>/^\(옵션\d+\)$/.test(r.name))
+if(!txo&&R.some(r=>/^\(옵션\d+\)$/.test(r.name)))return{options:op,note:'unreadable'}
+let best=-1,bs=0
+R.forEach((r,i)=>{
+if(r.so)return
+const n=norm(r.name)
+const s=n&&w.includes(n)?100+n.length:(r.name.match(/\d+|[A-Za-z]+/g)||[]).filter(t=>w.includes(t.toLowerCase())).length
+if(s>bs){bs=s;best=i}
+})
+if(best<0||bs<1)break
+if(txo){
+const k=R.slice(0,best).filter(r=>!r.so).length
+let L3=await it()
+if(!L3.some(l=>/선택 목록 닫기/.test(l))){const o=idL(L3.slice(L3.findIndex(l=>SRE.test(l))+1),/button "선택 목록 열기"/);if(o){await page.click(o);await sleep(1200);L3=await it()}}
+const tids=L3.slice(L3.findIndex(l=>SRE.test(l))+1).filter(l=>/clickable "[^"]*(발송 예정|도착보장|도착 예정)/.test(l)).map(l=>Number(l.match(/^\[(\d+)\]/)[1]))
+if(tids[k])await page.click(tids[k])
+else try{await page.clickText('도착',k)}catch{break}
+}else{
+const all=[]
+let tg=0
+for(let k=0;k<20&&!tg;k++){
+const cur=ids(ln)
+cur.forEach(i=>all.includes(i)||all.push(i))
+all.sort((a,b)=>a-b)
+if(all.length>best&&cur.includes(all[best]))tg=all[best]
+if(tg||!cur.length)break
+try{await page.scroll('down',cur[cur.length-1])}catch{break}
+ln=await it()
+if(ids(ln).join()===cur.join())break
+}
+if(!tg)break
+await page.click(tg)
+}
+chosen=R[best].name
+let l2=await it()
+for(let q=0;q<6&&!l2.some(l=>/옵션 삭제/.test(l));q++){await sleep(1200);l2=await it()}
+pk=l2.some(l=>/옵션 삭제/.test(l))
+const cl=!pk&&idL(l2,/button "선택 목록 닫기"/)
+if(cl)await page.click(cl)
+}
+}
+if(!pk)return{options:op,note:'nopick'}
+if(!onOrder){
+ln=await it()
+const bi=idL(ln,/button "(?![^"]*장바구니)[^"]*구매하기[^"]*"/)
+if(bi)await page.click(bi)
+else if(!hs){try{await page.clickText('구매하기',0)}catch{return{options:op,note:'no buy button'}}}
+else return{options:op,note:'no buy button'}
+await sleep(1200)
+const bb=idL(await it(),/button "바로 구매하기"/)
+if(bb)await page.click(bb)
+}
+let t=''
+for(let i=0;i<12;i++){
+await sleep(1000)
+t=await safe(()=>text('body'),'')
+if(/주문 상품/.test(t)&&/총 결제 금액/.test(t))break
+}
+const cm=t.match(/총 결제 금액\s*(?:\d+%\s*)?([\d,]+)\s*원/)
+const cost=cm?Number(cm[1].replace(/,/g,'')):null
+const tail=t.slice(t.indexOf('주문 상품'))
+const sm=tail.match(/(\S+(?:\s*·\s*\S+)+)\s*\/\s*\d+개/)||t.match(/주문 상품 \d+개\s*(.+?)\s*\/\s*\d+개/)
+let selected=sm?sm[1].trim():''
+if(sm&&/·/.test(sm[1])){const b=tail.slice(0,tail.indexOf(sm[0])).trim().split(/\s+/);const e=[];for(let i=b.length-1;i>=0&&b[i]&&!/_|^·$/.test(b[i])&&norm(b[i])&&(w.includes(norm(b[i]))||wEn.includes(norm(b[i])));i--)e.unshift(b[i]);if(e.length)selected=e.concat(sm[1]).join(' ')}
+const pn=(String(args.size||'').match(/[A-Z][A-Z0-9]{5,}\s*$/)||[])[0]
+if(selected&&pn&&!selected.includes(pn)&&tail.slice(0,300).includes(pn))selected+=' '+pn
+const si0=t.lastIndexOf('결제 수단')
+const ms=si0>=0?t.slice(si0,si0+400):t
+const MN=['무신사머니','무신사페이','토스페이','카카오페이','페이코','네이버페이','카드','가상계좌']
+const methods=MN.filter(n=>ms.includes(n))
+if(!op.length)op=selected?[selected.split(/\s+/).pop()]:[]
+return{cost,options:op,methods,selected,chosen:chosen||op[0]||''}

@@ -63,6 +63,15 @@ describe('parseKoreanTime', () => {
     expect(parseKoreanTime('10월 20일', now)).toBe(at(2026, 10, 20))
     expect(parseKoreanTime('2025년 3월 2일', now)).toBe(at(2025, 3, 2))
   })
+  it('"N분·시간·일·주·달·년 전" 같은 상대 표기는 지금에서 거꾸로 센다(실제 화면에 "6달 전" 이 있다)', () => {
+    expect(parseKoreanTime('5분 전', now)).toBe(now.getTime() - 5 * 60_000)
+    expect(parseKoreanTime('3시간 전', now)).toBe(now.getTime() - 3 * 3_600_000)
+    expect(parseKoreanTime('2일 전', now)).toBe(now.getTime() - 2 * 86_400_000)
+    expect(parseKoreanTime('1주 전', now)).toBe(now.getTime() - 7 * 86_400_000)
+    expect(parseKoreanTime('6달 전', now)).toBe(now.getTime() - 6 * 30 * 86_400_000)
+    expect(parseKoreanTime('2개월 전', now)).toBe(now.getTime() - 2 * 30 * 86_400_000)
+    expect(parseKoreanTime('1년 전', now)).toBe(now.getTime() - 365 * 86_400_000)
+  })
   it('"방금" 은 지금, 모르는 글은 0', () => {
     expect(parseKoreanTime('방금', now)).toBe(now.getTime())
     expect(parseKoreanTime('???', now)).toBe(0)

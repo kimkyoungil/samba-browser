@@ -78,6 +78,19 @@ export function parseKoreanTime(text: string, now: Date): number {
     return day(now.getFullYear(), now.getMonth(), now.getDate(), h, Number(ampm[3]))
   }
   if (t === '방금' || t === '방금 전') return now.getTime()
+  const rel = /^(\d+)\s*(분|시간|일|주|달|개월|년)\s*전$/.exec(t)
+  if (rel) {
+    const unit: Record<string, number> = {
+      분: 60_000,
+      시간: 3_600_000,
+      일: 86_400_000,
+      주: 7 * 86_400_000,
+      달: 30 * 86_400_000,
+      개월: 30 * 86_400_000,
+      년: 365 * 86_400_000
+    }
+    return now.getTime() - Number(rel[1]) * unit[rel[2]]
+  }
   if (t === '어제') return day(now.getFullYear(), now.getMonth(), now.getDate() - 1, 12, 0)
   const full = /^(\d{4})년\s*(\d{1,2})월\s*(\d{1,2})일$/.exec(t)
   if (full) return day(Number(full[1]), Number(full[2]) - 1, Number(full[3]))

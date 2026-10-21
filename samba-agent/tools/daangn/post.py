@@ -55,7 +55,7 @@ def go_sales():
   return False
 
 def tap(x, y, wait=1.0):
-  sh('input', 'tap', str(x), str(y)); time.sleep(wait)
+  sh('input', 'swipe', str(x), str(y), str(x), str(y), '60'); time.sleep(wait)   # XCover 에서 input tap 이 X·임시저장 버튼에 안 먹어 짧은 누름으로
 
 def dump():
   import hashlib
@@ -125,7 +125,7 @@ def push_images(it):
   if main and 1 <= main <= len(imgs):
     imgs.insert(0, imgs.pop(main - 1))
   for n, src in enumerate(imgs, 1):
-    dst = f'{DIR}/{it["pid"]}_{n}.jpg'
+    dst = f'{DIR}/{it["pid"]}_{n}_{int(time.time())}.jpg'   # 같은 이름으로 다시 밀어넣으면 앱이 옛 캐시(이전 사진)를 올릴 수 있어 매번 새 이름
     subprocess.run([ADB, '-s', DEV, 'push', src, dst], creationflags=0x08000000, capture_output=True)
     sh('touch', '-d', f'@{int(time.time()) - n * 2}', dst)   # 1번(대표)이 가장 최신 → 앨범 격자 첫 칸
     sh('content', 'call', '--uri', 'content://media/external/file', '--method', 'scan_file', '--arg', dst)
@@ -226,7 +226,13 @@ def post(it):
     # 옛 당근(A426N 26.36): 폼에 가격 칸 대신 '가격을 입력해주세요' 줄 → 별도 가격 설정 화면
     nodes = dump()
     def price_field(ns):   # 새 UI: KarrotTextField 또는 '가격' 힌트가 있는 EditText(XCover 10/21 은 id 없음)
-      return find(ns, rid='KarrotTextField') or next((n for n in ns if n['cls'] == 'EditText' and ('가격' in n['t'] or '￦' in n['t'] or n['t'].replace(',', '').isdigit())), None)
+      f = find(ns, rid='KarrotTextField') or next((n for n in ns if n['cls'] == 'EditText' and ('가격' in n['t'] or '￦' in n['t'] or n['t'].replace(',', '').isdigit())), None)
+      if f: return f
+      lab = find(ns, text='가격', exact=True)              # S23 새 UI: id·텍스트 없는 EditText 가 '가격' 라벨 아래
+      if lab:
+        below = [n for n in ns if n['cls'] == 'EditText' and n['cy'] > lab['cy']]
+        if below: return min(below, key=lambda n: n['cy'])
+      return None
     old_ui = price_field(nodes) is None and find(nodes, text='가격을 입력해주세요') is not None and find(nodes, text='가격을 입력해주세요')['cls'] != 'EditText'
     if old_ui:
       row = find(nodes, text='가격을 입력해주세요'); tap(row['cx'], row['cy'], 2)
@@ -254,7 +260,9 @@ def post(it):
       if pf['t'].replace('￦', '').replace(',', '').strip() == str(it['price']): break
       tap(pf['cx'], pf['cy'], 0.8)
       sh('input', 'keycombination', '113', '29'); sh('input', 'keyevent', '67'); time.sleep(0.3)   # 기존 값 비우기
-      sh('input', 'text', str(it['price'])); time.sleep(1.0); sh('input', 'keyevent', '4'); time.sleep(1.5)
+      for ch in str(it['price']):                           # 한 번에 치면 자릿수가 빠짐(XCover '670') → 한 글자씩
+        sh('input', 'text', ch); time.sleep(0.15)
+      time.sleep(1.0); sh('input', 'keyevent', '4'); time.sleep(1.5)
   finally:
     k.close()
   nodes = dump()
@@ -289,7 +297,12 @@ def post(it):
       save = next((b for b in btns if '저장' in b['t'] and '안 함' not in b['t'] and '않' not in b['t']), None)
       assert save, '임시 저장 버튼 없음'
       tap(save['cx'], save['cy'], 3)
-    nodes = dump(); print('저장 후 화면:', focused(), [n['t'] for n in nodes if n['t']][:6])
+    nodes = dump()
+    if find(nodes, text='게시글을 임시저장했어요.') or find(nodes, rid='tvPhotoCount') or find(nodes, text='임시저장', exact=True):
+      sh('input', 'keyevent', '4'); time.sleep(1.5); nodes = dump()
+      sv = find(nodes, text='저장하기', exact=True)         # '작성 중인 판매 글을 저장할까요?' → 저장하기
+      if sv: tap(sv['cx'], sv['cy'], 2.5)
+    print('저장 후 화면:', focused())
     print(f'임시저장 완료 {it["pid"]} {it["title"]} {it["price"]} 사진{n_img}')
     return
   done = find(nodes, desc='작성 완료'); tap(done['cx'], done['cy'], 4)

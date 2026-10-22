@@ -17,6 +17,7 @@ def dismiss_overlay(nodes):
 
 def to_community():
   """당근 메인 → 커뮤니티 탭(동네생활 목록)"""
+  sh('input', 'keyevent', '224'); time.sleep(0.8)   # 글 사이 10분 동안 화면이 꺼지면 덤프가 비므로 먼저 깨운다
   for _ in range(10):
     f = focused()
     nodes = dump()

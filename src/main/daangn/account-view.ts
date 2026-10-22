@@ -165,6 +165,7 @@ export class DaangnAccountView {
   async openRoom(roomId: string): Promise<void> {
     const wc = this.alive()
     if (!wc) throw new Error('뷰가 없어요')
+    this.setFocusEmulation(true) // 방을 여는 순간에 포커스가 있어야 당근이 읽음 처리한다
     const clicked = await wc
       .executeJavaScript(
         `(() => { const a = document.querySelector('a[href*="/room/' + ${JSON.stringify(roomId)} + '"]'); if (!a) return false; a.click(); return true })()`
@@ -190,6 +191,7 @@ export class DaangnAccountView {
     const becameVisible = this.current !== target
     this.moveTo(target)
     this.view.setBounds(clamped)
+    this.setFocusEmulation(true)
     // 포커스가 없으면 당근이 "보고 있는 창이 아니다" 로 보고 읽음 처리를 하지 않는다.
     // 숨김에서 보임으로 바뀔 때만 준다 — 영역 조절 때마다 주면 다른 입력칸의 포커스를 뺏는다
     if (becameVisible && !this.view.webContents.isDestroyed()) this.view.webContents.focus()
@@ -198,6 +200,7 @@ export class DaangnAccountView {
   /** 다시 숨김 창으로 돌려보낸다 */
   hide(): void {
     if (!this.view || !this.host) return
+    this.setFocusEmulation(false)
     this.moveTo(this.host)
     this.view.setBounds(hiddenBounds())
   }
@@ -244,6 +247,22 @@ export class DaangnAccountView {
     const wc = this.alive()
     if (!wc || classifyChatUrl(wc.getURL()) !== 'chat') return
     await wc.insertCSS(buildHideListCss()).catch(() => undefined)
+  }
+
+  /**
+   * 뷰가 보이는 동안 페이지가 "창에 포커스가 있다" 고 믿게 한다(엔진 수준 에뮬레이션).
+   * 앱 창이 OS 포커스를 잃었거나 방을 연 시점에 포커스가 없으면 당근 웹이 읽음 처리를 하지 않아
+   * 열어 둔 방의 안 읽음 배지가 남는다. 숨길 때는 끈다 — 숨은 뷰가 열려 있는 방의 새 메시지를
+   * 몰래 읽음 처리하면 새 문의를 놓친다
+   */
+  private setFocusEmulation(enabled: boolean): void {
+    const wc = this.alive()
+    if (!wc) return
+    try {
+      void wc.debugger.sendCommand('Emulation.setFocusEmulationEnabled', { enabled }).catch(() => undefined)
+    } catch {
+      // 디버거가 붙지 않은 뷰는 기존 동작(webContents.focus)만 쓴다
+    }
   }
 
   /**

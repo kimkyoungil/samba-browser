@@ -2298,3 +2298,38 @@ def test_색에만_붙은_첫_사이즈_후보로_다른_사이즈를_고르지_
     assert matching_options(['02블랙 S', '02블랙 M'], '02블랙 / M') == ['02블랙 M']
     # M 이 품절이면 S 로 대신하지 않는다
     assert matching_options(['02블랙 S', 'M (품절)'], '02블랙 / M') == []
+
+
+def test_키마스터_조회가_탭_불일치로_거절되면_그_사이트_탭을_잡고_다시_묻는다() -> None:
+    """교차 비교(SSG)가 앞에 있어 list_accounts 가 거절되면 L.PAY(site)가 빠져 롯데카드가 후보에서 사라졌다(실기 2026-10-22)."""
+    import json as _json
+
+    from samba_agent.agents import buyer as buyer_mod
+
+    agent = buyer_mod.BuyerAgent.__new__(buyer_mod.BuyerAgent)
+    agent.spec = type('S', (), {'name': 'buyer.lotteon'})()
+    agent._home = lambda: 'https://www.lotteon.com/'
+    calls: list[tuple[str, dict[str, object]]] = []
+    state = {'focused': False}
+
+    def tool(name: str, **kw: object) -> str:
+        calls.append((name, kw))
+        if name == 'list_tabs':
+            return _json.dumps(
+                [
+                    {'id': 't1', 'kind': 'tab', 'url': 'https://department.ssg.com/x'},
+                    {'id': 't2', 'kind': 'tab', 'url': 'https://www.lotteon.com/p/order/orderSheet/one/payments'},
+                ]
+            )
+        if name == 'switch_tab':
+            state['focused'] = kw.get('id') == 't2'
+            return 'ok'
+        if name == 'list_accounts':
+            if not state['focused']:
+                return _json.dumps({'accounts': [], 'note': 'refused: host must match the current tab'})
+            return _json.dumps([{'label': 'edelvise06', 'payments': ['site', 'naver', 'kakao']}])
+        raise AssertionError(name)
+
+    agent.tool = tool
+    assert agent._payable_providers('edelvise06') == {'site', 'naver', 'kakao'}
+    assert ('switch_tab', {'id': 't2'}) in calls

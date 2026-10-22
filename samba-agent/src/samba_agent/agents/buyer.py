@@ -2896,6 +2896,16 @@ class BuyerAgent(AgentBase):
             # 비교에서 이긴 계정이 '낼 수 없다'로 멈췄다(실기 2026-10-21 포이즌 2775·2776 card_missing)
             return cache.get(f'{host}|{account}')
         found = parse_account_payments(raw, account)
+        if found is None and 'must match the current tab' in raw:
+            # 활성 탭이 다른 사이트(교차 비교 SSG 등)라 거절됐다 — 이 사이트의 탭을 앞에 두고 한 번 더 묻는다.
+            # 못 묻고 폴백하면 사이트 결제 비밀번호(L.PAY 롯데카드 = site)가 빠져 더 싼 롯데카드가 후보에서 사라졌다
+            # (실기 2026-10-22 쿠팡 745399971102774: 롯데카드 10%+청구할인 2% 가 카카오페이 머니보다 싼데 카카오페이를 골랐다)
+            if self._focus_host_tab(host):
+                try:
+                    raw = self.tool('list_accounts', host=host)
+                except AgentFailure:
+                    return cache.get(f'{host}|{account}')
+                found = parse_account_payments(raw, account)
         if found is not None:
             cache[f'{host}|{account}'] = set(found)
         else:
@@ -2904,6 +2914,25 @@ class BuyerAgent(AgentBase):
             # 카드 직접 결제(H몰 롯데카드)는 키마스터 결제 비밀번호 없이 카드사 결제창에서 사람이 승인한다 — 계정이 있으면 낼 수 있다
             found = found | {DIRECT_CARD_PROVIDER}
         return found
+
+    def _focus_host_tab(self, host: str) -> bool:
+        """그 호스트(또는 하위 도메인)의 일반 탭을 현재 탭으로 잡는다. 잡았으면 True."""
+        try:
+            tabs = json.loads(self.tool('list_tabs'))
+        except (AgentFailure, ValueError):
+            return False
+        rows = [t for t in tabs if isinstance(t, dict)] if isinstance(tabs, list) else []
+        for t in reversed(rows):
+            if t.get('kind') == 'popup' or not t.get('id'):
+                continue
+            tab_host = urlparse(str(t.get('url') or '')).hostname or ''
+            if tab_host == host or tab_host.endswith('.' + host):
+                try:
+                    self.tool('switch_tab', id=str(t['id']))
+                except AgentFailure:
+                    return False
+                return True
+        return False
 
     def _allowed_providers(self, account: str | None = None) -> set[str] | None:
         """이 소싱처에서 쓸 수 있는 결제 제공자. 소싱처가 하나로 고정했으면(pay_provider) 그것만, 아니면 전역 허용 수단.

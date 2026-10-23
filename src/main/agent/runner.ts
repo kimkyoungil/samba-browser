@@ -1,7 +1,8 @@
 import { buildLearnPrompt, LEARN_PROMPT_PREFIX, shouldLearn, type LearnedRunJs } from './learn'
 import {
   buildHistoryNote,
-  RESUME_MAX_RUNS,
+  isContextOverflowError,
+  shouldStartFresh,
   type ChatSessionStore,
   type HistoryMessage
 } from './chat-session'
@@ -574,6 +575,10 @@ export class AgentRunner {
     let sessionId: string | null = null
     let resume: string | undefined
     let resumeFailed = false
+    // 이 세션의 지금 문맥 크기(본 대화의 마지막 API 호출 입력 토큰)와 모델 문맥 창 —
+    // 끝날 때 세션과 함께 남겨, 너무 커졌으면 다음 지시는 새 세션 + 요약으로 시작한다
+    let contextTokens = 0
+    let contextWindow: number | undefined
     const startedAt = Date.now()
     // 사용자 문장에 걸리는 플레이북 — 시스템 프롬프트 뒤에 절차를 덧붙이고, 화면에는 이름만 알린다
     // 자동 학습 턴에는 플레이북을 붙이지 않는다 — 지시문에 든 "주문처리"에 걸려 주문을 다시 처리하려 들면 안 된다
@@ -632,6 +637,27 @@ export class AgentRunner {
     let apiError = ''
     // 종료 상태를 이미 보냈는지. SDK 는 오류 result 를 내보낸 뒤 throw 까지 하므로 중복 방지
     let settled = false
+    // 문맥(대화 길이) 초과로 실패했을 때 — 같은 막힌 세션을 다음 지시가 또 이어받지 않게 연결을 지운다.
+    // 이어받은 세션이 첫 호출에서 바로 넘쳤으면(도구를 아직 안 불렀으면) 요약으로 새 세션을 열어 같은 지시를 한 번 다시 돈다.
+    // 도구를 이미 불렀으면 중복 실행 위험이 있어 다시 돌지 않고, 다음 말부터 새 세션으로 시작한다고만 알린다
+    const resetOverflowedSession = (): boolean => {
+      if (chatId === undefined) return false
+      this.chatSessions?.clear(chatId)
+      resumeFailed = true
+      if (resume === undefined || counter.count() !== 0) {
+        emit({
+          type: 'text',
+          text: '(대화가 너무 길어져 이번 세션을 닫았습니다. 다음 말부터 앞부분 요약으로 새 세션을 시작합니다)'
+        })
+        return false
+      }
+      emit({
+        type: 'text',
+        text: '(대화가 너무 길어 이전 세션을 닫고, 앞부분 요약으로 새 세션을 열어 다시 시작합니다)'
+      })
+      followUp = prompt
+      return true
+    }
     // 이번 실행의 감사 로그 식별자(금고 fill 기록에 남는다)
     const jobId = randomUUID()
     // 폰 배선이 쓰는 작업 문맥. 확인 카드·진행 로그·넘김 카드는 웹 도구 것을 그대로 쓴다
@@ -720,7 +746,10 @@ ${CODEX_NO_IMAGE_NOTE}`
       // 같은 대화면 SDK 세션을 이어받는다(앞선 지시·탭·도구 결과를 기억). 세션이 없거나 한 세션으로
       // 너무 오래 돌았으면 새 세션을 열고, 대신 앞부분 요약을 지시문 앞에 붙여 맥락을 넘긴다
       const session = chatId === undefined ? null : (this.chatSessions?.get(chatId) ?? null)
-      resume = session !== null && session.runs < RESUME_MAX_RUNS ? session.sessionId : undefined
+      resume = shouldStartFresh(session) ? undefined : session?.sessionId
+      // 이어오던 세션이 길어져(실행 횟수·문맥 크기) 갈아타는 순간을 화면에 알린다
+      if (session !== null && resume === undefined && !learning)
+        emit({ type: 'text', text: '(대화가 길어져 앞부분을 요약해 새 세션으로 이어갑니다)' })
       const historyNote =
         resume === undefined && chatId !== undefined && !learning && this.historyReader
           ? buildHistoryNote(this.historyReader(chatId))
@@ -763,6 +792,11 @@ ${CODEX_NO_IMAGE_NOTE}`
             partial = ''
             emit({ type: 'partial', text: '' })
           }
+          // 본 대화의 마지막 호출 입력 크기 = 지금 문맥 크기(하위 에이전트 호출은 따로 센다)
+          if (msg.parent_tool_use_id === null) {
+            const used = contextSize(msg.message.usage)
+            if (used > 0) contextTokens = used
+          }
           // SDKAssistantMessage.message = Anthropic API 메시지.
           // 같은 문단이 두 번 실려 오는 경우가 있어 중복 제거기를 거친다
           for (const block of msg.message.content) {
@@ -770,6 +804,10 @@ ${CODEX_NO_IMAGE_NOTE}`
             const text = deduper.accept(block.text)
             if (text) emit({ type: 'text', text })
           }
+        } else if (msg.type === 'system' && msg.subtype === 'compact_boundary') {
+          // SDK 가 스스로 대화를 압축했다 — 압축 뒤 크기로 다시 센다
+          const post = msg.compact_metadata.post_tokens
+          if (typeof post === 'number' && post > 0) contextTokens = post
         } else if (msg.type === 'system' && msg.subtype === 'init') {
           // 이 실행의 SDK 세션 id — 끝나면 대화에 남겨 다음 지시가 이어받는다
           sessionId = msg.session_id
@@ -794,6 +832,8 @@ ${CODEX_NO_IMAGE_NOTE}`
           emit({ type: 'progress', kind: 'apiRetry', attempt: msg.attempt, reason: msg.error })
         } else if (msg.type === 'result') {
           const failed = msg.subtype !== 'success' || msg.is_error
+          const window = largestContextWindow(msg.modelUsage)
+          if (window !== undefined) contextWindow = window
           // 화면에 보여줄 실패 사유(모델이 쓴 result 문구 포함)
           const detail = [
             msg.subtype === 'success' ? (msg.is_error ? msg.result : '') : msg.errors.join(' '),
@@ -825,6 +865,8 @@ ${CODEX_NO_IMAGE_NOTE}`
             this.autoContinueLeft > 0
           settled = true
           if (failed && kind && retryOnFallbackAccount()) continue
+          if (failed && !kind && isContextOverflowError(detail) && resetOverflowedSession())
+            continue
           emit({
             type: 'status',
             state: failed ? 'failed' : 'done',
@@ -868,6 +910,14 @@ ${CODEX_NO_IMAGE_NOTE}`
         emit({ type: 'text', text: '(이전 세션을 이어받지 못해 새 세션으로 다시 시작합니다)' })
         followUp = prompt
       }
+      // 문맥 초과로 던졌으면 세션 연결을 지운다(같은 막힌 세션을 다시 이어받지 않게)
+      if (
+        !abort.signal.aborted &&
+        !settled &&
+        isContextOverflowError(`${e instanceof Error ? e.message : String(e)} ${apiError}`) &&
+        resetOverflowedSession()
+      )
+        settled = true
       // stop() 또는 result 처리에서 이미 종료 상태를 보냈으면 중복 emit 하지 않는다
       if (!abort.signal.aborted && !settled) {
         const message = e instanceof Error ? e.message : String(e)
@@ -895,7 +945,7 @@ ${CODEX_NO_IMAGE_NOTE}`
       if (this.releaseVaultHold === releaseVaultHold) this.releaseVaultHold = null
       // 다음 지시가 이어받을 세션 id 를 대화에 남긴다(이어받기에 실패한 실행은 남기지 않는다)
       if (chatId !== undefined && sessionId !== null && !resumeFailed)
-        this.chatSessions?.note(chatId, sessionId)
+        this.chatSessions?.note(chatId, sessionId, { contextTokens, contextWindow })
       // 이미 stop() 이나 다음 run() 이 상태를 가져갔으면 건드리지 않는다
       if (gen === this.generation) {
         this.abort = null
@@ -1145,4 +1195,24 @@ ${CODEX_NO_IMAGE_NOTE}`
     }
     return false
   }
+}
+
+/** API 응답 한 번의 입력 크기(캐시로 읽은 몫·새로 캐시한 몫 포함) = 그 순간의 문맥 크기 */
+function contextSize(usage: unknown): number {
+  if (!usage || typeof usage !== 'object') return 0
+  const u = usage as Record<string, unknown>
+  const n = (k: string): number => (typeof u[k] === 'number' ? (u[k] as number) : 0)
+  return n('input_tokens') + n('cache_read_input_tokens') + n('cache_creation_input_tokens')
+}
+
+/** 결과 메시지의 모델별 사용량 중 가장 큰 문맥 창(모르면 undefined) */
+function largestContextWindow(modelUsage: unknown): number | undefined {
+  if (!modelUsage || typeof modelUsage !== 'object') return undefined
+  let best: number | undefined
+  for (const v of Object.values(modelUsage as Record<string, unknown>)) {
+    const w =
+      v && typeof v === 'object' ? (v as { contextWindow?: unknown }).contextWindow : undefined
+    if (typeof w === 'number' && w > 0 && (best === undefined || w > best)) best = w
+  }
+  return best
 }

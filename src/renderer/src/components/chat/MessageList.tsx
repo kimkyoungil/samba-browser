@@ -1,10 +1,11 @@
 import type React from 'react'
 import { memo, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Check, Copy, FileText } from 'lucide-react'
+import { FileText } from 'lucide-react'
 import { useChatStore, type ChatMessage } from '@renderer/stores/chatStore'
 import { StepLog } from './StepLog'
 import { MarkdownText } from './MarkdownText'
+import { CopyButton } from './CopyButton'
 
 // 맨 아래에서 이만큼(px) 안쪽이면 '따라 내려가는 중'으로 본다
 const STICK_GAP = 40
@@ -75,32 +76,6 @@ export function MessageList(): React.JSX.Element {
         />
       ))}
     </div>
-  )
-}
-
-// 말풍선 [복사]. 앱 화면은 클립보드 권한이 막혀 있어 메인에 맡긴다. 눌렀으면 잠깐 체크 표시
-function CopyButton({ text, className }: { text: string; className?: string }): React.JSX.Element {
-  const { t } = useTranslation()
-  const [copied, setCopied] = useState(false)
-  useEffect(() => {
-    if (!copied) return
-    const timer = setTimeout(() => setCopied(false), 1500)
-    return () => clearTimeout(timer)
-  }, [copied])
-  return (
-    <button
-      type="button"
-      aria-label={t('chat.copy')}
-      title={copied ? t('chat.copied') : t('chat.copy')}
-      onClick={() => {
-        void window.samba.clipboard?.writeText(text).then((r) => {
-          if (r.ok) setCopied(true)
-        })
-      }}
-      className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-[var(--text3)] hover:bg-black/5 hover:text-[var(--text)] ${className ?? ''}`}
-    >
-      {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
-    </button>
   )
 }
 

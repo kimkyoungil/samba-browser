@@ -4,6 +4,8 @@ import Markdown, { type Components } from 'react-markdown'
 import { useUiStore } from '@renderer/stores/uiStore'
 import { safeHref } from '@renderer/lib/safe-href'
 import { MARKDOWN_PLUGINS } from '@renderer/lib/markdown-plugins'
+import { hastText } from '@renderer/lib/hast-text'
+import { CopyButton } from './CopyButton'
 
 // AI 답 글을 서식(굵게·표·목록·링크·코드)대로 그린다.
 // - 원시 HTML 은 그리지 않는다(react-markdown 기본) — 답에 섞인 태그가 앱 화면에서 실행되지 않는다
@@ -33,6 +35,21 @@ export function MarkdownText({ text }: { text: string }): React.JSX.Element {
           >
             {children}
           </a>
+        )
+      },
+      // 코드 칸마다 [복사] — 마우스를 올리면 오른쪽 위에 나온다
+      pre({ children, node }) {
+        const code = hastText(node)
+        return (
+          <div className="group/code relative">
+            <pre>{children}</pre>
+            {code && (
+              <CopyButton
+                text={code}
+                className="absolute right-1 top-1 bg-white/80 opacity-0 transition-opacity group-hover/code:opacity-100"
+              />
+            )}
+          </div>
         )
       },
       img({ src, alt }) {

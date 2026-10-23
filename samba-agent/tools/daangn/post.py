@@ -118,6 +118,8 @@ def push_images(it):
   for f in old:
     sh('rm', '-f', f'{DIR}/{f}')
     sh('content', 'call', '--uri', 'content://media/external/file', '--method', 'scan_file', '--arg', f'{DIR}/{f}')
+    sh('am', 'broadcast', '-a', 'android.intent.action.MEDIA_SCANNER_SCAN_FILE', '-d', f'file://{DIR}/{f}')   # 지운 파일도 방송 스캔해야 안드로이드 9 앨범 개수에서 빠진다
+  sh("content delete --uri content://media/external/file --where \"_data like '%/DCIM/Bunjang/%'\"")   # 안드로이드 9 는 지운 파일 기록이 갤러리 DB에 남아 앨범 개수가 어긋나므로 기록째 삭제
   sh('mkdir', '-p', DIR)
   imgs = list(it['images'][:10])
   MAIN.update(json.load(open('main_images.json', encoding='utf-8')) if os.path.exists('main_images.json') else {})   # 매번 다시 읽음
@@ -129,6 +131,7 @@ def push_images(it):
     subprocess.run([ADB, '-s', DEV, 'push', src, dst], creationflags=0x08000000, capture_output=True)
     sh('touch', '-d', f'@{int(time.time()) - n * 2}', dst)   # 1번(대표)이 가장 최신 → 앨범 격자 첫 칸
     sh('content', 'call', '--uri', 'content://media/external/file', '--method', 'scan_file', '--arg', dst)
+    sh('am', 'broadcast', '-a', 'android.intent.action.MEDIA_SCANNER_SCAN_FILE', '-d', f'file://{dst}')   # 안드로이드 9(G950N)은 scan_file 호출을 지원하지 않아 방송으로 갤러리에 등록
   return len(imgs)
 
 def edit_text_below(nodes, label):
@@ -160,10 +163,12 @@ def post(it):
     if find(nodes, text='여러 물건의 판매 글을 쉽게 쓸 수 있어요.') or find(nodes, desc='시트 닫기'):
       c = find(nodes, desc='닫기') or find(nodes, desc='시트 닫기'); tap(c['cx'], c['cy'], 2); continue
     break
-  nodes, hit = wait_for(lambda ns: (find(ns, rid='title') and find(ns, text='AI로 작성해요')) or find(ns, rid='tvPhotoCount'), what='사진 선택 또는 폼')
+  def album_title(ns):   # 새 사진 선택창은 리소스 id 없이 '모든 사진' 글자만 있다(서병기 S23 10/23)
+    return find(ns, rid='title') or find(ns, text='모든 사진', exact=True)
+  nodes, hit = wait_for(lambda ns: (album_title(ns) and find(ns, text='AI로 작성해요')) or find(ns, rid='tvPhotoCount'), what='사진 선택 또는 폼')
   if find(nodes, rid='tvPhotoCount') and not find(nodes, text='AI로 작성해요'):
     pc = find(nodes, rid='tvPhotoCount'); tap(pc['cx'], pc['cy'], 2.5)
-    nodes, _ = wait_for(lambda ns: find(ns, rid='title') and find(ns, text='AI로 작성해요'), what='사진 선택')
+    nodes, _ = wait_for(lambda ns: album_title(ns) and find(ns, text='AI로 작성해요'), what='사진 선택')
   assert 'DaangnWebActivity' not in focused(), '홍보글 화면으로 튐'
   for label in ('여러 물건 글쓰기', 'AI로 작성해요'):   # 둘 다 끈다(여러 물건 글쓰기가 켜지면 사진을 AI 가 나눠 글을 만듦)
     lb = find(nodes, text=label)
@@ -171,7 +176,7 @@ def post(it):
     toggle = [n for n in nodes if n['click'] and abs(n['cy'] - lb['cy']) < sy(60) and n['cx'] > sx(800)]
     if toggle and toggle[0]['chk']:
       tap(toggle[0]['cx'], toggle[0]['cy'], 0.7); nodes = dump()
-  t = find(nodes, rid='title'); tap(t['cx'], t['cy'], 1.5)
+  t = album_title(nodes); tap(t['cx'], t['cy'], 1.5)
   nodes, a = wait_for(lambda ns: find(ns, text='Bunjang ('), what='앨범 목록')
   assert a['t'] == f'Bunjang ({n_img})', f'앨범 사진 수 불일치: {a["t"]} vs {n_img}'
   tap(a['cx'], a['cy'], 1.5)
@@ -266,14 +271,15 @@ def post(it):
   finally:
     k.close()
   nodes = dump()
-  if it.get('direct_buy') is False:
+  if it.get('direct_buy') is False and os.environ.get('DAANGN_DIRECT_BUY') != '1':   # 서병기(S23) 는 DAANGN_DIRECT_BUY=1 로 항상 바로구매를 켠 채 올린다(사용자 2026-10-22)
     # 위탁상품은 바로구매(전국으로 판매하기) 끄고 올린다 (사용자 2026-10-20)
     for _ in range(4):
       lab = find(nodes, text='전국으로 판매하기')
       if lab: break
       sh('input', 'swipe', str(sx(540)), str(sy(1800)), str(sx(540)), str(sy(900)), '400'); time.sleep(1); nodes = dump()
     if lab:
-      sw = [n for n in nodes if n['click'] and abs(n['cy'] - lab['cy']) < sy(60) and n['cx'] > sx(700)]
+      sw = [n for n in nodes if n['click'] and abs(n['cy'] - lab['cy']) < sy(60) and n['cx'] > sx(700)] or [n for n in nodes if abs(n['cy'] - lab['cy']) < sy(60) and n['cx'] > sx(700) and n['cls'] in ('View', 'Switch', 'ToggleButton')]   # G950N 은 토글 View 의 click 속성이 false 라 둘째 후보로 찾는다
+      print('바로구매 토글 후보', [(n['cls'], n['chk']) for n in sw])
       if sw and sw[0]['chk']:
         tap(sw[0]['cx'], sw[0]['cy'], 1.2); nodes = dump()
         sw2 = [n for n in nodes if n['click'] and abs(n['cy'] - lab['cy']) < sy(60) and n['cx'] > sx(700)]
@@ -283,6 +289,16 @@ def post(it):
     assert find(nodes, text=f"{it['price']:,}"), '가격 표시 확인 실패(옛 UI)'
   else:
     pf = price_field(nodes); assert pf['t'].replace('￦', '').replace(',', '').strip() == str(it['price']), '가격 불일치: ' + pf['t']
+  # 이웃 동네에도 같이 올리기(사용자 10/23: 모든 계정 항상 2군데) — 꺼져 있으면 켠다
+  for _ in range(4):
+    lb = next((n for n in nodes if n['t'].endswith('에도 올리기')), None)
+    if lb: break
+    sh('input', 'swipe', str(sx(540)), str(sy(1800)), str(sx(540)), str(sy(900)), '400'); time.sleep(1); nodes = dump()
+  if lb:
+    sw = [n for n in nodes if n['click'] and abs(n['cy'] - lb['cy']) < sy(60) and n['cx'] > sx(700)]
+    if sw and not sw[0]['chk']:
+      tap(sw[0]['cx'], sw[0]['cy'], 1.0); nodes = dump()
+    print('이웃 동네 올리기:', lb['t'])
   if it.get('draft'):
     # 임시저장: 닫기 → 저장 묻는 창에서 '저장'(저장 안 함 제외)
     ts = find(nodes, text='임시저장', exact=True) or find(nodes, desc='임시저장')
@@ -314,7 +330,7 @@ def post(it):
     neg = find(nodes, rid='negativeButton'); tap(neg['cx'], neg['cy'], 3)
     nodes = dump(); done = find(nodes, desc='작성 완료'); tap(done['cx'], done['cy'], 5)
   # 4) 상세 화면 확인 후 뒤로
-  nodes, _ = wait_for(lambda ns: find(ns, desc='공유하기') and find(ns, text=it['name'][:20]), 15, what='등록된 글 상세')
+  nodes, _ = wait_for(lambda ns: find(ns, desc='공유하기') and find(ns, text=it['title'][:10]), 15, what='등록된 글 상세')
   cat = find(nodes, text=want, exact=True)
   print(f'등록 완료 {it["pid"]} {it["title"]} {it["price"]} 사진{n_img} 카테고리={cat["t"] if cat else "?"}')
   sh('input', 'keyevent', '4'); time.sleep(1.5)

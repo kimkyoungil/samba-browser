@@ -33,6 +33,7 @@ export const IPC = {
   chatAppend: 'chat:append',
   chatRename: 'chat:rename',
   chatDelete: 'chat:delete',
+  chatTruncate: 'chat:truncate', // 한 메시지부터 끝까지 지우기(고쳐 다시 보내기·답 다시 받기)
   settingsGet: 'settings:get',
   settingsSet: 'settings:set',
   bridgeRegenerateToken: 'bridge:regenerateToken', // 하네스 브릿지 토큰 새로 만들기(설정에 저장)
@@ -315,6 +316,11 @@ export type AgentEvent =
   | { type: 'thinking'; text: string }
   // AI 가 세운 할 일 목록(매번 전체). 화면에만 보이고 기록에는 남지 않는다
   | { type: 'todos'; items: AgentTodo[] }
+  // 이번 실행의 꼬리표(사용자 말 한 번 = 한 꼬리표, 자동 이어가기는 같은 꼬리표를 물려받는다).
+  // 화면은 지금 보낸 말에 이것을 달아 두었다가, saved 가 오면 그 말의 기록 줄 번호를 안다
+  | { type: 'turn'; turnId: string }
+  // 실행 기록을 남겼다 — rowId 는 그 실행의 사용자 말 줄 번호(고쳐 다시 보내기가 여기부터 지운다)
+  | { type: 'saved'; turnId: string; rowId: number }
   | { type: 'step'; label: string; ok: boolean }
   | { type: 'confirm'; requestId: string; action: string; kind?: 'danger' | 'finish' }
   // 진행 상황만 알리는 이벤트(도구 호출 아님). SDK 재시도 대기와, 플레이북이 부르는

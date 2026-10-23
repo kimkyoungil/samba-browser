@@ -238,7 +238,10 @@ const api = {
       invoke(IPC.chatAppend, input),
     rename: (chatId: number, title: string): Promise<IpcResult<ChatDto | null>> =>
       invoke(IPC.chatRename, chatId, title),
-    remove: (chatId: number): Promise<IpcResult<boolean>> => invoke(IPC.chatDelete, chatId)
+    remove: (chatId: number): Promise<IpcResult<boolean>> => invoke(IPC.chatDelete, chatId),
+    // 한 메시지부터 끝까지 지운다(지운 줄 수). 그 대화의 AI 세션도 새로 시작한다
+    truncate: (chatId: number, messageId: number): Promise<IpcResult<number>> =>
+      invoke(IPC.chatTruncate, chatId, messageId)
   },
   // 알림 연동 — 설정 화면의 [테스트 보내기]. 웹훅 주소·봇 토큰은 메인이 쥔 값을 쓴다
   notify: {

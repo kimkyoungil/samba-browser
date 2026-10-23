@@ -20,6 +20,11 @@ export interface ChatMessage {
   // AI 가 이번 답을 쓰며 생각한 과정(요약본)과 세운 할 일 목록. 이 세션 화면에만 있다
   thinking?: string
   todos?: AgentTodo[]
+  // 사용자 말의 실행 꼬리표(메인이 붙여 준다)와 기록 줄 번호 — 고쳐 다시 보낼 때 그 줄부터 지운다
+  turnId?: string
+  rowId?: number
+  // 이 말과 함께 보낸 첨부 원본(다시 보낼 때 그대로 싣는다). 이 세션 화면에만 있다
+  sent?: { images?: AgentImage[]; files?: AgentFile[] }
 }
 
 // 일하는 중에 보낸 다음 말. 지금 작업이 끝나면 차례로 보낸다
@@ -123,6 +128,10 @@ interface ChatState {
   dropped: File[] | null
   dropFiles: (files: File[]) => void
   takeDropped: () => File[] | null
+  // 보낸 말을 고쳐 다시 보낸다 — 그 말부터 뒤를 화면과 기록에서 지우고 새 글로 보낸다(첨부는 그대로)
+  resend: (messageId: string, text: string) => Promise<void>
+  // 마지막 답을 다시 받는다 — 마지막 말을 같은 글·첨부로 다시 보낸다
+  regenerate: () => Promise<void>
   stop: () => Promise<void>
   reply: (requestId: string, approved: boolean) => void
   // 넘김 카드 응답 — skip=true 는 건너뛰고 계속, false 는 작업 중단
@@ -268,7 +277,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
           role: 'user',
           text,
           ...(previews ? { images: previews } : {}),
-          ...(fileNames ? { files: fileNames } : {})
+          ...(fileNames ? { files: fileNames } : {}),
+          ...(previews || fileNames
+            ? {
+                sent: {
+                  ...(previews ? { images } : {}),
+                  ...(fileNames ? { files } : {})
+                }
+              }
+            : {})
         },
         { id: nid(), role: 'ai', text: '', steps: [] }
       ],
@@ -342,6 +359,30 @@ export const useChatStore = create<ChatState>((set, get) => ({
     if (d) set({ dropped: null })
     return d
   },
+  resend: async (messageId, text) => {
+    if (get().status === 'running') return
+    const msgs = get().messages
+    const at = msgs.findIndex((m) => m.id === messageId && m.role === 'user')
+    if (at < 0) return
+    const target = msgs[at]
+    // 이 말부터 뒤에서 기록에 남은 첫 줄 — 그 줄부터 끝까지 지운다(기록 전에 끊긴 말은 화면에만 있다)
+    const rowId = msgs.slice(at).find((m) => m.rowId !== undefined)?.rowId
+    const chatId = get().activeChatId
+    if (chatId !== null && rowId !== undefined) {
+      const r = await window.samba.chats?.truncate?.(chatId, rowId)
+      // 기록을 못 지웠으면 보내지 않는다 — 지운 줄 알았던 답이 다음 대화 맥락에 그대로 남는다
+      if (!r?.ok) {
+        set({ status: 'failed', currentLabel: r?.ok === false ? r.error : '', retry: null })
+        return
+      }
+    }
+    set({ messages: msgs.slice(0, at) })
+    await get().send(text, undefined, target.sent?.images, target.sent?.files)
+  },
+  regenerate: async () => {
+    const last = [...get().messages].reverse().find((m) => m.role === 'user')
+    if (last) await get().resend(last.id, last.text)
+  },
   stop: async () => {
     await window.samba.agent.stop()
   },
@@ -367,6 +408,22 @@ export const useChatStore = create<ChatState>((set, get) => ({
     // 생각 과정·할 일 목록은 매번 전체가 온다 — 그대로 갈아 끼운다
     if (e.type === 'thinking' && last?.role === 'ai') patchLast({ thinking: e.text })
     if (e.type === 'todos' && last?.role === 'ai') patchLast({ todos: e.items })
+    // 실행이 시작됐다 — 방금 보낸 말(마지막 AI 말풍선 바로 앞)에 꼬리표를 단다. 이어 돌기는 같은 꼬리표라 그대로 둔다
+    if (e.type === 'turn' && last?.role === 'ai') {
+      const user = msgs[msgs.length - 2]
+      if (user?.role === 'user' && user.turnId === undefined)
+        set({
+          messages: [...msgs.slice(0, -2), { ...user, turnId: e.turnId }, last]
+        })
+    }
+    // 기록을 남겼다 — 꼬리표가 같은 말에 줄 번호를 단다(이어 돌기가 남긴 뒤 줄은 첫 번호를 지킨다)
+    if (e.type === 'saved') {
+      const at = msgs.findIndex((m) => m.turnId === e.turnId && m.role === 'user')
+      if (at >= 0 && msgs[at].rowId === undefined)
+        set({
+          messages: msgs.map((m, i) => (i === at ? { ...m, rowId: e.rowId } : m))
+        })
+    }
     if (e.type === 'step' && last?.role === 'ai') {
       patchLast({ steps: [...(last.steps ?? []), { label: e.label, ok: e.ok }] })
       set((s) => ({ toolCalls: s.toolCalls + 1, currentLabel: e.label, retry: null }))
@@ -473,6 +530,7 @@ function toChatMessage(row: ChatMessageDto): ChatMessage {
     id: `db-${row.id}`,
     role: row.role === 'user' ? 'user' : 'ai',
     text: row.content,
-    steps: row.steps ?? undefined
+    steps: row.steps ?? undefined,
+    rowId: row.id
   }
 }

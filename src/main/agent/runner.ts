@@ -99,8 +99,14 @@ export interface TranscriptEntry {
   steps: { label: string; ok: boolean }[]
 }
 
-/** 대화 기록 저장 훅. 주입하지 않으면 아무것도 저장하지 않는다 */
-export type TranscriptSink = (chatId: number, entry: TranscriptEntry) => void
+/**
+ * 대화 기록 저장 훅. 주입하지 않으면 아무것도 저장하지 않는다.
+ * 남긴 사용자 말의 줄 번호를 돌려주면 화면에 알린다(고쳐 다시 보내기가 그 줄부터 지운다)
+ */
+export type TranscriptSink = (
+  chatId: number,
+  entry: TranscriptEntry
+) => { userRowId: number } | null | void
 
 /** 일하는 도중 앱을 끄면 그때까지의 답 뒤에 붙는 표시 */
 export const QUIT_NOTE = '(앱을 닫아 작업이 중단됐습니다)'
@@ -208,6 +214,8 @@ export class AgentRunner {
   private autoContinueLeft = 1
   // 지금 도는 실행이 사용자 지시가 아닌 후속 턴(자동 이어가기·자동 학습)인지. 사용자 지시가 들어오면 양보한다
   private followUpRunning = false
+  // 다음 run 이 물려받을 실행 꼬리표(자동 이어가기·학습 턴·예비 계정 재시도는 같은 사용자 말이다)
+  private inheritTurnId: string | null = null
   // 끝 상태(done·failed)를 화면에 이미 보낸 실행의 세대. 같으면 그 실행은 뒷정리(finally)만 남았다
   private settledGeneration = 0
   // 지금 실행의 뒷정리가 끝나면 풀린다. 끝 상태 직후에 들어온 다음 지시가 이걸 기다린다
@@ -400,6 +408,24 @@ export class AgentRunner {
     return Date.now() - this.automationIdleSince < AUTOMATION_GRACE_MS
   }
 
+  /**
+   * 채팅 실행이 지금 실제로 도는가(유예 시간 없이). isRunning 은 끝난 뒤 5초도 '실행 중'이라
+   * 답이 끝나자마자 고쳐 보내면 거절됐다(실기 2026-10-24) — 기록을 자를지는 이것으로 본다
+   */
+  hasActiveRun(): boolean {
+    return this.abort !== null
+  }
+
+  /**
+   * 끝 상태를 보내고 뒷정리(기록 저장)만 남은 실행이면 끝날 때까지 기다린 뒤, 아직 도는 실행이 있는지 답한다.
+   * 화면은 끝 상태를 받자마자 고쳐 보내기를 열어 주므로, 그 틈에 와도 거절하지 않고 저장이 끝난 뒤에 자른다
+   */
+  async waitRunSettled(): Promise<boolean> {
+    if (this.abort && this.settledGeneration === this.generation && this.runFinished)
+      await this.runFinished
+    return this.hasActiveRun()
+  }
+
   /** 실행·세션이 끝난 시각을 적는다(유예 창의 기준점) */
   private markAutomationIdle(): void {
     this.automationIdleSince = Date.now()
@@ -535,6 +561,11 @@ export class AgentRunner {
    * 작업이 끝나며 남기는 기록(run 의 finally)은 앱이 DB 를 닫은 뒤라 남지 못해, 일하는 도중 끈 질문이
    * 통째로 사라졌다. 앱 종료 순서에서 DB 를 닫기 전에 부른다
    */
+  /** 대화의 AI 세션 연결을 버린다 — 다음 지시는 남은 기록 요약으로 새 세션을 연다(고쳐 다시 보내기) */
+  forgetChatSession(chatId: number): void {
+    this.chatSessions?.clear(chatId)
+  }
+
   saveRunningOnQuit(): void {
     const live = this.liveRun
     if (live && !live.saved && live.chatId !== undefined && this.transcript) {
@@ -575,6 +606,9 @@ export class AgentRunner {
     // AI 창에 끌어다 놓은 파일. 글 파일은 지시문 뒤에, PDF 는 문서로 싣고 대화 기록에는 이름만 남긴다
     files?: AgentFile[]
   ): Promise<void> {
+    // 이 실행의 꼬리표. 이어 돌기가 넘겨준 것이 있으면 물려받는다(첫 await 전에 받아야 섞이지 않는다)
+    const turnId = this.inheritTurnId ?? randomUUID()
+    this.inheritTurnId = null
     // 앞 실행이 끝 상태를 이미 보내 뒷정리만 남았으면 그게 끝날 때까지 기다린다 —
     // 화면은 끝 상태를 받자마자 대기열의 다음 말을 보내므로, 그 틈에 오면 '이미 실행 중'으로 튕기고
     // (그때는 notifyNotStarted 도 상태를 못 보내) 화면이 '생각 중'에 멈췄다
@@ -801,6 +835,7 @@ export class AgentRunner {
       })
     )
     emit({ type: 'status', state: 'running', toolCalls: 0 })
+    emit({ type: 'turn', turnId })
     // 어떤 플레이북이 적용됐는지 채팅에 한 줄로 알린다(절차 본문은 보내지 않는다)
     if (playbooks.length > 0) emit({ type: 'playbook', names: playbooks.map((p) => p.name) })
     // 실행이 도는 동안에는 금고 자동 잠금을 보류한다(몇 시간짜리 작업 중간에 잠기면
@@ -1109,7 +1144,9 @@ export class AgentRunner {
       if (chatId !== undefined && this.transcript && !live.saved) {
         live.saved = true
         try {
-          this.transcript(chatId, entry)
+          const saved = this.transcript(chatId, entry)
+          // 그새 다음 실행이 시작됐어도 꼬리표로 짝을 찾으니 세대와 상관없이 알린다
+          if (saved) this.emit({ type: 'saved', turnId, rowId: saved.userRowId })
         } catch (e: unknown) {
           console.error('대화 기록 저장 실패', e instanceof Error ? e.message : String(e))
         }
@@ -1120,6 +1157,8 @@ export class AgentRunner {
       if (next !== null && gen === this.generation && !abort.signal.aborted) {
         setTimeout(() => {
           if (gen !== this.generation || this.abort) return
+          // 이어 돌기는 같은 사용자 말이다 — 꼬리표를 물려준다
+          this.inheritTurnId = turnId
           void this.run(next, chatId).catch(() => undefined)
         }, 0)
       }

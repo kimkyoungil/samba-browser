@@ -43,7 +43,10 @@ function makeRunner(): { runner: InstanceType<typeof AgentRunner>; events: Agent
   const runner = new AgentRunner(
     {} as unknown as TabManager,
     settings as unknown as SettingsStore,
-    (e) => events.push(e)
+    // 여기서는 상태·글의 순서만 본다 — 실행 꼬리표(turn)는 chat-resend 테스트가 따로 본다
+    (e) => {
+      if (e.type !== 'turn') events.push(e)
+    }
   )
   return { runner, events }
 }

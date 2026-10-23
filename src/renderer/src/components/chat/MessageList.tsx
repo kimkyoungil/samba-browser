@@ -1,13 +1,14 @@
 import type React from 'react'
 import { memo, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { FileText } from 'lucide-react'
+import { RotateCcw } from 'lucide-react'
 import { useChatStore, type ChatMessage } from '@renderer/stores/chatStore'
 import { StepLog } from './StepLog'
 import { MarkdownText } from './MarkdownText'
 import { CopyButton } from './CopyButton'
 import { ThinkingBlock } from './ThinkingBlock'
 import { TodoChecklist } from './TodoChecklist'
+import { UserMessage } from './UserMessage'
 
 // 맨 아래에서 이만큼(px) 안쪽이면 '따라 내려가는 중'으로 본다
 const STICK_GAP = 40
@@ -75,6 +76,8 @@ export function MessageList(): React.JSX.Element {
           key={m.id}
           m={m}
           running={status === 'running' && hidden + i === messages.length - 1}
+          busy={status === 'running'}
+          last={hidden + i === messages.length - 1}
         />
       ))}
     </div>
@@ -84,50 +87,18 @@ export function MessageList(): React.JSX.Element {
 // 말풍선 하나. 글자가 흘러오는 동안 바뀌는 건 마지막 말풍선뿐이라, 나머지는 다시 그리지 않는다
 const MessageRow = memo(function MessageRow({
   m,
-  running
+  running,
+  busy,
+  last
 }: {
   m: ChatMessage
   running: boolean
+  // 지금 무엇이든 일하는 중인지(고쳐 보내기·다시 받기를 막는다)
+  busy: boolean
+  // 대화의 맨 끝 말풍선인지(다시 받기는 마지막 답에만 붙는다)
+  last: boolean
 }): React.JSX.Element {
-  if (m.role === 'user')
-    return (
-      <div className="group flex max-w-[88%] items-end gap-1 self-end">
-        {m.text && (
-          <CopyButton
-            text={m.text}
-            className="opacity-0 transition-opacity group-hover:opacity-100"
-          />
-        )}
-        <div className="min-w-0 whitespace-pre-wrap break-words rounded-2xl rounded-br-[4px] bg-[var(--text)] px-3 py-2 leading-relaxed text-white">
-          {m.images && m.images.length > 0 && (
-            <div className="mb-1.5 flex flex-wrap gap-1.5">
-              {m.images.map((src, k) => (
-                <img
-                  key={k}
-                  src={src}
-                  alt=""
-                  className="max-h-32 max-w-full rounded-lg object-contain"
-                />
-              ))}
-            </div>
-          )}
-          {m.files && m.files.length > 0 && (
-            <div className="mb-1.5 flex flex-wrap gap-1.5">
-              {m.files.map((name, k) => (
-                <span
-                  key={k}
-                  className="flex max-w-full items-center gap-1 rounded-md bg-white/15 px-1.5 py-0.5 text-[11.5px]"
-                >
-                  <FileText className="h-3 w-3 shrink-0" />
-                  <span className="truncate">{name}</span>
-                </span>
-              ))}
-            </div>
-          )}
-          {m.text}
-        </div>
-      </div>
-    )
+  if (m.role === 'user') return <UserMessage m={m} busy={busy} />
   const shown = m.partial ? (m.text ? `${m.text}\n${m.partial}` : m.partial) : m.text
   return (
     <div className="group max-w-[94%] self-start leading-relaxed">
@@ -140,12 +111,32 @@ const MessageRow = memo(function MessageRow({
         <span className="inline-block h-[1em] w-[2px] animate-pulse bg-[var(--text)]" />
       ) : null}
       <StepLog steps={m.steps ?? []} running={running} />
-      {/* 다 쓴 답만 복사한다(쓰는 중인 글은 아직 바뀐다) */}
-      {!running && m.text && (
-        <div className="mt-0.5 flex opacity-0 transition-opacity group-hover:opacity-100">
-          <CopyButton text={m.text} />
+      {/* 다 쓴 답만 복사한다(쓰는 중인 글은 아직 바뀐다). 마지막 답은 [다시 받기]와 함께 늘 보인다 */}
+      {!running && (m.text || (last && !busy)) && (
+        <div
+          className={`mt-0.5 flex transition-opacity ${last && !busy ? '' : 'opacity-0 group-hover:opacity-100'}`}
+        >
+          {m.text && <CopyButton text={m.text} />}
+          {last && !busy && <RegenerateButton />}
         </div>
       )}
     </div>
   )
 })
+
+// 마지막 답 다시 받기 — 마지막 말을 같은 글·첨부로 다시 보낸다(그 말부터 뒤는 기록에서 지운다)
+function RegenerateButton(): React.JSX.Element {
+  const { t } = useTranslation()
+  const regenerate = useChatStore((s) => s.regenerate)
+  return (
+    <button
+      type="button"
+      aria-label={t('chat.regenerate')}
+      title={t('chat.regenerate')}
+      onClick={() => void regenerate()}
+      className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-[var(--text3)] hover:bg-black/5 hover:text-[var(--text)]"
+    >
+      <RotateCcw className="h-3.5 w-3.5" />
+    </button>
+  )
+}

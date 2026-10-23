@@ -184,6 +184,31 @@ export class ChatRepo {
     return true
   }
 
+  /**
+   * 한 메시지부터 대화 끝까지 지운다(보낸 말 고쳐 다시 보내기·답 다시 받기). 순서는 messages() 와 같은
+   * 시간순이다 — 다른 PC 에서 동기화로 들어온 줄도 같은 줄 세우기로 자른다. remove 처럼 삭제 표식을 찍고,
+   * 변경 로그는 표식 전에 남긴다. 지운 줄 수(대화나 그 메시지가 없으면 0)
+   */
+  truncateFrom(chatId: number, messageId: number, now: number = Date.now()): number {
+    if (!this.findVisible(chatId)) return 0
+    const rows = this.messages(chatId)
+    const at = rows.findIndex((row) => row.id === messageId)
+    if (at < 0) return 0
+    const gone = rows.slice(at)
+    for (const row of gone) {
+      this.record('chat_messages', row.id, 'delete')
+      this.d
+        .update(chatMessages)
+        .set({ deletedAt: now, updatedAt: now })
+        .where(eq(chatMessages.id, row.id))
+        .run()
+    }
+    this.d.update(chats).set({ updatedAt: now }).where(eq(chats.id, chatId)).run()
+    this.record('chats', chatId, 'upsert')
+    this.db.scheduleSave()
+    return gone.length
+  }
+
   // --- 메시지 ---------------------------------------------------------------
 
   /** 메시지를 덧붙이고 대화의 수정 시각을 올린다. 대화가 없으면 null */

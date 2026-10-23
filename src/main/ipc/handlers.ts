@@ -304,8 +304,10 @@ export function registerIpc(
   // AI 채팅 기록. 러너가 작업 완료 시점에 이 저장소로 대화를 남긴다
   const chats = new ChatRepo(db)
   agent.setTranscript((chatId, entry) => {
-    chats.append({ chatId, role: 'user', content: entry.prompt })
+    const user = chats.append({ chatId, role: 'user', content: entry.prompt })
     chats.append({ chatId, role: 'assistant', content: entry.text, steps: entry.steps })
+    // 사용자 말 줄 번호를 돌려준다 — 화면이 고쳐 다시 보낼 때 여기부터 지운다
+    return user ? { userRowId: user.id } : null
   })
   // 자동화 플레이북. 사용자 문장에 트리거가 들어 있으면 러너가 절차를 시스템 프롬프트에 덧붙인다
   // 이 PC 의 식별자 — 같은 계정의 여러 PC 가 같은 예약을 동시에 돌려 중복 실행하지 않게 실행 주체를 가른다
@@ -622,6 +624,19 @@ export function registerIpc(
     // 지운 대화의 AI 선택도 같이 지운다(같은 번호가 다시 쓰일 일은 없지만 파일이 쌓이지 않게)
     chatEngines.clear(chatId)
     return chats.remove(chatId)
+  })
+  // 보낸 말 고쳐 다시 보내기·답 다시 받기 — 그 말부터 끝까지 지우고, 이어받던 AI 세션도 버린다
+  // (세션에는 지운 말과 답이 남아 있다 — 다음 지시는 남은 기록 요약으로 새 세션을 연다)
+  handleFromRenderer(IPC.chatTruncate, async (rawChatId: unknown, rawMessageId: unknown) => {
+    if (typeof rawChatId !== 'number' || !Number.isInteger(rawChatId))
+      throw new Error('bad chat id')
+    if (typeof rawMessageId !== 'number' || !Number.isInteger(rawMessageId))
+      throw new Error('bad message id')
+    // 일하는 중에 자르면 끝난 실행이 지운 자리 뒤에 기록을 다시 남긴다(뒷정리만 남았으면 기다린다)
+    if (await agent.waitRunSettled()) throw new Error(tr('ipc.chatTruncateBusy'))
+    const removed = chats.truncateFrom(rawChatId, rawMessageId)
+    agent.forgetChatSession(rawChatId)
+    return removed
   })
   handleFromRenderer(IPC.agentStop, () => agent.stop())
 

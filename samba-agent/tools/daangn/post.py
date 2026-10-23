@@ -289,16 +289,18 @@ def post(it):
     assert find(nodes, text=f"{it['price']:,}"), '가격 표시 확인 실패(옛 UI)'
   else:
     pf = price_field(nodes); assert pf['t'].replace('￦', '').replace(',', '').strip() == str(it['price']), '가격 불일치: ' + pf['t']
-  # 이웃 동네에도 같이 올리기(사용자 10/23: 모든 계정 항상 2군데) — 꺼져 있으면 켠다
-  for _ in range(4):
-    lb = next((n for n in nodes if n['t'].endswith('에도 올리기')), None)
-    if lb: break
-    sh('input', 'swipe', str(sx(540)), str(sy(1800)), str(sx(540)), str(sy(900)), '400'); time.sleep(1); nodes = dump()
-  if lb:
-    sw = [n for n in nodes if n['click'] and abs(n['cy'] - lb['cy']) < sy(60) and n['cx'] > sx(700)]
-    if sw and not sw[0]['chk']:
-      tap(sw[0]['cx'], sw[0]['cy'], 1.0); nodes = dump()
-    print('이웃 동네 올리기:', lb['t'])
+  # 이웃 동네에도 올리기 토글: 사용자가 앱 설정으로 정해 둔 값을 그대로 둔다(10/23 사용자가 직접 설정).
+  # 코드로 강제하면 같은 글이 이웃 동네에 따로 하나 더 생겨 유사글로 보인다. DAANGN_TWO_DONG=1/0 으로만 강제한다
+  force = os.environ.get('DAANGN_TWO_DONG')
+  if force in ('0', '1'):
+    for _ in range(4):
+      lb = next((n for n in nodes if n['t'].endswith('에도 올리기')), None)
+      if lb: break
+      sh('input', 'swipe', str(sx(540)), str(sy(1800)), str(sx(540)), str(sy(900)), '400'); time.sleep(1); nodes = dump()
+    if lb:
+      sw = [n for n in nodes if n['click'] and abs(n['cy'] - lb['cy']) < sy(60) and n['cx'] > sx(700)]
+      if sw and bool(sw[0]['chk']) != (force == '1'):
+        tap(sw[0]['cx'], sw[0]['cy'], 1.0); nodes = dump()
   if it.get('draft'):
     # 임시저장: 닫기 → 저장 묻는 창에서 '저장'(저장 안 함 제외)
     ts = find(nodes, text='임시저장', exact=True) or find(nodes, desc='임시저장')

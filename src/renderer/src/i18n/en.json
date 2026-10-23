@@ -323,6 +323,10 @@
     "editCancel": "Cancel",
     "editSend": "Send",
     "regenerate": "Regenerate",
+    "placeholderOtherRunning": "Another chat is working — your message runs here once it finishes",
+    "otherRunning": "Working in another chat: {{title}}",
+    "otherRunningOpen": "Open",
+    "runningHere": "Working in this chat",
     "injecting": "Sending",
     "injectSend": "Send now",
     "placeholderInject": "Working — your message reaches the AI between its next steps",
@@ -355,8 +359,7 @@
     "collapsePanel": "Collapse AI panel",
     "expandPanel": "Expand AI panel",
     "setupHint": "No AI provider is connected yet.",
-    "setupLink": "Settings → AI connection",
-    "lockedWhileRunning": "You can’t switch chats while a task is running. Wait for it to finish or stop it first"
+    "setupLink": "Settings → AI connection"
   },
   "confirm": {
     "title": "Confirmation required",

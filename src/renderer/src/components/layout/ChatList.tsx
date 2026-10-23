@@ -32,7 +32,8 @@ export function ChatList(): React.JSX.Element {
   const hasMore = chats.length >= chatLimit
   // 실행 중에는 다른 대화로 옮기지 못한다(화면의 메시지가 돌고 있는 작업에 묶여 있다).
   // 말없이 무반응이면 고장처럼 보이므로 흐리게 하고 이유를 알려 준다
-  const locked = useChatStore((s) => s.status === 'running')
+  // 일하는 대화(그 줄에 도는 표시, 일하는 동안 지우기 막음). 다른 대화·새 대화는 일하는 중에도 연다
+  const runningChatId = useChatStore((s) => (s.status === 'running' ? s.runChatId : null))
 
   // 앱이 뜨면 최근 대화를 한 번 읽어 온다
   useEffect(() => {
@@ -45,13 +46,11 @@ export function ChatList(): React.JSX.Element {
     <div className="flex min-h-[88px] flex-col">
       <button
         type="button"
-        disabled={locked}
-        title={locked ? t('chat.lockedWhileRunning') : undefined}
         onClick={() => {
           newChat()
           setView('browser')
         }}
-        className="flex items-center gap-1.5 rounded-[9px] px-2 py-1.5 text-left text-[12px] text-[var(--text2)] hover:bg-black/5 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
+        className="flex items-center gap-1.5 rounded-[9px] px-2 py-1.5 text-left text-[12px] text-[var(--text2)] hover:bg-black/5"
       >
         <Plus className="h-3.5 w-3.5" />
         {t('chat.new')}
@@ -92,7 +91,7 @@ export function ChatList(): React.JSX.Element {
               key={chat.id}
               chat={chat}
               active={chat.id === activeChatId}
-              locked={locked && chat.id !== activeChatId}
+              running={chat.id === runningChatId}
               onOpen={() => {
                 void openChat(chat.id)
                 setView('browser')
@@ -121,14 +120,14 @@ const SEARCH_DELAY_MS = 250
 function ChatRow({
   chat,
   active,
-  locked,
+  running,
   onOpen,
   onDelete
 }: {
   chat: ChatDto
   active: boolean
-  /** 실행 중이라 이 대화로 옮길 수 없다 */
-  locked: boolean
+  /** 지금 이 대화에서 AI 가 일하는 중(도는 표시를 달고, 지우기를 숨긴다) */
+  running: boolean
   onOpen: () => void
   onDelete: () => void
 }): React.JSX.Element {
@@ -138,25 +137,32 @@ function ChatRow({
       <button
         type="button"
         onClick={onOpen}
-        disabled={locked}
-        title={locked ? t('chat.lockedWhileRunning') : chat.title || t('chat.untitled')}
+        title={running ? t('chat.runningHere') : chat.title || t('chat.untitled')}
         className={cn(
-          'min-w-0 flex-1 truncate rounded-[9px] px-2 py-1.5 text-left text-[12px] text-[var(--text2)] hover:bg-black/5 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent',
+          'flex min-w-0 flex-1 items-center gap-1.5 rounded-[9px] px-2 py-1.5 text-left text-[12px] text-[var(--text2)] hover:bg-black/5',
           active && 'bg-black/5 font-medium text-[var(--text)]'
         )}
       >
-        {chat.title || t('chat.untitled')}
+        <span className="min-w-0 flex-1 truncate">{chat.title || t('chat.untitled')}</span>
+        {running && (
+          <span
+            aria-label={t('chat.runningHere')}
+            className="h-3 w-3 shrink-0 animate-spin rounded-full border-2 border-[var(--accent)]/20 border-t-[var(--accent)]"
+          />
+        )}
       </button>
-      {/* 탭의 X 처럼 확인 없이 바로 지운다(사용자 요청) */}
-      <button
-        type="button"
-        aria-label={t('chat.delete')}
-        title={t('chat.delete')}
-        onClick={onDelete}
-        className="absolute right-1 hidden rounded-[7px] p-1 text-[var(--text3)] hover:bg-black/5 hover:text-[var(--text)] group-hover:block"
-      >
-        <X className="h-3.5 w-3.5" />
-      </button>
+      {/* 탭의 X 처럼 확인 없이 바로 지운다(사용자 요청). 일하는 대화는 끝난 뒤에 지운다 */}
+      {!running && (
+        <button
+          type="button"
+          aria-label={t('chat.delete')}
+          title={t('chat.delete')}
+          onClick={onDelete}
+          className="absolute right-1 hidden rounded-[7px] p-1 text-[var(--text3)] hover:bg-black/5 hover:text-[var(--text)] group-hover:block"
+        >
+          <X className="h-3.5 w-3.5" />
+        </button>
+      )}
     </li>
   )
 }

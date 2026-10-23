@@ -1,5 +1,13 @@
 import { create } from 'zustand'
-import type { AgentEvent, AgentTodo, ChatDto, ChatMessageDto, HandoffKind } from '@shared/ipc'
+import type {
+  AgentEvent,
+  AgentRunAck,
+  AgentTodo,
+  ChatDto,
+  ChatMessageDto,
+  HandoffKind,
+  IpcResult
+} from '@shared/ipc'
 import { RECENT_CHAT_LIMIT, titleFromMessage } from '@shared/chat'
 import { agentImageDataUrl, type AgentImage } from '@shared/agent-image'
 import type { AgentFile } from '@shared/agent-file'
@@ -32,6 +40,8 @@ export interface QueuedMessage {
   text: string
   images?: AgentImage[]
   files?: AgentFile[]
+  // 이 말을 보낼 대화. 없으면 일하던 그 대화(다른 대화를 보다가 보낸 말은 그 대화 번호가 붙는다)
+  chatId?: number
 }
 // 일하는 중 끼어든 말(메인이 받은 id). AI 가 집어 들면(split) 말풍선이 된다
 export interface InjectingMessage extends QueuedMessage {
@@ -72,6 +82,11 @@ interface ChatState {
   chats: ChatDto[]
   // 지금 열려 있는 대화. null 이면 아직 저장되지 않은 새 대화다
   activeChatId: number | null
+  // 지금 도는(또는 마지막으로 돈) 실행의 대화. 다른 대화를 보는 동안에도 진행은 이 대화 말풍선에 쌓인다
+  runChatId: number | null
+  // 화면에 없는 대화의 말풍선(일하는 중이거나, 끝났지만 아직 다시 열어 보지 않은 실행). 다시 열면 기록 대신 이것을 쓴다
+  // (기록에는 없는 '쓰는 중' 글·생각 과정·할 일 목록이 여기에 있다)
+  parked: Record<number, ChatMessage[]>
   // 실행 세대 번호. 이전 작업의 늦은 IPC 응답이 새 작업 UI 를 덮지 않게 한다
   runSeq: number
   status: 'idle' | 'running' | 'done' | 'failed' | 'stopped'
@@ -123,7 +138,7 @@ interface ChatState {
   ) => Promise<void>
   // 일하는 중에 보낸 말. 완료되면 맨 앞부터 하나씩 보내고, 중단·실패면 draftReturn 으로 입력칸에 돌려준다
   queue: QueuedMessage[]
-  enqueue: (text: string, images?: AgentImage[], files?: AgentFile[]) => void
+  enqueue: (text: string, images?: AgentImage[], files?: AgentFile[], chatId?: number) => void
   // 일하는 중 끼어들기 — 도는 실행에 말을 넣는다. 못 넣으면(Codex·이미 끝남·대기열이 있음) 대기열에 둔다
   injecting: InjectingMessage[]
   sendWhileRunning: (text: string, images?: AgentImage[], files?: AgentFile[]) => Promise<void>
@@ -148,12 +163,112 @@ interface ChatState {
 
 let seq = 0
 const nid = (): string => String(++seq)
+// 새 대화 행을 만드는 중이면 그 약속. 그사이 대화를 바꾸거나 또 보내면 만든 대화 번호가 엉뚱한 화면에
+// 붙으니, 끝날 때까지 기다렸다가 한다(버리지 않는다)
+let creatingChat: Promise<void> | null = null
+
+/** 새 대화 행 만들기를 시작한다 — 끝나면 부를 함수를 돌려준다 */
+function beginCreatingChat(): () => void {
+  let finish: () => void = () => {}
+  creatingChat = new Promise<void>((resolve) => {
+    finish = resolve
+  })
+  return () => {
+    creatingChat = null
+    finish()
+  }
+}
+
+// 실행 표시들(진행 띠·확인 카드·실패 문구 등). 일하지 않을 때 대화를 바꾸거나 새 실행을 시작하면 비운다
+type RunView = Pick<
+  ChatState,
+  | 'status'
+  | 'toolCalls'
+  | 'currentLabel'
+  | 'retry'
+  | 'playbookNames'
+  | 'taskProgress'
+  | 'confirm'
+  | 'handoff'
+  | 'authError'
+>
+function runState(status: 'idle' | 'running'): RunView {
+  return {
+    status,
+    toolCalls: 0,
+    currentLabel: '',
+    retry: null,
+    playbookNames: [],
+    taskProgress: null,
+    confirm: null,
+    handoff: null,
+    authError: null
+  }
+}
+
+/** 지금 화면이 실행의 대화면 그 말풍선을 맡겨 둔다 — 다른 대화를 보는 동안에도 진행이 거기에 쌓인다 */
+function parkCurrent(s: {
+  activeChatId: number | null
+  runChatId: number | null
+  messages: ChatMessage[]
+  parked: Record<number, ChatMessage[]>
+}): Record<number, ChatMessage[]> {
+  if (s.activeChatId === null || s.activeChatId !== s.runChatId) return s.parked
+  return { ...s.parked, [s.activeChatId]: s.messages }
+}
+
+/** 실행을 메인에 맡긴다. 이미지·파일이 있을 때만 뒤 인자를 붙인다(평소 경로의 호출 모양을 그대로 둔다) */
+function startRun(
+  text: string,
+  chatId: number | null,
+  scheduleToken?: string,
+  images?: AgentImage[],
+  files?: AgentFile[]
+): Promise<IpcResult<AgentRunAck>> {
+  if (files && files.length > 0)
+    return window.samba.agent.run(text, chatId ?? undefined, scheduleToken, images, files)
+  if (images && images.length > 0)
+    return window.samba.agent.run(text, chatId ?? undefined, scheduleToken, images)
+  const args: [string, number?, string?] =
+    scheduleToken === undefined
+      ? chatId === null
+        ? [text]
+        : [text, chatId]
+      : [text, chatId ?? undefined, scheduleToken]
+  return window.samba.agent.run(...args)
+}
+
+/** 사용자 말풍선과 비어 있는 답 말풍선 한 쌍 */
+function turnPair(text: string, images?: AgentImage[], files?: AgentFile[]): ChatMessage[] {
+  const previews = images && images.length > 0 ? images.map(agentImageDataUrl) : undefined
+  const fileNames = files && files.length > 0 ? files.map((f) => f.name) : undefined
+  return [
+    {
+      id: nid(),
+      role: 'user',
+      text,
+      ...(previews ? { images: previews } : {}),
+      ...(fileNames ? { files: fileNames } : {}),
+      ...(previews || fileNames
+        ? {
+            sent: {
+              ...(previews ? { images } : {}),
+              ...(fileNames ? { files } : {})
+            }
+          }
+        : {})
+    },
+    { id: nid(), role: 'ai', text: '', steps: [] }
+  ]
+}
 
 // 진행 로그(step)는 마지막 AI 메시지에 붙인다
 export const useChatStore = create<ChatState>((set, get) => ({
   messages: [],
   chats: [],
   activeChatId: null,
+  runChatId: null,
+  parked: {},
   runSeq: 0,
   status: 'idle',
   toolCalls: 0,
@@ -174,7 +289,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
     await get().loadModelMenu()
   },
   setEngine: async (engine) => {
-    if (get().status === 'running') return
+    // 일하는 대화의 AI 는 바꾸지 않는다(다른 대화는 일하는 중에도 고를 수 있다)
+    if (get().status === 'running' && get().activeChatId === get().runChatId) return
     set({ engine, engineChosen: true })
     const chatId = get().activeChatId
     if (chatId !== null) await window.samba.agent.setChatEngine?.(chatId, engine)
@@ -227,126 +343,123 @@ export const useChatStore = create<ChatState>((set, get) => ({
     await get().loadChats()
   },
   openChat: async (chatId) => {
-    if (get().status === 'running') return
-    const r = await window.samba.chats?.get(chatId)
-    if (!r?.ok || r.data === null) return
+    while (creatingChat) await creatingChat
+    // 이미 보고 있는 실행 대화를 다시 누르면 그대로 둔다(기록으로 덮으면 쓰는 중 글·생각 과정이 사라진다)
+    if (chatId === get().activeChatId && chatId === get().runChatId && get().status === 'running')
+      return
+    // 맡겨 둔 화면이 있으면 그것을 쓴다(기록에는 아직 없는 진행 중 글·생각 과정이 있다)
+    let messages = get().parked[chatId]
+    if (!messages) {
+      const r = await window.samba.chats?.get(chatId)
+      if (!r?.ok || r.data === null) return
+      messages = r.data.messages.map(toChatMessage)
+      // 기록을 읽는 사이 실행이 이 대화 화면을 맡겼으면 그것이 더 새것이다
+      messages = get().parked[chatId] ?? messages
+    }
+    // 일하는 중이면 실행 표시는 그대로 둔다(진행 띠·확인 카드는 브라우저 작업의 것이다)
+    const running = get().status === 'running'
+    const kept = parkCurrent(get())
+    const parked = Object.fromEntries(
+      Object.entries(kept).filter(([id]) => Number(id) !== chatId)
+    ) as Record<number, ChatMessage[]>
     set({
       activeChatId: chatId,
-      messages: r.data.messages.map(toChatMessage),
-      status: 'idle',
-      toolCalls: 0,
-      currentLabel: '',
-      retry: null,
-      playbookNames: [],
-      taskProgress: null,
-      confirm: null,
-      handoff: null,
-      authError: null
+      messages,
+      parked,
+      ...(running ? {} : runState('idle'))
     })
     // 이 대화에서 고른 AI 와 그 모델로 입력줄을 맞춘다
     void get().loadEngine()
   },
   newChat: () => {
-    if (get().status === 'running') return
+    if (creatingChat) {
+      void creatingChat.then(() => get().newChat())
+      return
+    }
+    // 일하는 대화를 떠나면 그 화면을 맡겨 둔다. 일하는 중이면 실행 표시는 그대로 둔다
+    const running = get().status === 'running'
     set({
       activeChatId: null,
       messages: [],
-      status: 'idle',
-      toolCalls: 0,
-      currentLabel: '',
-      retry: null,
-      playbookNames: [],
-      taskProgress: null,
-      confirm: null,
-      handoff: null,
-      authError: null
+      parked: parkCurrent(get()),
+      ...(running ? {} : runState('idle'))
     })
   },
   removeChat: async (chatId) => {
+    // 일하는 대화는 지우지 않는다(끝난 실행이 지운 대화에 기록을 남기려 한다)
+    if (get().status === 'running' && chatId === get().runChatId) return
     const r = await window.samba.chats?.remove(chatId)
     if (!r?.ok) return
-    set((s) => ({ chats: s.chats.filter((c) => c.id !== chatId) }))
+    set((s) => ({
+      chats: s.chats.filter((c) => c.id !== chatId),
+      parked: Object.fromEntries(
+        Object.entries(s.parked).filter(([id]) => Number(id) !== chatId)
+      ) as Record<number, ChatMessage[]>,
+      // 대기열에 남은 그 대화 몫도 버린다
+      queue: s.queue.filter((q) => q.chatId !== chatId)
+    }))
     if (get().activeChatId === chatId) get().newChat()
   },
   send: async (text, scheduleToken, images, files) => {
-    if (get().status === 'running') return
+    while (creatingChat) await creatingChat
+    if (get().status === 'running') {
+      // 다른 대화가 일하는 중 — 이 대화의 말은 대기열에 두었다가 그 일이 끝나면 이 대화에서 보낸다.
+      // (일하는 대화 자체의 말은 입력줄이 끼어들기로 보낸다. 예약 실행은 예전처럼 건너뛴다)
+      if (scheduleToken === undefined && get().activeChatId !== get().runChatId)
+        await queueInThisChat(text, images, files)
+      return
+    }
     const seq = get().runSeq + 1
     // 보낸 순간 입력줄에 보이던 AI — 새 대화를 만드는 동안 무엇이 바뀌어도 이 값으로 남긴다
     const engine = get().engine
     const engineChosen = get().engineChosen
-    const previews = images && images.length > 0 ? images.map(agentImageDataUrl) : undefined
-    const fileNames = files && files.length > 0 ? files.map((f) => f.name) : undefined
     set((s) => ({
-      messages: [
-        ...s.messages,
-        {
-          id: nid(),
-          role: 'user',
-          text,
-          ...(previews ? { images: previews } : {}),
-          ...(fileNames ? { files: fileNames } : {}),
-          ...(previews || fileNames
-            ? {
-                sent: {
-                  ...(previews ? { images } : {}),
-                  ...(fileNames ? { files } : {})
-                }
-              }
-            : {})
-        },
-        { id: nid(), role: 'ai', text: '', steps: [] }
-      ],
+      messages: [...s.messages, ...turnPair(text, images, files)],
       runSeq: seq,
-      status: 'running',
-      toolCalls: 0,
-      currentLabel: '',
-      retry: null,
-      playbookNames: [],
-      taskProgress: null,
-      confirm: null,
-      handoff: null,
-      authError: null
+      runChatId: s.activeChatId,
+      // 앞서 맡겨 둔 다른 대화 화면은 이제 버린다(그 대화는 다시 열면 기록으로 보인다)
+      parked: {},
+      ...runState('running')
     }))
     // 아직 저장되지 않은 새 대화면 여기서 대화 행을 만든다(제목은 첫 메시지에서 짓는다).
     // 저장은 메인(러너)이 작업 완료 시점에 한 번에 한다
     let chatId = get().activeChatId
     if (chatId === null) {
-      const created = await window.samba.chats?.create(titleFromMessage(text) || text.slice(0, 40))
-      if (created?.ok) {
-        chatId = created.data.id
-        // 새 대화에서 AI 를 직접 골랐으면 그 대화에 먼저 남긴다 — 화면이 이 대화로 넘어가 AI 를
-        // 다시 읽기 전에, 그리고 실행 전에(메인이 이 값으로 경로를 고른다)
-        if (engineChosen) await window.samba.agent.setChatEngine?.(chatId, engine)
-        set((s) => ({ activeChatId: created.data.id, chats: [created.data, ...s.chats] }))
+      const doneCreating = beginCreatingChat()
+      try {
+        const created = await window.samba.chats?.create(
+          titleFromMessage(text) || text.slice(0, 40)
+        )
+        if (created?.ok) {
+          chatId = created.data.id
+          // 새 대화에서 AI 를 직접 골랐으면 그 대화에 먼저 남긴다 — 화면이 이 대화로 넘어가 AI 를
+          // 다시 읽기 전에, 그리고 실행 전에(메인이 이 값으로 경로를 고른다)
+          if (engineChosen) await window.samba.agent.setChatEngine?.(chatId, engine)
+          set((s) => ({
+            activeChatId: created.data.id,
+            runChatId: created.data.id,
+            chats: [created.data, ...s.chats]
+          }))
+        }
+      } finally {
+        doneCreating()
       }
     }
     // 메인은 "시작 접수" ack 만 즉시 돌려준다. 완료·실패는 status 이벤트로 온다.
     // 늦게 도착한 이전 세대의 응답은 버린다
-    // 예약 실행이 아니면 인자를 덧붙이지 않는다(평소 경로의 호출 모양을 그대로 둔다)
-    const args: [string, number?, string?] =
-      scheduleToken === undefined
-        ? chatId === null
-          ? [text]
-          : [text, chatId]
-        : [text, chatId ?? undefined, scheduleToken]
-    // 이미지·파일이 있을 때만 네·다섯 번째 인자를 붙인다(평소 경로의 호출 모양을 그대로 둔다)
-    const r =
-      files && files.length > 0
-        ? await window.samba.agent.run(text, chatId ?? undefined, scheduleToken, images, files)
-        : images && images.length > 0
-          ? await window.samba.agent.run(text, chatId ?? undefined, scheduleToken, images)
-          : await window.samba.agent.run(...args)
+    const r = await startRun(text, chatId, scheduleToken, images, files)
     if (!r.ok && get().runSeq === seq) set({ status: 'failed', currentLabel: r.error, retry: null })
   },
   queue: [],
-  enqueue: (text, images, files) =>
+  enqueue: (text, images, files, chatId) =>
     set((s) => ({
       queue: [
         ...s.queue,
         {
           text,
           ...(images && images.length > 0 ? { images } : {}),
-          ...(files && files.length > 0 ? { files } : {})
+          ...(files && files.length > 0 ? { files } : {}),
+          ...(chatId === undefined ? {} : { chatId })
         }
       ]
     })),
@@ -376,7 +489,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
   draftReturn: null,
   takeDraftReturn: () => {
     const d = get().draftReturn
-    if (d) set({ draftReturn: null })
+    // 다른 대화 몫이면 그 대화를 열 때까지 기다린다
+    if (!d || (d.chatId !== undefined && d.chatId !== get().activeChatId)) return null
+    set({ draftReturn: null })
     return d
   },
   dropped: null,
@@ -427,10 +542,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
     if (!skip) void window.samba.agent.stop()
   },
   handleEvent: (e) => {
-    const msgs = get().messages
+    // 실행의 말풍선은 그 대화 화면에 쌓는다 — 다른 대화를 보는 중이면 맡겨 둔 화면에
+    const target = get().runChatId
+    const onScreen = target === null || target === get().activeChatId
+    const msgs = onScreen || target === null ? get().messages : (get().parked[target] ?? [])
     const last = msgs[msgs.length - 1]
+    const putMsgs = (next: ChatMessage[]): void => {
+      if (onScreen || target === null) set({ messages: next })
+      else set((s) => ({ parked: { ...s.parked, [target]: next } }))
+    }
     const patchLast = (p: Partial<ChatMessage>): void =>
-      set({ messages: [...msgs.slice(0, -1), { ...last, ...p }] })
+      putMsgs([...msgs.slice(0, -1), { ...last, ...p }])
     if (e.type === 'text' && last?.role === 'ai')
       patchLast({ text: last.text ? `${last.text}\n${e.text}` : e.text, partial: undefined })
     if (e.type === 'partial' && last?.role === 'ai') patchLast({ partial: e.text })
@@ -441,9 +563,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     if (e.type === 'turn' && last?.role === 'ai') {
       const user = msgs[msgs.length - 2]
       if (user?.role === 'user' && user.turnId === undefined)
-        set({
-          messages: [...msgs.slice(0, -2), { ...user, turnId: e.turnId }, last]
-        })
+        putMsgs([...msgs.slice(0, -2), { ...user, turnId: e.turnId }, last])
     }
     // 끼어든 말을 AI 가 집어 들었다 — 칩을 말풍선으로 바꾸고 새 답 말풍선을 연다(묶여 들어간 말은 한 말풍선)
     if (e.type === 'split') {
@@ -463,37 +583,46 @@ export const useChatStore = create<ChatState>((set, get) => ({
               }
             ]
           : msgs
-      set((s) => ({
-        injecting: s.injecting.filter((q) => !e.injectIds.includes(q.id)),
-        messages: [
-          ...before,
-          {
-            id: nid(),
-            role: 'user',
-            text,
-            ...(images.length > 0 ? { images: images.map(agentImageDataUrl) } : {}),
-            ...(files.length > 0 ? { files: files.map((f) => f.name) } : {}),
-            ...(images.length > 0 || files.length > 0
-              ? {
-                  sent: {
-                    ...(images.length > 0 ? { images } : {}),
-                    ...(files.length > 0 ? { files } : {})
-                  }
+      set((s) => ({ injecting: s.injecting.filter((q) => !e.injectIds.includes(q.id)) }))
+      putMsgs([
+        ...before,
+        {
+          id: nid(),
+          role: 'user',
+          text,
+          ...(images.length > 0 ? { images: images.map(agentImageDataUrl) } : {}),
+          ...(files.length > 0 ? { files: files.map((f) => f.name) } : {}),
+          ...(images.length > 0 || files.length > 0
+            ? {
+                sent: {
+                  ...(images.length > 0 ? { images } : {}),
+                  ...(files.length > 0 ? { files } : {})
                 }
-              : {})
-          },
-          { id: nid(), role: 'ai', text: '', steps: [] }
-        ]
-      }))
+              }
+            : {})
+        },
+        { id: nid(), role: 'ai', text: '', steps: [] }
+      ])
       return
     }
     // 기록을 남겼다 — 꼬리표가 같은 말에 줄 번호를 단다(이어 돌기가 남긴 뒤 줄은 첫 번호를 지킨다)
+    // 그새 다음 실행이 다른 대화에서 시작됐을 수 있다 — 화면과 맡겨 둔 화면을 다 찾는다
     if (e.type === 'saved') {
-      const at = msgs.findIndex((m) => m.turnId === e.turnId && m.role === 'user')
-      if (at >= 0 && msgs[at].rowId === undefined)
-        set({
-          messages: msgs.map((m, i) => (i === at ? { ...m, rowId: e.rowId } : m))
-        })
+      const stamp = (list: ChatMessage[]): ChatMessage[] | null => {
+        const at = list.findIndex((m) => m.turnId === e.turnId && m.role === 'user')
+        if (at < 0 || list[at].rowId !== undefined) return null
+        return list.map((m, i) => (i === at ? { ...m, rowId: e.rowId } : m))
+      }
+      const onView = stamp(get().messages)
+      if (onView) set({ messages: onView })
+      else
+        for (const [id, list] of Object.entries(get().parked)) {
+          const next = stamp(list)
+          if (next) {
+            set((s) => ({ parked: { ...s.parked, [Number(id)]: next } }))
+            break
+          }
+        }
     }
     if (e.type === 'step' && last?.role === 'ai') {
       patchLast({ steps: [...(last.steps ?? []), { label: e.label, ok: e.ok }] })
@@ -548,39 +677,38 @@ export const useChatStore = create<ChatState>((set, get) => ({
       // 작업이 끝나면 메인이 방금 기록을 남겼다 — 목록의 제목·순서를 다시 읽는다
       if (done) void get().loadChats()
       // 중단·실패로 끊긴 '쓰는 중' 글은 그때까지 쓴 대로 화면에 남긴다(기록에는 확정 글만 있다)
-      const messages =
-        done && last?.role === 'ai' && last.partial
-          ? [
-              ...msgs.slice(0, -1),
-              {
-                ...last,
-                text: last.text ? `${last.text}\n${last.partial}` : last.partial,
-                partial: undefined
-              }
-            ]
-          : get().messages
-      // 대기 중인 다음 말 — 완료면 맨 앞 것을 이어서 보내고, 중단·실패면 저절로 돌지 않게 입력칸으로 돌려준다.
-      // AI 가 집어 들지 못하고 끝난 끼어든 말도 대기열 맨 앞으로 돌린다(같은 규칙으로 보내거나 돌려준다)
+      if (done && last?.role === 'ai' && last.partial)
+        putMsgs([
+          ...msgs.slice(0, -1),
+          {
+            ...last,
+            text: last.text ? `${last.text}\n${last.partial}` : last.partial,
+            partial: undefined
+          }
+        ])
+      // 대기 중인 다음 말 — 완료면 맨 앞 것을 이어서 보내고, 중단·실패면 이 대화 몫은 저절로 돌지 않게
+      // 입력칸으로 돌려준다(다른 대화 몫은 이 대화의 실패와 상관없으니 이어서 보낸다).
+      // AI 가 집어 들지 못하고 끝난 끼어든 말도 이 대화 몫으로 대기열 맨 앞에 돌린다
       const leftover = done ? get().injecting : []
-      const queue = leftover.length > 0 ? [...leftover.map(toQueued), ...get().queue] : get().queue
-      const next = done && e.state === 'done' ? queue[0] : undefined
-      const returned = done && e.state !== 'done' && queue.length > 0 ? queue : []
+      const all = [...leftover.map(toQueued), ...get().queue]
+      const sameChat = (q: QueuedMessage): boolean => (q.chatId ?? target) === target
+      const returned = done && e.state !== 'done' ? all.filter(sameChat) : []
+      const queue = returned.length > 0 ? all.filter((q) => !sameChat(q)) : all
+      const next = done ? queue[0] : undefined
       const prevDraft = get().draftReturn
       const draftParts = [...(prevDraft ? [prevDraft] : []), ...returned]
       set({
-        messages,
-        ...(leftover.length > 0 ? { injecting: [], queue } : {}),
-        ...(next ? { queue: queue.slice(1) } : {}),
+        ...(done ? { injecting: [], queue: next ? queue.slice(1) : queue } : {}),
         ...(returned.length > 0
           ? {
-              queue: [],
               draftReturn: {
                 text: draftParts
                   .map((q) => q.text)
                   .filter(Boolean)
                   .join('\n'),
                 images: draftParts.flatMap((q) => q.images ?? []),
-                files: draftParts.flatMap((q) => q.files ?? [])
+                files: draftParts.flatMap((q) => q.files ?? []),
+                ...(target === null ? {} : { chatId: target })
               }
             }
           : {}),
@@ -592,11 +720,81 @@ export const useChatStore = create<ChatState>((set, get) => ({
         confirm: done ? null : get().confirm,
         handoff: done ? null : get().handoff
       })
-      // 상태가 끝으로 바뀐 뒤에 보낸다(send 는 실행 중이면 받지 않는다). 메인은 앞 실행의 뒷정리를 기다렸다가 시작한다
-      if (next) void get().send(next.text, undefined, next.images, next.files)
+      // 상태가 끝으로 바뀐 뒤에 보낸다(send 는 실행 중이면 받지 않는다). 메인은 앞 실행의 뒷정리를 기다렸다가 시작한다.
+      // 그 말의 대화가 지금 화면이면 평소처럼, 아니면 화면은 그대로 두고 뒤에서 보낸다
+      if (next) {
+        const to = next.chatId ?? target
+        if (to === null || to === get().activeChatId)
+          void get().send(next.text, undefined, next.images, next.files)
+        else void sendInBackground(to, next)
+      }
     }
   }
 }))
+
+/**
+ * 다른 대화가 일하는 중에 보낸 말 — 이 대화 몫으로 대기열에 둔다. 새 대화면 대기열이 찾아올 수 있게
+ * 대화 행부터 만든다
+ */
+async function queueInThisChat(
+  text: string,
+  images?: AgentImage[],
+  files?: AgentFile[]
+): Promise<void> {
+  const store = useChatStore
+  let chatId = store.getState().activeChatId
+  if (chatId === null) {
+    const doneCreating = beginCreatingChat()
+    try {
+      const { engine, engineChosen } = store.getState()
+      const created = await window.samba.chats?.create(titleFromMessage(text) || text.slice(0, 40))
+      if (!created?.ok) return
+      chatId = created.data.id
+      if (engineChosen) await window.samba.agent.setChatEngine?.(chatId, engine)
+      // 그사이 다른 대화를 열지 않았으면 이 새 대화가 화면의 대화다
+      if (store.getState().activeChatId === null)
+        store.setState((s) => ({
+          activeChatId: created.data.id,
+          chats: [created.data, ...s.chats]
+        }))
+      else store.setState((s) => ({ chats: [created.data, ...s.chats] }))
+    } finally {
+      doneCreating()
+    }
+  }
+  store.getState().enqueue(text, images, files, chatId)
+}
+
+/**
+ * 앞 일이 끝난 뒤 다른 대화 몫의 대기 말을 보낸다. 그 대화가 화면에 없으면 화면은 그대로 두고,
+ * 그 대화의 말풍선(맡겨 둔 것, 없으면 기록)에 쌓는다
+ */
+async function sendInBackground(chatId: number, item: QueuedMessage): Promise<void> {
+  const store = useChatStore
+  let base = store.getState().parked[chatId]
+  if (!base) {
+    const r = await window.samba.chats?.get(chatId)
+    // 그사이 지운 대화면 보내지 않는다
+    if (!r?.ok || r.data === null) return
+    base = r.data.messages.map(toChatMessage)
+  }
+  // 그사이 다른 실행이 시작됐으면 맨 앞에 되돌려 놓는다(그 실행이 끝나면 다시 차례가 온다)
+  if (store.getState().status === 'running') {
+    store.setState((s) => ({ queue: [{ ...item, chatId }, ...s.queue] }))
+    return
+  }
+  const seq = store.getState().runSeq + 1
+  const pair = turnPair(item.text, item.images, item.files)
+  store.setState((s) =>
+    s.activeChatId === chatId
+      ? { messages: [...s.messages, ...pair], parked: {} }
+      : { parked: { [chatId]: [...(base ?? []), ...pair] } }
+  )
+  store.setState({ runSeq: seq, runChatId: chatId, ...runState('running') })
+  const r = await startRun(item.text, chatId, undefined, item.images, item.files)
+  if (!r.ok && store.getState().runSeq === seq)
+    store.setState({ status: 'failed', currentLabel: r.error, retry: null })
+}
 
 /** 끼어든 말을 대기열 모양으로(메인이 준 id 는 버린다) */
 function toQueued(q: InjectingMessage): QueuedMessage {

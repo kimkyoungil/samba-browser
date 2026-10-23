@@ -13,7 +13,8 @@ const LABEL: Record<ChatEngine, string> = { claude: 'Claude', codex: 'Codex' }
 export function EngineMenu(): React.JSX.Element {
   const { t } = useTranslation()
   const engine = useChatStore((s) => s.engine)
-  const running = useChatStore((s) => s.status === 'running')
+  // 일하는 대화만 AI 를 못 바꾼다(다른 대화는 일하는 중에도 고른다)
+  const running = useChatStore((s) => s.status === 'running' && s.runChatId === s.activeChatId)
   const setEngine = useChatStore((s) => s.setEngine)
   const providers = useAiStore((s) => s.providers)
   const connect = useAiStore((s) => s.connect)

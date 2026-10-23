@@ -21,6 +21,8 @@ export function MessageList(): React.JSX.Element {
   const messages = useChatStore((s) => s.messages)
   const status = useChatStore((s) => s.status)
   const activeChatId = useChatStore((s) => s.activeChatId)
+  // 지금 보는 대화가 일하는 대화인가(다른 대화를 보는 중이면 마지막 말풍선에 '쓰는 중'을 달지 않는다)
+  const viewRunning = useChatStore((s) => s.status === 'running' && s.runChatId === s.activeChatId)
   const box = useRef<HTMLDivElement>(null)
   // 위로 올려 읽는 중이면 흘러오는 답을 따라 내리지 않는다. 새 말풍선이 생기면 다시 따라간다
   const stick = useRef(true)
@@ -75,7 +77,7 @@ export function MessageList(): React.JSX.Element {
         <MessageRow
           key={m.id}
           m={m}
-          running={status === 'running' && hidden + i === messages.length - 1}
+          running={viewRunning && hidden + i === messages.length - 1}
           busy={status === 'running'}
           last={hidden + i === messages.length - 1}
         />

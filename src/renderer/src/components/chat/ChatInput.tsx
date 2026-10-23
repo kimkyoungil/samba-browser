@@ -29,7 +29,11 @@ const INPUT_MAX_HEIGHT = 200
 export function ChatInput(): React.JSX.Element {
   const { t } = useTranslation()
   const { send, status, stop, queue, unqueue, injecting, sendWhileRunning, engine } = useChatStore()
-  const running = status === 'running'
+  const runChatId = useChatStore((s) => s.runChatId)
+  const activeChatId = useChatStore((s) => s.activeChatId)
+  // 이 대화가 일하는 중인가. 다른 대화가 일하는 중이면 보낸 말은 그 일이 끝난 뒤 이 대화에서 돈다(대기)
+  const running = status === 'running' && runChatId === activeChatId
+  const busyElsewhere = status === 'running' && !running
   // Claude 대화는 일하는 중 보낸 말을 바로 끼워 넣고, Codex 는 끝난 뒤 이어서 보낸다(대기열)
   const canInject = engine === 'claude'
   // 쓰다 만 글은 앱을 껐다 켜도 남는다(이 화면의 저장소에 둔다)
@@ -191,33 +195,35 @@ export function ChatInput(): React.JSX.Element {
           ))}
         </div>
       )}
-      {queue.length > 0 && (
+      {queue.some((q) => (q.chatId ?? runChatId) === activeChatId) && (
         <div className="mb-2 flex flex-col gap-1">
-          {queue.map((q, i) => (
-            <div
-              key={i}
-              className="flex items-center gap-2 rounded-lg bg-black/[.04] px-2.5 py-1.5 text-[12px] text-[var(--text2)]"
-            >
-              <span className="shrink-0 rounded-full border border-[var(--line)] px-1.5 text-[10.5px]">
-                {t('chat.queued')}
-              </span>
-              <span className="min-w-0 flex-1 truncate">
-                {q.text ||
-                  (q.files && q.files.length > 0
-                    ? q.files.map((f) => f.name).join(', ')
-                    : t('chat.imagePasted', { n: q.images?.length ?? 0 }))}
-              </span>
-              <button
-                type="button"
-                aria-label={t('chat.queueRemove')}
-                title={t('chat.queueRemove')}
-                onClick={() => unqueue(i)}
-                className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-[var(--text3)] hover:bg-black/5 hover:text-[var(--text)]"
+          {queue.map((q, i) =>
+            (q.chatId ?? runChatId) !== activeChatId ? null : (
+              <div
+                key={i}
+                className="flex items-center gap-2 rounded-lg bg-black/[.04] px-2.5 py-1.5 text-[12px] text-[var(--text2)]"
               >
-                <X className="h-3 w-3" />
-              </button>
-            </div>
-          ))}
+                <span className="shrink-0 rounded-full border border-[var(--line)] px-1.5 text-[10.5px]">
+                  {t('chat.queued')}
+                </span>
+                <span className="min-w-0 flex-1 truncate">
+                  {q.text ||
+                    (q.files && q.files.length > 0
+                      ? q.files.map((f) => f.name).join(', ')
+                      : t('chat.imagePasted', { n: q.images?.length ?? 0 }))}
+                </span>
+                <button
+                  type="button"
+                  aria-label={t('chat.queueRemove')}
+                  title={t('chat.queueRemove')}
+                  onClick={() => unqueue(i)}
+                  className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-[var(--text3)] hover:bg-black/5 hover:text-[var(--text)]"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </div>
+            )
+          )}
         </div>
       )}
       {images.length > 0 && (
@@ -304,7 +310,9 @@ export function ChatInput(): React.JSX.Element {
           placeholder={
             running
               ? t(canInject ? 'chat.placeholderInject' : 'chat.placeholderRunning')
-              : t('chat.placeholder')
+              : busyElsewhere
+                ? t('chat.placeholderOtherRunning')
+                : t('chat.placeholder')
           }
           style={{ maxHeight: INPUT_MAX_HEIGHT }}
           className="min-w-0 flex-1 resize-none bg-transparent leading-relaxed outline-none"
@@ -325,9 +333,19 @@ export function ChatInput(): React.JSX.Element {
             onClick={submit}
             disabled={!canSend}
             aria-label={
-              running ? t(canInject ? 'chat.injectSend' : 'chat.queueSend') : t('chat.send')
+              running
+                ? t(canInject ? 'chat.injectSend' : 'chat.queueSend')
+                : busyElsewhere
+                  ? t('chat.queueSend')
+                  : t('chat.send')
             }
-            title={running ? t(canInject ? 'chat.injectSend' : 'chat.queueSend') : t('chat.send')}
+            title={
+              running
+                ? t(canInject ? 'chat.injectSend' : 'chat.queueSend')
+                : busyElsewhere
+                  ? t('chat.queueSend')
+                  : t('chat.send')
+            }
             className="mb-px flex h-6.5 w-6.5 shrink-0 items-center justify-center rounded-lg bg-[var(--text)] text-white disabled:opacity-40"
           >
             <ArrowUp className="h-3.5 w-3.5" />

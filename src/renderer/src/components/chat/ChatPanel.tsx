@@ -20,11 +20,26 @@ const PROVIDER_LABEL_KEYS: Record<AiProviderId, string> = {
   service_credit: 'settings.ai.serviceCredit'
 }
 
+// 다른 대화를 보는 동안 플레이북 줄을 숨길 때 쓰는 빈 목록(매번 새 배열이면 다시 그리기가 돈다)
+const NO_NAMES: string[] = []
+
 export function ChatPanel(): React.JSX.Element {
   const { t } = useTranslation()
   const handleEvent = useChatStore((s) => s.handleEvent)
   // 이번 실행에 적용된 플레이북 이름(없으면 줄 자체가 뜨지 않는다)
-  const playbookNames = useChatStore((s) => s.playbookNames)
+  const playbookNames = useChatStore((s) =>
+    s.runChatId === s.activeChatId ? s.playbookNames : NO_NAMES
+  )
+  // 다른 대화에서 일하는 중이면 그 대화(띠를 누르면 그리로 간다)
+  const otherRun = useChatStore((s) =>
+    s.status === 'running' && s.runChatId !== null && s.runChatId !== s.activeChatId
+      ? s.runChatId
+      : null
+  )
+  const otherRunTitle = useChatStore((s) =>
+    otherRun === null ? '' : (s.chats.find((c) => c.id === otherRun)?.title ?? '')
+  )
+  const openChat = useChatStore((s) => s.openChat)
   const togglePanel = useUiStore((s) => s.togglePanel)
   const openSettings = useUiStore((s) => s.openSettings)
   useEffect(() => window.samba.agent.onEvent(handleEvent), [handleEvent])
@@ -165,6 +180,21 @@ export function ChatPanel(): React.JSX.Element {
             {t('automation.applied', { names: playbookNames.join(', ') })}
           </span>
         </div>
+      )}
+      {otherRun !== null && (
+        <button
+          type="button"
+          onClick={() => void openChat(otherRun)}
+          className="flex items-center gap-2 border-b border-black/5 px-3.5 py-2 text-left text-[12px] text-[var(--text2)] hover:bg-black/[.03]"
+        >
+          <span className="h-3 w-3 shrink-0 animate-spin rounded-full border-2 border-[var(--accent)]/20 border-t-[var(--accent)]" />
+          <span className="min-w-0 flex-1 truncate">
+            {t('chat.otherRunning', { title: otherRunTitle || t('chat.untitled') })}
+          </span>
+          <span className="shrink-0 font-medium text-[var(--text)]">
+            {t('chat.otherRunningOpen')}
+          </span>
+        </button>
       )}
       <MessageList />
       <HandoffCard />

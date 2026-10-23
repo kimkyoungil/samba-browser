@@ -52,11 +52,16 @@ function isUsable(e: SupabaseEnv): boolean {
 // 비어 있으면 디렉터리 없이 예전처럼 데이터 프로젝트에 바로 로그인한다
 const DIRECTORY_URL_KEY = 'SAMBA_DIRECTORY_URL'
 const DIRECTORY_ANON_KEY = 'SAMBA_DIRECTORY_ANON_KEY'
+// SAMBA_DIRECTORY_URL 이 이 값이면 중앙 로그인을 끈다 — 로그인 화면 없이 이 PC 전용으로 돈다
+// (빈 값은 내장 기본 프로젝트로 채워지므로 끄는 값이 따로 있어야 한다)
+export const DIRECTORY_OFF = 'off'
 
 export function readDirectoryEnv(): SupabaseEnv {
+  const url = readEnv(DIRECTORY_URL_KEY).trim()
+  if (url.toLowerCase() === DIRECTORY_OFF) return { url: '', anonKey: '' }
   // 환경변수가 없으면 앱에 내장된 기본 중앙 프로젝트를 쓴다(다운받은 누구나 로그인 화면부터 본다)
   return {
-    url: readEnv(DIRECTORY_URL_KEY).trim() || DEFAULT_DIRECTORY_URL,
+    url: url || DEFAULT_DIRECTORY_URL,
     anonKey: readEnv(DIRECTORY_ANON_KEY).trim() || DEFAULT_DIRECTORY_ANON_KEY
   }
 }

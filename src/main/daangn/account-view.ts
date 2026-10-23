@@ -194,7 +194,8 @@ export class DaangnAccountView {
     this.setFocusEmulation(true)
     // 포커스가 없으면 당근이 "보고 있는 창이 아니다" 로 보고 읽음 처리를 하지 않는다.
     // 숨김에서 보임으로 바뀔 때만 준다 — 영역 조절 때마다 주면 다른 입력칸의 포커스를 뺏는다
-    if (becameVisible && !this.view.webContents.isDestroyed()) this.view.webContents.focus()
+    // 앱 창이 OS 포커스를 갖고 있을 때만 — 뒤에 있는 창에서 focus() 를 부르면 그 창이 사람이 쓰는 창 앞으로 튀어나온다(포커스 에뮬레이션은 위에서 켬)
+    if (becameVisible && target.isFocused() && !this.view.webContents.isDestroyed()) this.view.webContents.focus()
   }
 
   /** 다시 숨김 창으로 돌려보낸다 */

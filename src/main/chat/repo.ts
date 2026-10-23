@@ -5,7 +5,7 @@
 // - 진행 로그는 저장 직전 sanitizeSteps 로 label/ok/key 만 남긴다.
 //   fill_secret·login 은 라벨에 평문을 넣지 않으므로(도구 쪽 보장) 값이 흘러들 경로가 없다
 
-import { and, desc, eq, isNull, or, type SQL } from 'drizzle-orm'
+import { and, desc, eq, inArray, isNull, or, sql, type SQL } from 'drizzle-orm'
 import type { Db } from '../db/client'
 import { chatMessages, chats } from '../db/schema'
 import {
@@ -21,6 +21,13 @@ import type { OutboxRecorder, WorkspaceScope } from '../../shared/sync'
 
 /** 목록 기본 개수(사이드바가 쓰는 값은 shared/chat.ts 의 RECENT_CHAT_LIMIT) */
 const DEFAULT_LIST_LIMIT = 50
+/** 검색어 상한(글자) — 그보다 긴 값은 자른다 */
+export const CHAT_SEARCH_MAX = 100
+
+/** LIKE 의 와일드카드(% _)와 탈출 문자를 글자 그대로 찾게 바꾼다 */
+export function likePattern(query: string): string {
+  return `%${query.replace(/[\\%_]/g, (c) => `\\${c}`)}%`
+}
 
 export class ChatRepo {
   // 동기화 변경 로그 훅. 주입하지 않으면 아무 일도 하지 않는다(동기화를 끈 상태)
@@ -75,6 +82,30 @@ export class ChatRepo {
       .select()
       .from(chats)
       .where(this.visibleWhere())
+      .orderBy(desc(chats.updatedAt))
+      .limit(Math.max(1, limit))
+      .all()
+      .map(toChatDto)
+  }
+
+  /**
+   * 제목이나 메시지 내용에 검색어가 든 대화를 최근 순으로. 검색어가 비면 그냥 목록.
+   * 지운 대화·지운 메시지와 다른 작업공간의 대화는 찾지 않는다
+   */
+  search(query: string, limit: number = DEFAULT_LIST_LIMIT): ChatDto[] {
+    const q = query.trim().slice(0, CHAT_SEARCH_MAX)
+    if (!q) return this.list(limit)
+    const pattern = likePattern(q)
+    const matches = (col: typeof chats.title | typeof chatMessages.content): SQL =>
+      sql`${col} LIKE ${pattern} ESCAPE '\\'`
+    const inMessages = this.d
+      .select({ id: chatMessages.chatId })
+      .from(chatMessages)
+      .where(and(isNull(chatMessages.deletedAt), matches(chatMessages.content)))
+    return this.d
+      .select()
+      .from(chats)
+      .where(and(this.visibleWhere(), or(matches(chats.title), inArray(chats.id, inMessages))))
       .orderBy(desc(chats.updatedAt))
       .limit(Math.max(1, limit))
       .all()

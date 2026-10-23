@@ -27,6 +27,7 @@ export const IPC = {
   agentConfirmReply: 'agent:confirmReply',
   // --- AI 채팅 기록 — 본문은 평문이지만 비밀값은 담기지 않는다(진행 로그는 라벨만) ----
   chatList: 'chat:list',
+  chatSearch: 'chat:search', // 제목·내용에 검색어가 든 대화(사이드바 검색칸)
   chatCreate: 'chat:create',
   chatGet: 'chat:get',
   chatAppend: 'chat:append',

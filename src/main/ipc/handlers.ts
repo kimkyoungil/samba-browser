@@ -610,6 +610,10 @@ export function registerIpc(
 
   // --- AI 채팅 기록 -------------------------------------------------------
   handleFromRenderer(IPC.chatList, (limit?: number) => chats.list(limit ?? RECENT_CHAT_LIMIT))
+  handleFromRenderer(IPC.chatSearch, (query: unknown, limit?: number) => {
+    if (typeof query !== 'string') throw new Error('bad query')
+    return chats.search(query, typeof limit === 'number' ? limit : RECENT_CHAT_LIMIT)
+  })
   handleFromRenderer(IPC.chatCreate, (title: string) => chats.create(title))
   handleFromRenderer(IPC.chatGet, (chatId: number) => chats.get(chatId))
   handleFromRenderer(IPC.chatAppend, (input: AppendMessageInput) => chats.append(input))

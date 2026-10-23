@@ -91,6 +91,11 @@ interface ChatState {
   setEffort: (effort: AgentEffort) => Promise<void>
   // 최근 대화 목록을 다시 읽는다(앱 시작·작업 종료 후)
   loadChats: () => Promise<void>
+  // 사이드바 대화 목록에 몇 개까지 보일지(더 보기로 늘린다)와 검색어(비면 최근 목록)
+  chatLimit: number
+  chatQuery: string
+  moreChats: () => Promise<void>
+  searchChats: (query: string) => Promise<void>
   // 저장된 대화를 열어 메시지를 화면에 올린다
   openChat: (chatId: number) => Promise<void>
   // 화면을 비우고 새 대화를 시작한다(대화 행은 첫 전송 때 만들어진다)
@@ -183,8 +188,24 @@ export const useChatStore = create<ChatState>((set, get) => ({
     await window.samba.settings?.set({ agentEffort: effort })
   },
   loadChats: async () => {
-    const r = await window.samba.chats?.list(RECENT_CHAT_LIMIT)
-    if (r?.ok) set({ chats: r.data })
+    const { chatLimit, chatQuery } = get()
+    const q = chatQuery.trim()
+    const r = q
+      ? await window.samba.chats?.search?.(q, chatLimit)
+      : await window.samba.chats?.list(chatLimit)
+    // 그사이 검색어가 바뀌었으면 늦게 온 결과는 버린다
+    if (r?.ok && get().chatQuery.trim() === q) set({ chats: r.data })
+  },
+  chatLimit: RECENT_CHAT_LIMIT,
+  chatQuery: '',
+  moreChats: async () => {
+    set((s) => ({ chatLimit: s.chatLimit + RECENT_CHAT_LIMIT }))
+    await get().loadChats()
+  },
+  searchChats: async (query) => {
+    // 검색어를 바꾸면 다시 첫 장(최근 RECENT_CHAT_LIMIT 개)부터
+    set({ chatQuery: query, chatLimit: RECENT_CHAT_LIMIT })
+    await get().loadChats()
   },
   openChat: async (chatId) => {
     if (get().status === 'running') return

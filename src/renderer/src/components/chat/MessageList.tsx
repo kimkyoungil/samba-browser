@@ -3,6 +3,7 @@ import { memo, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useChatStore, type ChatMessage } from '@renderer/stores/chatStore'
 import { StepLog } from './StepLog'
+import { MarkdownText } from './MarkdownText'
 
 // 맨 아래에서 이만큼(px) 안쪽이면 '따라 내려가는 중'으로 본다
 const STICK_GAP = 40
@@ -102,15 +103,14 @@ const MessageRow = memo(function MessageRow({
         {m.text}
       </div>
     )
+  const shown = m.partial ? (m.text ? `${m.text}\n${m.partial}` : m.partial) : m.text
   return (
     <div className="max-w-[94%] self-start leading-relaxed">
-      <div className="whitespace-pre-wrap break-words">
-        {m.partial ? (m.text ? `${m.text}\n${m.partial}` : m.partial) : m.text}
-        {/* 글자가 흘러오는 동안 끝에 깜빡이는 커서 */}
-        {m.partial ? (
-          <span className="ml-0.5 inline-block h-[1em] w-[2px] translate-y-[2px] animate-pulse bg-[var(--text)]" />
-        ) : null}
-      </div>
+      {shown && <MarkdownText text={shown} />}
+      {/* 글자가 흘러오는 동안 끝에 깜빡이는 커서 */}
+      {m.partial ? (
+        <span className="inline-block h-[1em] w-[2px] animate-pulse bg-[var(--text)]" />
+      ) : null}
       <StepLog steps={m.steps ?? []} running={running} />
     </div>
   )

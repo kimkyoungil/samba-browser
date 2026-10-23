@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { Globe, ListChecks, MessageCircle, PanelLeft, ScrollText, Settings } from 'lucide-react'
 import { cn } from '@renderer/lib/utils'
 import logo from '@renderer/assets/logo.png'
+import wordmark from '@renderer/assets/noden-wordmark.png'
 import { useUiStore, type MainView } from '@renderer/stores/uiStore'
 import { BookmarkTree } from './BookmarkTree'
 import { ChatList } from './ChatList'
@@ -51,9 +52,16 @@ export function Sidebar({ width }: { width: number }): React.JSX.Element {
           <PanelLeft className="h-4 w-4" />
         </button>
         {!collapsed && (
-          <div className="flex min-w-0 items-center gap-2 text-[14px] font-semibold">
+          <div
+            className="flex min-w-0 items-center gap-2 text-[14px] font-semibold"
+            title={t('app.name')}
+          >
             <img src={logo} alt="" className="h-[22px] w-[22px] rounded-[7px]" />
-            <span className="truncate">{t('app.name')}</span>
+            {/* 노든 프로그램과 같은 로고 글씨(워드마크 그림) + '브라우저' */}
+            <img src={wordmark} alt="noden" className="h-[15px] w-auto shrink-0" />
+            <span className="truncate text-[13px] font-medium text-[var(--text2)]">
+              {t('app.kind')}
+            </span>
           </div>
         )}
       </div>

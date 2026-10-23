@@ -63,7 +63,7 @@ export default function App(): React.JSX.Element {
     void refresh()
     return window.samba.tabs.onUpdated(setTabs)
   }, [refresh, setTabs])
-  // 창 제목 = 활성 탭 제목. 작업표시줄·알트탭에서 "네이버 - SAMBA Browser" 처럼 보인다
+  // 창 제목 = 활성 탭 제목. 작업표시줄·알트탭에서 "네이버 - noden 브라우저" 처럼 보인다
   const activeTitle = useBrowserStore((s) => s.activeTab?.title ?? '')
   useEffect(() => {
     const name = t('app.name')

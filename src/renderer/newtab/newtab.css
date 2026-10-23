@@ -44,6 +44,14 @@ body {
   font-weight: 600;
   letter-spacing: -0.02em;
   color: var(--text);
+  line-height: 0;
+}
+
+/* 노든 프로그램과 같은 로고 글씨(워드마크 그림) */
+.brand-mark {
+  display: block;
+  height: 40px;
+  width: auto;
 }
 
 .search {

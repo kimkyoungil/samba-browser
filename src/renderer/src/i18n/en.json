@@ -1,6 +1,7 @@
 {
   "app": {
-    "name": "SAMBA Browser"
+    "name": "noden Browser",
+    "kind": "Browser"
   },
   "sidebar": {
     "browser": "Browser",

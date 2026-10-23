@@ -7,8 +7,8 @@ import { isHttpUrl } from '../shared/url'
 // 창이 여럿일 수 있다(WindowManager) — position 을 주면 그 자리에(새 창·탭 분리), 없으면 OS 기본 자리에 띄운다
 export function createMainWindow(position?: { x: number; y: number }): BrowserWindow {
   const win = new BrowserWindow({
-    title: 'SAMBA Browser',
-    // 작업표시줄·알트탭에 삼바 로고가 보이게(개발 모드에서도 electron 기본 아이콘 대신)
+    title: 'noden 브라우저',
+    // 작업표시줄·알트탭에 노든 마크가 보이게(개발 모드에서도 electron 기본 아이콘 대신)
     icon: join(__dirname, '../../resources/icon.ico'),
     ...(position ? { x: Math.max(0, position.x), y: Math.max(0, position.y) } : {}),
     width: 1440,

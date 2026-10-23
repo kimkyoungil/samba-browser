@@ -38,7 +38,9 @@ for (const stream of [process.stdout, process.stderr]) {
 const userDataOverride = process.env.SAMBA_USER_DATA
 if (userDataOverride) app.setPath('userData', userDataOverride)
 
-// 개발 모드(electron.exe 직접 실행)에서도 앱 이름이 'Electron' 대신 제품명으로 보이게 한다
+// 개발 모드(electron.exe 직접 실행)에서도 앱 이름이 'Electron' 대신 제품명으로 보이게 한다.
+// ⛔ 화면 이름은 'noden 브라우저'로 바꿨지만 여기는 그대로 둔다 — 이 이름이 앱 데이터 폴더
+// (%APPDATA%/SAMBA Browser: 대화·설정·금고)를 정한다. 바꾸면 기존 대화·설정이 안 보인다(겉이름만 바꿈)
 app.setName('SAMBA Browser')
 
 // 창이 다른 창에 가려지면 Windows 가림 감지가 렌더링을 멈춰 capturePage(키패드 OCR)가

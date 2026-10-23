@@ -27,19 +27,77 @@ export interface AdbRunner {
 
 // 한 번짜리 명령 기본 상한 15초(uiautomator dump 가 느린 기기가 있다)
 const DEFAULT_TIMEOUT_MS = 15_000
+// adb 서버를 먼저 띄우는 데 기다리는 상한(PowerShell 시작 + adb start-server)
+const START_SERVER_TIMEOUT_MS = 20_000
 // stdout 상한 32MB(screencap PNG 여유)
 const MAX_BUFFER = 32 * 1024 * 1024
 
-export function createAdbRunner(adbPath: () => string): AdbRunner {
+/**
+ * adb 서버를 이 앱의 핸들을 물려받지 않게 띄우는 명령(Windows).
+ *
+ * 이 앱이 `adb devices` 같은 명령을 그냥 실행하면, 서버가 없을 때 adb 가 스스로 서버(fork-server)를 띄우고
+ * 그 서버는 이 앱의 상속 가능한 핸들까지 물려받는다(Windows 의 자식 프로세스는 핸들을 상속한다).
+ * 실기 2026-10-24: 앱을 끈 뒤에도 adb 서버가 앱의 디버그 포트(9333) 소켓을 쥐고 있어, 다시 켠 앱이
+ * "Cannot start http server for devtools" 로 그 포트를 못 열었다.
+ * PowerShell 의 Start-Process(ShellExecute)로 띄운 프로세스는 핸들을 물려받지 않으므로, 그렇게 띄운
+ * `adb start-server` 가 만든 서버도 깨끗하다. 이미 떠 있으면 start-server 는 아무 일도 하지 않는다
+ */
+export function cleanStartServerCommand(adb: string): { command: string; args: string[] } {
+  const literal = adb.replace(/'/g, "''")
+  return {
+    command: 'powershell.exe',
+    args: [
+      '-NoProfile',
+      '-NonInteractive',
+      '-Command',
+      `Start-Process -FilePath '${literal}' -ArgumentList 'start-server' -WindowStyle Hidden -Wait`
+    ]
+  }
+}
+
+/** 실제 PowerShell 로 adb 서버를 깨끗하게 띄운다. 실패해도 조용히 끝난다(그때는 adb 가 스스로 띄운다) */
+function startServerClean(adb: string): Promise<void> {
+  return new Promise((resolve) => {
+    const c = cleanStartServerCommand(adb)
+    execFile(c.command, c.args, { timeout: START_SERVER_TIMEOUT_MS, windowsHide: true }, () =>
+      resolve()
+    )
+  })
+}
+
+export function createAdbRunner(
+  adbPath: () => string,
+  // adb 서버를 먼저 띄우는 방법. 기본은 Windows 에서만 깨끗하게 띄운다(다른 OS 는 핸들 상속 문제가 없다)
+  startServer: (adb: string) => Promise<void> = process.platform === 'win32'
+    ? startServerClean
+    : () => Promise.resolve()
+): AdbRunner {
   const bin = (): string => {
     const p = adbPath()
     if (!p) throw new Error('adb path is not set')
     return p
   }
+  // adb 경로마다 한 번만 먼저 띄운다. 서버가 나중에 죽어 adb 가 스스로 다시 띄우는 경우까지는 막지 못한다
+  let serverFor = ''
+  let serverReady: Promise<void> = Promise.resolve()
+  const ensureServer = (): Promise<void> => {
+    let p = ''
+    try {
+      p = bin()
+    } catch {
+      return Promise.resolve()
+    }
+    if (p !== serverFor) {
+      serverFor = p
+      serverReady = startServer(p).catch(() => undefined)
+    }
+    return serverReady
+  }
 
   return {
-    run: (args, timeoutMs = DEFAULT_TIMEOUT_MS) =>
-      new Promise((resolve) => {
+    run: async (args, timeoutMs = DEFAULT_TIMEOUT_MS) => {
+      await ensureServer()
+      return new Promise((resolve) => {
         execFile(
           bin(),
           args,
@@ -49,10 +107,12 @@ export function createAdbRunner(adbPath: () => string): AdbRunner {
             resolve({ code, stdout: String(stdout), stderr: String(stderr) })
           }
         )
-      }),
+      })
+    },
 
-    runBinary: (args, timeoutMs = DEFAULT_TIMEOUT_MS) =>
-      new Promise((resolve, reject) => {
+    runBinary: async (args, timeoutMs = DEFAULT_TIMEOUT_MS) => {
+      await ensureServer()
+      return new Promise((resolve, reject) => {
         execFile(
           bin(),
           args,
@@ -62,7 +122,8 @@ export function createAdbRunner(adbPath: () => string): AdbRunner {
             else resolve(Buffer.from(stdout))
           }
         )
-      }),
+      })
+    },
 
     stream: createSpawner(bin)
   }

@@ -75,7 +75,7 @@ import type {
   DaangnStateDto,
   DaangnTemplateDto
 } from '../shared/daangn'
-import type { AiUsage } from '../shared/ai'
+import type { AiUsage, ChatEngine } from '../shared/ai'
 import type { AuthState, WorkspaceDto } from '../shared/sync'
 import type { ExportRequest, ExportResult } from '../shared/vault'
 import type { HarnessResult } from '../main/harness/client'
@@ -202,6 +202,13 @@ const api = {
         ? invoke(IPC.agentRun, prompt, chatId, scheduleToken)
         : invoke(IPC.agentRun, prompt, chatId, scheduleToken, images),
     stop: (): Promise<IpcResult<void>> => invoke(IPC.agentStop),
+    // 대화마다 고른 AI. chatId 가 null 이면(아직 안 만든 새 대화) 앱 기본 연결 쪽 값만 돌려준다
+    chatEngine: (
+      chatId: number | null
+    ): Promise<IpcResult<{ engine: ChatEngine; explicit: boolean; defaultEngine: ChatEngine }>> =>
+      invoke(IPC.agentChatEngine, chatId),
+    setChatEngine: (chatId: number, engine: ChatEngine): Promise<IpcResult<void>> =>
+      invoke(IPC.agentSetChatEngine, chatId, engine),
     confirmReply: (requestId: string, approved: boolean): void => {
       ipcRenderer.send(IPC.agentConfirmReply, requestId, approved)
     },
@@ -420,7 +427,14 @@ const api = {
       IpcResult<{ provider: AiProviderId; taskModels: TaskModels; choices: string[] }>
     > => invoke(IPC.aiTaskModels),
     setTaskModel: (key: TaskModelKey, model: string): Promise<IpcResult<TaskModels>> =>
-      invoke(IPC.aiSetTaskModel, key, model)
+      invoke(IPC.aiSetTaskModel, key, model),
+    // 대화 입력줄 모델 메뉴 — 그 대화에서 고른 AI 의 모델 목록·지금 모델
+    chatModelMenu: (
+      engine: ChatEngine
+    ): Promise<IpcResult<{ engine: ChatEngine; model: string; choices: string[] }>> =>
+      invoke(IPC.aiChatModelMenu, engine),
+    setChatModel: (engine: ChatEngine, model: string): Promise<IpcResult<string>> =>
+      invoke(IPC.aiSetChatModel, engine, model)
   },
   // 계정 — 응답은 언제나 AuthState 뿐이다(토큰·비밀번호는 메인에 남는다)
   auth: {

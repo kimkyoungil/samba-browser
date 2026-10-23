@@ -24,6 +24,8 @@ export interface CodexInput {
   model: string
   /** 도구를 붙일 외부 stdio MCP 서버(없으면 도구 없이 텍스트만) */
   mcpServer?: { name: string; command: string; args: string[] }
+  /** 추론 강도(입력줄에서 고른 값). Codex 모델은 low·medium·high 를 다 받는다(~/.codex/models_cache.json) */
+  effort?: 'low' | 'medium' | 'high'
   abort: AbortController
   cwd?: string
 }
@@ -52,7 +54,9 @@ export const CODEX_BIN = 'codex'
  * `codex exec` 인자. 승인·샌드박스는 가장 좁게 잡는다 —
  * 브라우저 조작은 samba 도구가 하고, codex 쪽 셸 실행은 읽기 전용으로 묶어 둔다
  */
-export function buildCodexArgs(input: Pick<CodexInput, 'model' | 'mcpServer'>): string[] {
+export function buildCodexArgs(
+  input: Pick<CodexInput, 'model' | 'mcpServer' | 'effort'>
+): string[] {
   const args = [
     'exec',
     '--json',
@@ -64,6 +68,7 @@ export function buildCodexArgs(input: Pick<CodexInput, 'model' | 'mcpServer'>): 
     'read-only'
   ]
   if (input.model.trim()) args.push('-m', input.model.trim())
+  if (input.effort) args.push('-c', `model_reasoning_effort=${JSON.stringify(input.effort)}`)
   if (input.mcpServer) {
     const { name, command, args: serverArgs } = input.mcpServer
     // TOML 인라인 테이블로 서버 하나를 얹는다(-c mcp_servers.<name>={...})

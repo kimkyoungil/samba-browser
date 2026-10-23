@@ -86,12 +86,16 @@ import type { NewTabInitDto } from '../../shared/newtab'
 // === AI 연결(2b 추가분) ===============================================================
 import {
   connectionKeyOf,
+  engineOfProvider,
   isAiProviderId,
   isApiKeyVendor,
+  isChatEngine,
   isSubscriptionProviderId,
-  isTaskModelKey
+  isTaskModelKey,
+  providerOfEngine
 } from '../../shared/ai'
-import type { AiProviderId, ApiKeyVendor, TaskModelKey } from '../../shared/ai'
+import type { AiProviderId, ApiKeyVendor, ChatEngine, TaskModelKey } from '../../shared/ai'
+import { ChatEngineStore } from '../agent/chat-engine'
 import { ApiKeyStore } from '../ai/keys'
 import {
   defaultProbes,
@@ -107,8 +111,13 @@ import {
   migrateAiConnections,
   withConnection
 } from '../ai/connections'
-import { resolveAgentAuth } from '../ai/auth-route'
-import { remapOnProviderChange, resolveModel, taskModelChoices } from '../ai/models'
+import { resolveAgentAuth, resolveEngineAuth } from '../ai/auth-route'
+import {
+  DEFAULT_TASK_MODELS,
+  remapOnProviderChange,
+  resolveModel,
+  taskModelChoices
+} from '../ai/models'
 import {
   agentBackend,
   setApiKeyResolver,
@@ -359,6 +368,21 @@ export function registerIpc(
     new ChatSessionStore(join(app.getPath('userData'), 'chat-sessions.json')),
     (chatId) => chats.messages(chatId).map((m) => ({ role: m.role, content: m.content }))
   )
+  // 대화마다 고른 AI(Claude/Codex). 이 PC 에만 남는다(로그인·연결 상태에 묶여 있어 동기화하지 않는다)
+  const chatEngines = new ChatEngineStore(join(app.getPath('userData'), 'chat-engines.json'))
+  const chatEngineOf = (chatId: number | null | undefined): ChatEngine | null =>
+    typeof chatId === 'number' && Number.isInteger(chatId) ? chatEngines.get(chatId) : null
+  handleFromRenderer(IPC.agentChatEngine, (rawChatId: unknown) => {
+    const defaultEngine = engineOfProvider(settings.get().aiProvider as AiProviderId)
+    const explicit = chatEngineOf(typeof rawChatId === 'number' ? rawChatId : null)
+    return { engine: explicit ?? defaultEngine, explicit: explicit !== null, defaultEngine }
+  })
+  handleFromRenderer(IPC.agentSetChatEngine, (rawChatId: unknown, rawEngine: unknown) => {
+    if (typeof rawChatId !== 'number' || !Number.isInteger(rawChatId))
+      throw new Error('bad chat id')
+    if (!isChatEngine(rawEngine)) throw new Error('bad engine')
+    chatEngines.set(rawChatId, rawEngine)
+  })
   // 예약 실행. 실행 기록은 이 PC 의 파일에만 남는다(동기화 대상이 아니다)
   const scheduleRuns = new ScheduleRunStore(join(app.getPath('userData'), 'schedule-runs.json'))
   const scheduler = new PlaybookScheduler({
@@ -555,7 +579,11 @@ export function registerIpc(
   handleFromRenderer(IPC.chatGet, (chatId: number) => chats.get(chatId))
   handleFromRenderer(IPC.chatAppend, (input: AppendMessageInput) => chats.append(input))
   handleFromRenderer(IPC.chatRename, (chatId: number, title: string) => chats.rename(chatId, title))
-  handleFromRenderer(IPC.chatDelete, (chatId: number) => chats.remove(chatId))
+  handleFromRenderer(IPC.chatDelete, (chatId: number) => {
+    // 지운 대화의 AI 선택도 같이 지운다(같은 번호가 다시 쓰일 일은 없지만 파일이 쌓이지 않게)
+    chatEngines.clear(chatId)
+    return chats.remove(chatId)
+  })
   handleFromRenderer(IPC.agentStop, () => agent.stop())
 
   // --- 자동화 플레이북 — 절차 문서만 오간다(비밀값 없음) --------------------
@@ -1003,11 +1031,28 @@ export function registerIpc(
       hasApiKey: Boolean(apiKeys.masked().anthropic)
     })
   })
+  // 대화마다 고른 AI. 앱 기본 연결과 같은 계열이면 null(종전 그대로 앱 기본 연결로 돈다)
+  agent.setEngineRouting((chatId) => {
+    const engine = chatEngineOf(chatId)
+    if (engine === null) return null
+    const s = settings.get()
+    if (engineOfProvider(s.aiProvider as AiProviderId) === engine) return null
+    return {
+      engine,
+      auth: resolveEngineAuth({
+        engine,
+        connections: s.aiConnections,
+        hasApiKey: Boolean(apiKeys.masked().anthropic)
+      }),
+      model: chatEngines.model(engine) ?? DEFAULT_TASK_MODELS[providerOfEngine(engine)].standard
+    }
+  })
   // 구독 예비 계정 토큰(하네스와 공유). 등록·삭제가 재시작 없이 반영되게 부를 때마다 읽는다
   setSubscriptionFallbackTokens(() => loadFallbackTokens([process.cwd(), app.getAppPath()]))
   onShutdown(() => {
     setApiKeyResolver(null)
     setAuthResolver(null)
+    agent.setEngineRouting(null)
     setSubscriptionFallbackTokens(null)
   })
 
@@ -1105,6 +1150,36 @@ export function registerIpc(
       taskModels: s.taskModels,
       choices: taskModelChoices(s.aiProvider as AiProviderId)
     }
+  })
+  // 대화 입력줄 모델 메뉴. 그 대화의 AI 가 앱 기본 연결과 같은 계열이면 종전 그대로(작업별 모델 '표준' 칸),
+  // 다른 AI 를 고른 대화면 그 AI 의 목록과 따로 기억한 모델을 쓴다
+  handleFromRenderer(IPC.aiChatModelMenu, (rawEngine: unknown) => {
+    if (!isChatEngine(rawEngine)) throw new Error('bad engine')
+    const s = settings.get()
+    const provider = s.aiProvider as AiProviderId
+    if (engineOfProvider(provider) === rawEngine)
+      return {
+        engine: rawEngine,
+        model: resolveModel(s.taskModels, 'standard', provider),
+        choices: taskModelChoices(provider)
+      }
+    const other = providerOfEngine(rawEngine)
+    return {
+      engine: rawEngine,
+      model: chatEngines.model(rawEngine) ?? DEFAULT_TASK_MODELS[other].standard,
+      choices: taskModelChoices(other)
+    }
+  })
+  handleFromRenderer(IPC.aiSetChatModel, (rawEngine: unknown, rawModel: unknown) => {
+    if (!isChatEngine(rawEngine)) throw new Error('bad engine')
+    if (typeof rawModel !== 'string' || !rawModel.trim()) throw new Error(tr('ipc.emptyModelName'))
+    const s = settings.get()
+    if (engineOfProvider(s.aiProvider as AiProviderId) === rawEngine) {
+      settings.set({ taskModels: { ...s.taskModels, standard: rawModel.trim() } })
+      return rawModel.trim()
+    }
+    chatEngines.setModel(rawEngine, rawModel)
+    return rawModel.trim()
   })
   handleFromRenderer(IPC.aiSetTaskModel, (rawKey: unknown, rawModel: unknown) => {
     if (!isTaskModelKey(rawKey)) throw new Error(tr('ipc.unknownTaskModel'))
@@ -1553,7 +1628,18 @@ export function registerIpc(
       // 세션의 모든 워커에 가므로 확장 id 를 실어 자기 몫만 받게 한다
       const activeWc = w.tabs.active()?.view.webContents
       const tab = activeWc
-        ? { id: activeWc.id, index: 0, windowId: 0, active: true, highlighted: true, pinned: false, incognito: false, url: activeWc.getURL(), title: activeWc.getTitle(), status: 'complete' }
+        ? {
+            id: activeWc.id,
+            index: 0,
+            windowId: 0,
+            active: true,
+            highlighted: true,
+            pinned: false,
+            incognito: false,
+            url: activeWc.getURL(),
+            title: activeWc.getTitle(),
+            status: 'complete'
+          }
         : undefined
       const targets = new Set([...(activeWc ? [activeWc.session] : []), session.defaultSession])
       for (const ses of targets) {
@@ -1842,7 +1928,10 @@ export function registerIpc(
   registerDaangnIpc({
     handle: handleFromRenderer,
     handleWin: (channel, fn) =>
-      handleFromRendererWin(channel, (entry, ...args) => fn(entry.win, ...(args as never)) as never),
+      handleFromRendererWin(
+        channel,
+        (entry, ...args) => fn(entry.win, ...(args as never)) as never
+      ),
     service: daangn,
     repo: daangnRepo
   })

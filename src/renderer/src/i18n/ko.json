@@ -299,6 +299,8 @@
     "queued": "대기",
     "queueRemove": "대기 취소",
     "queueSend": "대기열에 넣기",
+    "engineMenu": "이 대화의 AI",
+    "engineHint": "이 대화를 어느 AI 로 할지 고릅니다. 대화마다 따로 남습니다. Codex 는 글 대화만 합니다(브라우저 조작은 Claude).",
     "imagePasted": "이미지 {{n}}장 첨부됨",
     "imageRemove": "이미지 제거",
     "imageTooLarge": "5MB 를 넘는 이미지는 붙일 수 없어요",

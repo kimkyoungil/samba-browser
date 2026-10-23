@@ -15,6 +15,7 @@ import {
 import { AGENT_IMAGE_MAX_COUNT, agentImageDataUrl, type AgentImage } from '@shared/agent-image'
 import { PermissionMenu } from './PermissionMenu'
 import { ModelEffortMenu } from './ModelEffortMenu'
+import { EngineMenu } from './EngineMenu'
 
 // 입력칸이 글에 맞춰 늘어나는 최대 높이(px). 넘으면 칸 안에서 스크롤한다
 const INPUT_MAX_HEIGHT = 200
@@ -212,6 +213,7 @@ export function ChatInput(): React.JSX.Element {
       {/* 권한 모드 옆에 모델 · 추론 강도 선택(Aside 하단 줄과 같은 자리) */}
       <div className="mt-2 flex flex-wrap items-center gap-1.5">
         <PermissionMenu />
+        <EngineMenu />
         <ModelEffortMenu />
       </div>
     </div>

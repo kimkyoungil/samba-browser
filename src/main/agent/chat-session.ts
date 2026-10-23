@@ -94,16 +94,22 @@ export interface HistoryMessage {
  * 최근 턴의 사용자 지시와 AI 최종 보고만 싣는다 — 진행 로그·도구 결과는 빼서 짧게 유지한다.
  * 메시지가 없으면 빈 문자열
  */
-export function buildHistoryNote(messages: readonly HistoryMessage[]): string {
+export function buildHistoryNote(
+  messages: readonly HistoryMessage[],
+  // Codex 대화는 세션을 이어받지 않고 매번 이 요약으로 맥락을 넘긴다 — 그쪽은 더 길게 싣는다
+  opts: { turns?: number; chars?: number } = {}
+): string {
+  const turns = opts.turns ?? HISTORY_NOTE_TURNS
+  const chars = opts.chars ?? HISTORY_NOTE_CHARS
   const kept = messages
     .filter((m) => (m.role === 'user' || m.role === 'assistant') && m.content.trim() !== '')
     // 자동 학습 턴은 절차 저장용이라 대화 맥락이 아니다
     .filter((m) => !(m.role === 'user' && m.content.startsWith('[자동 학습]')))
-    .slice(-HISTORY_NOTE_TURNS * 2)
+    .slice(-turns * 2)
   if (kept.length === 0) return ''
   const lines = kept.map((m) => {
     const body = m.content.replace(/\s+/g, ' ').trim()
-    const cut = body.length > HISTORY_NOTE_CHARS ? `${body.slice(0, HISTORY_NOTE_CHARS)}…` : body
+    const cut = body.length > chars ? `${body.slice(0, chars)}…` : body
     return `- ${m.role === 'user' ? '사용자' : 'AI'}: ${cut}`
   })
   return [

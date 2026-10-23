@@ -25,12 +25,14 @@ const API_KEY_MODELS: TaskModels = {
   visual: 'claude-sonnet-5-5'
 }
 
-// Codex 구독(= Codex CLI) 경로는 OpenAI 모델 이름을 그대로 넘긴다(codex exec -m)
+// Codex 구독(= Codex CLI) 경로는 OpenAI 모델 이름을 그대로 넘긴다(codex exec -m).
+// 이름은 이 PC 의 Codex 모델 목록(~/.codex/models_cache.json, 2026-10-23)에 있는 것만 쓴다 —
+// 종전 'gpt-5.6'·'gpt-5.6-pro' 는 그 목록에 없는 이름이었다
 const CODEX_MODELS: TaskModels = {
-  fast: 'gpt-5.6',
-  standard: 'gpt-5.6',
-  deep: 'gpt-5.6-pro',
-  visual: 'gpt-5.6'
+  fast: 'gpt-6-luna',
+  standard: 'gpt-6.1-sol',
+  deep: 'gpt-6.1-sol',
+  visual: 'gpt-6.1-sol'
 }
 
 export const DEFAULT_TASK_MODELS: Record<AiProviderId, TaskModels> = {
@@ -50,8 +52,13 @@ const MODEL_CHOICES: Record<AiProviderId, string[]> = {
     'claude-sonnet-5-5',
     'claude-haiku-4-5-20251001'
   ],
-  api_key: ['claude-fable-5-1', 'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-4-5-20251001'],
-  codex_subscription: ['gpt-5.6', 'gpt-5.6-pro', 'gpt-5.1-codex-max', 'gpt-5.3-codex'],
+  api_key: [
+    'claude-fable-5-1',
+    'claude-opus-5-5',
+    'claude-sonnet-5-5',
+    'claude-haiku-4-5-20251001'
+  ],
+  codex_subscription: ['gpt-6.1-sol', 'gpt-6-sol', 'gpt-6-astra', 'gpt-6-luna', 'gpt-5.6-sol'],
   service_credit: [
     'claude-haiku-4-5-20251001',
     'claude-sonnet-5-5',

@@ -3,7 +3,7 @@ import { useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useChatStore } from '@renderer/stores/chatStore'
 import { useAiStore } from '@renderer/stores/aiStore'
-import type { AiProviderId } from '@shared/ai'
+import { engineOfProvider, providerOfEngine, type AiProviderId } from '@shared/ai'
 import { MessageList } from './MessageList'
 import { ChatInput } from './ChatInput'
 import { ConfirmCard } from './ConfirmCard'
@@ -35,7 +35,18 @@ export function ChatPanel(): React.JSX.Element {
   useEffect(() => {
     void loadAi()
   }, [loadAi])
-  const status = providers.find((p) => p.id === provider)
+  // 이 대화에서 앱 기본 연결과 다른 AI 를 골랐으면 그 AI 의 연결을 비춘다
+  const engine = useChatStore((s) => s.engine)
+  const otherProvider = providerOfEngine(engine)
+  const badgeProvider: AiProviderId =
+    engineOfProvider(provider) === engine
+      ? provider
+      : engine === 'claude' &&
+          providers.find((p) => p.id === otherProvider)?.state !== 'connected' &&
+          providers.find((p) => p.id === 'api_key')?.state === 'connected'
+        ? 'api_key'
+        : otherProvider
+  const status = providers.find((p) => p.id === badgeProvider)
   // 구독 카드는 connected 일 때만, 내 API 키는 키가 있을 때만 쓸 수 있다
   const usable = status?.state === 'connected'
   // 첫 실행 안내 — 연결된 제공자가 하나도 없으면 설정으로 가는 링크를 한 줄 보여 준다.
@@ -53,7 +64,7 @@ export function ChatPanel(): React.JSX.Element {
                 : 'h-[7px] w-[7px] rounded-full bg-[var(--text2)]/40'
             }
           />
-          {t(PROVIDER_LABEL_KEYS[provider])}
+          {t(PROVIDER_LABEL_KEYS[badgeProvider])}
           {!usable && ` · ${t('settings.ai.notConnectedShort')}`}
           <button
             type="button"

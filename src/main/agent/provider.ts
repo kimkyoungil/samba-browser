@@ -25,6 +25,8 @@ export interface ProviderInput {
   resume?: string
   /** 답을 글자 단위(stream_event)로도 받는다. 채팅 화면용 — 한 덩어리 호출(번역 등)은 끈다 */
   partial?: boolean
+  /** 이번 실행의 인증 경로. 대화마다 AI 를 고른 대화가 넘긴다. 없으면 앱 기본 연결(currentAuth) */
+  auth?: AgentAuth
 }
 
 // 사용자가 설정에 넣어 둔 내 API 키를 읽는 함수. 메인 프로세스가 주입한다.
@@ -118,7 +120,7 @@ function resolveEnv(auth: AgentAuth): Record<string, string | undefined> | undef
 export function buildQueryOptions(
   input: ProviderInput,
   // 연결 경로에 따른 환경(내 API 키 경로만 ANTHROPIC_API_KEY 를 담는다). 생략하면 현재 연결 기준
-  env: Record<string, string | undefined> | undefined = resolveEnv(currentAuth())
+  env: Record<string, string | undefined> | undefined = resolveEnv(input.auth ?? currentAuth())
 ): Options {
   return {
     env,

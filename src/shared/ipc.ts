@@ -19,6 +19,8 @@ export const IPC = {
   tabUpdated: 'tab:updated', // main → renderer 이벤트
   layoutSet: 'layout:set',
   agentRun: 'agent:run',
+  agentChatEngine: 'agent:chatEngine', // 그 대화에서 고른 AI(Claude/Codex). 없으면 앱 기본 연결
+  agentSetChatEngine: 'agent:setChatEngine',
   agentStop: 'agent:stop',
   agentEvent: 'agent:event', // main → renderer 이벤트
   agentConfirmReply: 'agent:confirmReply',
@@ -133,6 +135,8 @@ export const IPC = {
   aiTestKey: 'ai:testKey', // 모델 목록 1회 호출로 확인, {ok} 만 반환
   aiTaskModels: 'ai:taskModels',
   aiSetTaskModel: 'ai:setTaskModel',
+  aiChatModelMenu: 'ai:chatModelMenu', // 대화 입력줄 모델 메뉴(그 대화에서 고른 AI 기준)
+  aiSetChatModel: 'ai:setChatModel',
   // --- 계정 인증(2b) — 토큰·비밀번호는 어느 방향으로도 돌려주지 않는다 --------
   authState: 'auth:state',
   authSignUp: 'auth:signUp',

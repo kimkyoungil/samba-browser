@@ -17,6 +17,29 @@ export type SubscriptionProviderId = (typeof SUBSCRIPTION_PROVIDERS)[number]
 export const CONNECTION_KEYS = ['claude', 'codex'] as const
 export type ConnectionKey = (typeof CONNECTION_KEYS)[number]
 
+/**
+ * 대화마다 고르는 AI. 대화 입력줄의 'Claude / Codex' 선택이 대화별로 남는다.
+ * - claude: Claude(구독 또는 내 API 키) — 브라우저 조작 도구까지 쓴다
+ * - codex: Codex(ChatGPT 구독, Codex CLI) — 글 대화(브라우저 조작 도구는 아직 없음)
+ * 고르지 않은 대화는 앱 기본 연결(aiProvider)을 따른다
+ */
+export const CHAT_ENGINES = ['claude', 'codex'] as const
+export type ChatEngine = (typeof CHAT_ENGINES)[number]
+
+export function isChatEngine(v: unknown): v is ChatEngine {
+  return typeof v === 'string' && (CHAT_ENGINES as readonly string[]).includes(v)
+}
+
+/** 앱 기본 연결이 어느 AI 계열인지(Codex 구독만 codex, 나머지는 claude) */
+export function engineOfProvider(provider: AiProviderId): ChatEngine {
+  return provider === 'codex_subscription' ? 'codex' : 'claude'
+}
+
+/** 그 AI 를 따로 고른 대화가 모델 목록·기본 모델을 가져올 제공자 */
+export function providerOfEngine(engine: ChatEngine): AiProviderId {
+  return engine === 'codex' ? 'codex_subscription' : 'claude_subscription'
+}
+
 export const API_KEY_VENDORS = ['anthropic', 'openai', 'gemini'] as const
 export type ApiKeyVendor = (typeof API_KEY_VENDORS)[number]
 
@@ -124,6 +147,11 @@ const MODEL_LABELS: Record<string, string> = {
   'claude-opus-5': 'Opus 5',
   'claude-sonnet-5': 'Sonnet 5',
   'claude-haiku-4-5-20251001': 'Haiku 4.5',
+  'gpt-6.1-sol': 'GPT-6.1 Sol',
+  'gpt-6-sol': 'GPT-6 Sol',
+  'gpt-6-astra': 'GPT-6 Astra',
+  'gpt-6-luna': 'GPT-6 Luna',
+  'gpt-5.6-sol': 'GPT-5.6 Sol',
   fable: 'Fable 5.1',
   opus: 'Opus 5.5',
   sonnet: 'Sonnet 5.5',

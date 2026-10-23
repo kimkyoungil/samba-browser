@@ -3,6 +3,7 @@ import type { AgentEvent, ChatDto, ChatMessageDto, HandoffKind } from '@shared/i
 import { RECENT_CHAT_LIMIT, titleFromMessage } from '@shared/chat'
 import { agentImageDataUrl, type AgentImage } from '@shared/agent-image'
 import { DEFAULT_SETTINGS, type AgentEffort } from '@shared/settings'
+import type { ChatEngine } from '@shared/ai'
 
 export interface ChatMessage {
   id: string
@@ -69,7 +70,14 @@ interface ChatState {
   // 사이트가 사람의 추가 확인을 요구해 작업이 멈춰 있는 상태
   handoff: Handoff | null
   authError: 'missing' | 'limit' | null
-  // 입력줄 아래 "모델 · 강도" 선택. 모델의 진실은 설정의 작업별 모델 표 중 '표준' 칸이다
+  // 이 대화의 AI(입력줄 'Claude / Codex'). 대화마다 메인이 기억한다. 새 대화는 마지막으로 고른 AI 를 이어 쓴다
+  engine: ChatEngine
+  // 사용자가 직접 고른 값인지(새 대화를 만들 때 그 대화에 남길지 정한다)
+  engineChosen: boolean
+  // 지금 대화의 AI 를 메인에서 다시 읽는다(대화를 열 때)
+  loadEngine: () => Promise<void>
+  setEngine: (engine: ChatEngine) => Promise<void>
+  // 입력줄 아래 "모델 · 강도" 선택. 모델은 이 대화 AI 의 모델이다(메인이 AI 별로 기억한다)
   model: string
   modelChoices: string[]
   effort: AgentEffort
@@ -119,19 +127,43 @@ export const useChatStore = create<ChatState>((set, get) => ({
   confirm: null,
   handoff: null,
   authError: null,
+  engine: 'claude',
+  engineChosen: false,
+  loadEngine: async () => {
+    const r = await window.samba.agent.chatEngine?.(get().activeChatId)
+    if (!r?.ok) return
+    // 저장된 대화는 그 대화의 값, 새 대화는 사용자가 고른 값이 없을 때만 앱 기본값
+    if (get().activeChatId !== null || !get().engineChosen) set({ engine: r.data.engine })
+    await get().loadModelMenu()
+  },
+  setEngine: async (engine) => {
+    if (get().status === 'running') return
+    set({ engine, engineChosen: true })
+    const chatId = get().activeChatId
+    if (chatId !== null) await window.samba.agent.setChatEngine?.(chatId, engine)
+    await get().loadModelMenu()
+  },
   model: DEFAULT_SETTINGS.taskModels.standard,
   modelChoices: [],
   effort: DEFAULT_SETTINGS.agentEffort,
   loadModelMenu: async () => {
-    const r = await window.samba.ai?.taskModels()
-    if (r?.ok) set({ model: r.data.taskModels.standard, modelChoices: r.data.choices })
+    // 이 대화 AI 의 모델 목록. 옛 메인(메뉴 IPC 없음)이면 앱 기본 연결의 작업별 모델로 떨어진다
+    const engine = get().engine
+    const menu = await window.samba.ai?.chatModelMenu?.(engine)
+    if (menu?.ok) {
+      if (get().engine === engine) set({ model: menu.data.model, modelChoices: menu.data.choices })
+    } else {
+      const r = await window.samba.ai?.taskModels()
+      if (r?.ok) set({ model: r.data.taskModels.standard, modelChoices: r.data.choices })
+    }
     const s = await window.samba.settings?.get()
     if (s?.ok) set({ effort: s.data.agentEffort })
   },
   setModel: async (model) => {
     // 화면을 먼저 바꾸고 저장한다(실패하면 다음 loadModelMenu 에서 되돌아온다)
     set({ model })
-    await window.samba.ai?.setTaskModel('standard', model)
+    if (window.samba.ai?.setChatModel) await window.samba.ai.setChatModel(get().engine, model)
+    else await window.samba.ai?.setTaskModel('standard', model)
   },
   setEffort: async (effort) => {
     set({ effort })
@@ -158,6 +190,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       handoff: null,
       authError: null
     })
+    // 이 대화에서 고른 AI 와 그 모델로 입력줄을 맞춘다
+    void get().loadEngine()
   },
   newChat: () => {
     if (get().status === 'running') return
@@ -184,6 +218,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
   send: async (text, scheduleToken, images) => {
     if (get().status === 'running') return
     const seq = get().runSeq + 1
+    // 보낸 순간 입력줄에 보이던 AI — 새 대화를 만드는 동안 무엇이 바뀌어도 이 값으로 남긴다
+    const engine = get().engine
+    const engineChosen = get().engineChosen
     const previews = images && images.length > 0 ? images.map(agentImageDataUrl) : undefined
     set((s) => ({
       messages: [
@@ -209,6 +246,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const created = await window.samba.chats?.create(titleFromMessage(text) || text.slice(0, 40))
       if (created?.ok) {
         chatId = created.data.id
+        // 새 대화에서 AI 를 직접 골랐으면 그 대화에 먼저 남긴다 — 화면이 이 대화로 넘어가 AI 를
+        // 다시 읽기 전에, 그리고 실행 전에(메인이 이 값으로 경로를 고른다)
+        if (engineChosen) await window.samba.agent.setChatEngine?.(chatId, engine)
         set((s) => ({ activeChatId: created.data.id, chats: [created.data, ...s.chats] }))
       }
     }

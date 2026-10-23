@@ -4,7 +4,12 @@
 // 남아 있어도 연결 기록이 없으면 쓰지 않는다(연결한 적 없는 계정을 몰래 쓰지 않는다).
 // 평문 키는 이 모듈을 지나가지 않는다 — 키가 있는지(boolean)만 본다
 
-import { connectionKeyOf, type AiConnections, type AiProviderId } from '../../shared/ai'
+import {
+  connectionKeyOf,
+  type AiConnections,
+  type AiProviderId,
+  type ChatEngine
+} from '../../shared/ai'
 
 export type AgentAuthMode = 'claude_subscription' | 'codex_subscription' | 'api_key' | 'none'
 
@@ -31,4 +36,23 @@ export function resolveAgentAuth(input: {
   }
   // 서비스 크레딧은 아직 자리만 잡아 둔 카드다
   return { mode: 'none', reason: 'unavailable' }
+}
+
+/**
+ * 대화에서 앱 기본 연결과 다른 AI 를 골랐을 때의 인증 경로. 같은 규칙 — 연결한 구독만 쓴다.
+ * Codex 를 골랐는데 Codex 가 연결 안 됐으면 Claude 로 몰래 돌리지 않고 '연결 필요'로 멈춘다
+ */
+export function resolveEngineAuth(input: {
+  engine: ChatEngine
+  connections: AiConnections
+  hasApiKey: boolean
+}): AgentAuth {
+  const { engine, connections, hasApiKey } = input
+  if (engine === 'codex')
+    return connections.codex?.connected
+      ? { mode: 'codex_subscription' }
+      : { mode: 'none', reason: 'not_connected' }
+  if (connections.claude?.connected) return { mode: 'claude_subscription' }
+  if (hasApiKey) return { mode: 'api_key' }
+  return { mode: 'none', reason: 'not_connected' }
 }

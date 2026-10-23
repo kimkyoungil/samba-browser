@@ -45,7 +45,8 @@ export function ModelEffortMenu(): React.JSX.Element {
   const model = useChatStore((s) => s.model)
   const modelChoices = useChatStore((s) => s.modelChoices)
   const effort = useChatStore((s) => s.effort)
-  const load = useChatStore((s) => s.loadModelMenu)
+  // 이 대화의 AI 를 먼저 읽고(그 AI 의 모델 목록을 띄우려고) 모델 메뉴를 채운다
+  const load = useChatStore((s) => s.loadEngine)
   const setModel = useChatStore((s) => s.setModel)
   const setEffort = useChatStore((s) => s.setEffort)
   const [modelOpen, setModelOpen] = useState(false)

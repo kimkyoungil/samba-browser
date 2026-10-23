@@ -76,7 +76,7 @@ describe('결제 비밀번호 제공자', () => {
     }).id
   }
 
-  it('제공자 값 목록은 10종(무신사페이·알리페이 포함)이고 모르는 값은 site 로 정규화된다', () => {
+  it('제공자 값 목록은 12종(무신사페이·알리페이·롯데카드·웨이신페이 포함)이고 모르는 값은 site 로 정규화된다', () => {
     expect([...PAYMENT_PROVIDERS]).toEqual([
       'site',
       'musinsapay',
@@ -85,6 +85,8 @@ describe('결제 비밀번호 제공자', () => {
       'naver',
       'payco',
       'alipay',
+      'lottecard',
+      'wechat',
       'samsung',
       'apple',
       'other'

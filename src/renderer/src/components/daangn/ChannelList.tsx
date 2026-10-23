@@ -7,6 +7,13 @@ import { accountLabelOf, visibleChannels } from '@renderer/components/daangn/daa
 import { Badge } from '@renderer/components/daangn/AccountPanel'
 
 // 가운데 통합 채팅 목록 — 모든 계정의 채팅을 최근순으로 섞어 보인다(카톡처럼)
+/** 시각만 있는 글이 오늘이 아니면 '어제' 를 붙여 날짜가 맞게 보이게 한다 */
+function lastAtLabel(text: string, lastAt: number): string {
+  if (!/^(오전|오후)\s*\d{1,2}:\d{2}$/.test(text.trim())) return text
+  const startOfToday = new Date().setHours(0, 0, 0, 0)
+  return lastAt > 0 && lastAt < startOfToday ? `어제 ${text}` : text
+}
+
 export function ChannelList(): React.JSX.Element {
   const { t } = useTranslation()
   const accounts = useDaangnStore((s) => s.accounts)
@@ -104,7 +111,7 @@ function ChannelRow({
         <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-[var(--text)]">
           {channel.peerName}
         </span>
-        <span className="shrink-0 text-[11px] text-[var(--text2)]">{channel.lastAtText}</span>
+        <span className="shrink-0 text-[11px] text-[var(--text2)]">{lastAtLabel(channel.lastAtText, channel.lastAt)}</span>
       </span>
       <span className="flex items-center gap-2">
         <span className="min-w-0 flex-1 truncate text-[12px] text-[var(--text2)]">

@@ -1162,12 +1162,8 @@ export class AgentRunner {
           if (failed && kind && retryOnFallbackAccount(kind)) continue
           if (failed && !kind && isContextOverflowError(detail) && resetOverflowedSession())
             continue
-          emit({
-            type: 'status',
-            state: failed ? 'failed' : 'done',
-            toolCalls: counter.count(),
-            message: failed ? (kind ? `auth:${kind}` : detail || msg.subtype) : undefined
-          })
+          // 이어 돌기 안내 글은 끝 상태보다 먼저 보낸다 — 화면은 끝 상태를 받자마자 대기열의 다음 말을
+          // 시작하므로, 뒤에 보내면 그 새 답 말풍선(다른 대화일 수도 있다)에 붙었다(실기 2026-10-24)
           if (silentStop) {
             this.autoContinueLeft -= 1
             emit({ type: 'text', text: '(답 없이 멈춰 자동으로 이어갑니다)' })
@@ -1187,6 +1183,12 @@ export class AgentRunner {
                 .map((sc) => ({ name: sc.name, description: sc.description }))
             })
           }
+          emit({
+            type: 'status',
+            state: failed ? 'failed' : 'done',
+            toolCalls: counter.count(),
+            message: failed ? (kind ? `auth:${kind}` : detail || msg.subtype) : undefined
+          })
         }
       }
     } catch (e) {

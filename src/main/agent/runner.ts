@@ -102,6 +102,19 @@ export interface TranscriptEntry {
 /** 대화 기록 저장 훅. 주입하지 않으면 아무것도 저장하지 않는다 */
 export type TranscriptSink = (chatId: number, entry: TranscriptEntry) => void
 
+/** 일하는 도중 앱을 끄면 그때까지의 답 뒤에 붙는 표시 */
+export const QUIT_NOTE = '(앱을 닫아 작업이 중단됐습니다)'
+
+// 지금 도는 실행의 대화 기록. 앱을 끌 때 saveRunningOnQuit 가 이것을 바로 남긴다
+interface LiveRun {
+  chatId: number | undefined
+  entry: TranscriptEntry
+  // 글자 단위로 흘러오던, 아직 문단으로 확정되지 않은 답
+  partial: string
+  // 이미 기록에 남겼는가(끝날 때와 앱을 끌 때 두 번 남기지 않게)
+  saved: boolean
+}
+
 /** 플레이북 목록 공급자. 주입하지 않으면 플레이북이 전혀 적용되지 않는다 */
 export type PlaybookProvider = () => PlaybookDto[]
 // Codex 백엔드로 이미지가 함께 왔을 때 지시문 끝에 붙이는 안내
@@ -210,6 +223,8 @@ export class AgentRunner {
   private releaseVaultHold: (() => void) | null = null
   // 밖의 하네스가 쥔 도구 세션. 있는 동안은 채팅 실행(run)을 받지 않는다(한 손발이라 동시에 못 돈다)
   private session: ToolSession | null = null
+  // 지금 도는 실행의 대화 기록(앱을 끌 때 바로 남긴다)
+  private liveRun: LiveRun | null = null
   // 동시에 열린 레인 세션 수와 레인별 탭 보기 상태(하네스 계정 동시 처리)
   private laneSessions = 0
   private readonly lanes = new Map<string, LaneState>()
@@ -506,6 +521,28 @@ export class AgentRunner {
   }
 
   /**
+   * 앱을 끄는 중 — 도는 작업이 있으면 그때까지의 대화(흘러오던 답 포함)를 바로 기록에 남기고 멈춘다.
+   * 작업이 끝나며 남기는 기록(run 의 finally)은 앱이 DB 를 닫은 뒤라 남지 못해, 일하는 도중 끈 질문이
+   * 통째로 사라졌다. 앱 종료 순서에서 DB 를 닫기 전에 부른다
+   */
+  saveRunningOnQuit(): void {
+    const live = this.liveRun
+    if (live && !live.saved && live.chatId !== undefined && this.transcript) {
+      live.saved = true
+      const text = [live.entry.text, live.partial].filter((t) => t !== '').join('\n')
+      try {
+        this.transcript(live.chatId, {
+          ...live.entry,
+          text: text === '' ? QUIT_NOTE : `${text}\n${QUIT_NOTE}`
+        })
+      } catch (e: unknown) {
+        console.error('대화 기록 저장 실패', e instanceof Error ? e.message : String(e))
+      }
+    }
+    if (this.abort) this.stop()
+  }
+
+  /**
    * 지시가 시작도 못 하고 거절됐음을 화면에 알린다(run 이 시작 전에 던졌을 때 핸들러가 부른다).
    * 이미 다른 실행이 돌고 있으면 그 실행의 화면 상태를 덮지 않도록 아무것도 보내지 않는다
    */
@@ -573,6 +610,8 @@ export class AgentRunner {
       text: '',
       steps: []
     }
+    const live: LiveRun = { chatId, entry, partial: '', saved: false }
+    this.liveRun = live
     // 모델에 넘길 지시문 = 사용자 글 + 글 파일 내용. 플레이북·사이트 기억은 사용자 글(prompt)만 본다
     const filesText = textFilesBlock(files ?? [])
     const pdfs = (files ?? []).flatMap((f) =>
@@ -645,6 +684,7 @@ export class AgentRunner {
       if (e.type === 'status' && e.state === 'failed' && e.message === 'auth:missing')
         reportAuth(false)
       if (e.type === 'text') entry.text = entry.text ? `${entry.text}\n${e.text}` : e.text
+      if (e.type === 'partial') live.partial = e.text
       if (e.type === 'step') entry.steps.push({ label: e.label, ok: e.ok })
       // 성공이면 완주 경로, 도구를 쓰다 실패(상한·오류)했으면 부분 경로를 남긴다.
       // 연결·인증 문제로 시작도 못 한 실패(auth:*)는 배울 것이 없다. 속도 지표도 여기서 한 줄 적는다
@@ -1035,8 +1075,11 @@ export class AgentRunner {
         this.markAutomationIdle()
         this.clearPending()
       }
-      // 중단으로 끝났어도 그때까지의 대화는 남긴다. 저장 실패가 실행을 깨뜨리지는 않는다
-      if (chatId !== undefined && this.transcript) {
+      // 중단으로 끝났어도 그때까지의 대화는 남긴다. 저장 실패가 실행을 깨뜨리지는 않는다.
+      // 앱을 끄며 이미 남겼으면(saveRunningOnQuit) 다시 남기지 않는다
+      if (this.liveRun === live) this.liveRun = null
+      if (chatId !== undefined && this.transcript && !live.saved) {
+        live.saved = true
         try {
           this.transcript(chatId, entry)
         } catch (e: unknown) {

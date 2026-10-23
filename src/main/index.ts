@@ -18,6 +18,7 @@ import { registerFaviconIpc } from './ipc/favicon'
 import { openDatabase, type Db } from './db/client'
 import type { VaultService } from './vault/service'
 import type { SyncEngineHolder } from './sync/engine'
+import type { AgentRunner } from './agent/runner'
 import { runLoginHarness, writeVaultLocked } from './e2e/login-harness'
 import { chromeUserAgent } from './browser/webstore-ua'
 import { humanBusyInWindow } from './browser/human-activity'
@@ -93,6 +94,7 @@ let windows: WindowManager | undefined
 let db: Db | undefined
 let vault: VaultService | undefined
 let sync: SyncEngineHolder | undefined
+let agent: AgentRunner | undefined
 
 // 종료 순서: vault.dispose()(lock 포함, DB 조회 발생) → db.close() 순으로 해야 한다.
 // 반대로 하면(예전 버그) db.close() 뒤에 창이 닫히며 vault.dispose() → lock() →
@@ -103,6 +105,12 @@ let shuttingDown = false
 function shutdown(): void {
   if (shuttingDown) return
   shuttingDown = true
+  try {
+    // 일하는 도중이면 그때까지의 대화를 DB 를 닫기 전에 남긴다(작업이 끝나며 남기는 기록은 닫힌 뒤라 못 남는다)
+    agent?.saveRunningOnQuit()
+  } catch (e: unknown) {
+    console.error('작업 기록 저장 실패', e)
+  }
   try {
     // 폴링·Realtime 구독을 먼저 끊는다 — 닫히는 DB 에 질의가 더 날아가지 않게
     sync?.current()?.stop()
@@ -151,6 +159,7 @@ app
     const ipc = registerIpc(wm, db)
     vault = ipc.vault
     sync = ipc.sync
+    agent = ipc.agent
     // 하네스 브릿지·AI 가 쓰는 기본 창의 탭 관리자(E2E 하네스도 같은 것을 쓴다)
     const tabs = first.tabs
     // 하네스 모드: 저장된 사이트를 순회하며 자동 로그인을 검증하고 끝나면 앱을 종료한다.

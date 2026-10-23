@@ -199,6 +199,8 @@ export class AgentRunner {
   private historyReader: ((chatId: number) => HistoryMessage[]) | null = null
   // 대화마다 고른 AI(Claude/Codex). 없거나 null 을 돌려주면 앱 기본 연결로 돈다
   private engineRouting: ((chatId: number | undefined) => EngineRoute | null) | null = null
+  // 실행이 구독 로그인 만료로 막혔는지·통했는지 받는 곳. 설정의 연결 카드가 '로그인 만료'를 띄운다
+  private authHealth: ((auth: AgentAuth, ok: boolean) => void) | null = null
   // 실행 중인 작업이 쥔 금고 자동 잠금 보류 해제 함수. stop() 과 run() 의 finally 가
   // 겹쳐 불러도 되도록 해제 함수 자체가 여러 번 호출에 안전하다
   private releaseVaultHold: (() => void) | null = null
@@ -267,6 +269,11 @@ export class AgentRunner {
   /** 대화마다 고른 AI 로 인증 경로·모델을 바꾼다. 주입하지 않으면 모든 대화가 앱 기본 연결로 돈다 */
   setEngineRouting(fn: ((chatId: number | undefined) => EngineRoute | null) | null): void {
     this.engineRouting = fn
+  }
+
+  /** 실행이 구독 로그인 만료로 막히면 false, 성공하면 true 로 알린다(연결 카드의 '로그인 만료' 표시용) */
+  setAuthHealth(fn: ((auth: AgentAuth, ok: boolean) => void) | null): void {
+    this.authHealth = fn
   }
 
   /** 사이트 기억을 붙인다. null 이면 기억 주입·학습·remember_site 가 모두 꺼진다 */
@@ -574,8 +581,21 @@ export class AgentRunner {
     let followUp: string | null = null
     // Claude 구독 계정이 막히면(만료·차단·한도) 예비 계정으로 넘긴다. 도구를 아직 하나도 안 불렀을 때만
     // 같은 지시로 다시 돈다(이미 화면을 건드렸으면 중복 실행 위험 — 다음 지시부터 예비 계정을 쓴다)
-    const retryOnFallbackAccount = (): boolean => {
+    // 이 실행의 구독 로그인이 막혔는지·통했는지 알린다. 예비 계정으로 넘어간 뒤의 결과는 PC 로그인 것이 아니라 알리지 않는다
+    const reportAuth = (ok: boolean, pcLogin = subscriptionFallbackIndex() === 0): void => {
+      if (runAuth.mode !== 'claude_subscription' && runAuth.mode !== 'codex_subscription') return
+      if (runAuth.mode === 'claude_subscription' && !pcLogin) return
+      try {
+        this.authHealth?.(runAuth, ok)
+      } catch {
+        // 표시용 기록이라 실패해도 실행에는 영향을 주지 않는다
+      }
+    }
+    const retryOnFallbackAccount = (kind: 'missing' | 'limit' | null): boolean => {
+      const pcLogin = subscriptionFallbackIndex() === 0
       if (!advanceSubscriptionFallback(runAuth)) return false
+      // PC 로그인이 인증 실패로 막혀 예비 계정으로 넘어갔다 — 이 실행은 끝 상태로 실패를 알리지 않으므로 여기서 남긴다
+      if (kind === 'missing') reportAuth(false, pcLogin)
       if (counter.count() !== 0) return false
       emit({
         type: 'text',
@@ -605,6 +625,10 @@ export class AgentRunner {
     const emit = (e: AgentEvent): void => {
       if (gen !== this.generation) return
       if (e.type === 'status' && e.state !== 'running') this.settledGeneration = gen
+      // 끝난 실행으로 구독 로그인이 살아 있는지 알린다(인증 실패면 '로그인 만료', 성공이면 해제)
+      if (e.type === 'status' && e.state === 'done') reportAuth(true)
+      if (e.type === 'status' && e.state === 'failed' && e.message === 'auth:missing')
+        reportAuth(false)
       if (e.type === 'text') entry.text = entry.text ? `${entry.text}\n${e.text}` : e.text
       if (e.type === 'step') entry.steps.push({ label: e.label, ok: e.ok })
       // 성공이면 완주 경로, 도구를 쓰다 실패(상한·오류)했으면 부분 경로를 남긴다.
@@ -825,6 +849,10 @@ ${CODEX_NO_IMAGE_NOTE}`
             emit({ type: 'partial', text: partial })
           }
         } else if (msg.type === 'assistant') {
+          // SDK 는 API 오류(인증 실패·한도 등)를 어시스턴트 메시지의 error 칸으로 알리고, 결과 메시지에는
+          // 모델 글처럼 싣는다 — 결과의 글은 인증 분류에 넣지 않으므로 여기서 사유로 잡아 둔다
+          // (실기 2026-10-23: "Failed to authenticate: OAuth session expired …" 가 답 글로만 뜨고 카드는 '연결됨')
+          if (msg.error) apiError = msg.error
           // 확정 글이 왔다 — '쓰는 중' 글을 지우고 그 자리에 확정 글을 붙인다
           if (partial !== '') {
             partial = ''
@@ -856,7 +884,7 @@ ${CODEX_NO_IMAGE_NOTE}`
             const kind = classifyAuthError(apiError)
             settled = true
             // abort 하면 finally 가 이어 돌기(followUp)를 막는다 — 스트림만 닫고 빠져나간다
-            if (retryOnFallbackAccount()) break
+            if (retryOnFallbackAccount(kind)) break
             emit({
               type: 'status',
               state: 'failed',
@@ -902,7 +930,7 @@ ${CODEX_NO_IMAGE_NOTE}`
             !entry.steps.some((st) => /넘김|handoff|확인 대기/.test(st.label)) &&
             this.autoContinueLeft > 0
           settled = true
-          if (failed && kind && retryOnFallbackAccount()) continue
+          if (failed && kind && retryOnFallbackAccount(kind)) continue
           if (failed && !kind && isContextOverflowError(detail) && resetOverflowedSession())
             continue
           emit({
@@ -970,7 +998,7 @@ ${CODEX_NO_IMAGE_NOTE}`
           return
         }
         const kind = classifyAuthError(`${message} ${apiError}`)
-        if (kind && retryOnFallbackAccount()) return
+        if (kind && retryOnFallbackAccount(kind)) return
         emit({
           type: 'status',
           state: 'failed',

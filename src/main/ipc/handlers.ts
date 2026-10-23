@@ -1031,6 +1031,19 @@ export function registerIpc(
       hasApiKey: Boolean(apiKeys.masked().anthropic)
     })
   })
+  // 구독 로그인 만료 기록. 실행이 인증 실패로 막히면 그 시각을, 성공하면 지운다 — 카드가 '로그인 만료'를 띄운다
+  // (연결 기록만 고친다. CLI 로그인 파일은 읽지도 쓰지도 않는다)
+  agent.setAuthHealth((auth, ok) => {
+    if (auth.mode !== 'claude_subscription' && auth.mode !== 'codex_subscription') return
+    const s = settings.get()
+    const record = s.aiConnections[connectionKeyOf(auth.mode)]
+    if (!record.connected) return
+    if (ok && record.expiredAt === undefined) return
+    const next = { ...record }
+    if (ok) delete next.expiredAt
+    else next.expiredAt = Date.now()
+    settings.set({ aiConnections: withConnection(s.aiConnections, auth.mode, next) })
+  })
   // 대화마다 고른 AI. 앱 기본 연결과 같은 계열이면 null(종전 그대로 앱 기본 연결로 돈다)
   agent.setEngineRouting((chatId) => {
     const engine = chatEngineOf(chatId)
@@ -1053,6 +1066,7 @@ export function registerIpc(
     setApiKeyResolver(null)
     setAuthResolver(null)
     agent.setEngineRouting(null)
+    agent.setAuthHealth(null)
     setSubscriptionFallbackTokens(null)
   })
 

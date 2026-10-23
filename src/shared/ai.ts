@@ -53,6 +53,7 @@ export type TaskModels = Record<TaskModelKey, string>
  * - connected: 사용자가 직접 연결했고 지금 쓸 수 있다
  * - available: 이 PC 에 CLI 로그인 자격은 있지만 **연결하지 않았다**(에이전트가 쓰지 않는다)
  * - needs_login: CLI 는 있는데 로그인 자격이 없다
+ * - expired: 연결했지만 최근 실행이 로그인 만료(인증 실패)로 막혔고, 그 뒤로 다시 로그인한 흔적이 없다
  * - not_installed: CLI 자체가 없다
  * - unset: 아직 아무것도 넣지 않았다(내 API 키)
  */
@@ -61,6 +62,7 @@ export const AI_PROVIDER_STATES = [
   'available',
   'not_installed',
   'needs_login',
+  'expired',
   'disabled',
   'unset'
 ] as const
@@ -71,6 +73,11 @@ export interface AiConnection {
   connected: boolean
   account?: string
   connectedAt?: number
+  /**
+   * 이 구독으로 돈 실행이 마지막으로 로그인 만료(인증 실패)로 막힌 시각. 실행이 성공하거나 다시 연결하면 지운다.
+   * 카드는 이 시각 뒤에 로그인 파일이 새로 써졌는지(다시 로그인)로 '로그인 만료'를 푼다
+   */
+  expiredAt?: number
 }
 
 export type AiConnections = Record<ConnectionKey, AiConnection>

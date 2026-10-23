@@ -4,15 +4,20 @@
 // 기록(settings.aiConnections)이 있어야 connected 이고, 그 전에는 '연결 가능(available)'
 // 으로만 보이며 에이전트는 그 경로를 쓰지 않는다.
 //
+// 자격 파일이 있어도 로그인이 만료됐을 수 있다(실기 2026-10-23: 카드는 '연결됨'인데 실행은
+// "OAuth session expired and could not be refreshed"). 파일만 봐서는 알 수 없으므로 실행이 인증 실패로
+// 막힌 시각을 연결 기록에 남기고(expiredAt), 그 뒤로 로그인 파일이 새로 써질 때까지 '로그인 만료'로 보인다.
+//
 // 어떤 반환값에도 키·토큰이 담기지 않는다(표시용 계정 문자열과 마스킹 문자열만 실어 보낸다)
 
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { execFile } from 'node:child_process'
 import { resolveCliBin } from './cli-bin'
 import {
   connectionKeyOf,
+  type AiConnection,
   type AiConnections,
   type AiProviderState,
   type AiProviderStatus,
@@ -37,6 +42,16 @@ export const CODEX_CREDENTIAL_PATHS = [join(homedir(), '.codex', 'auth.json')]
 // Claude 는 계정 정보를 ~/.claude.json 의 oauthAccount 에 둔다(자격 파일에는 이메일이 없다)
 export const CLAUDE_ACCOUNT_PATH = join(homedir(), '.claude.json')
 export const CODEX_ACCOUNT_PATH = join(homedir(), '.codex', 'auth.json')
+
+// 다시 로그인하면 새로 써지는 로그인 파일. ~/.claude.json 은 CLI 가 실행할 때마다 고쳐 쓰므로(프로젝트 기록 등)
+// 다시 로그인한 흔적으로 보지 않는다
+export const LOGIN_FILE: Record<SubscriptionProviderId, string> = {
+  claude_subscription: CLAUDE_CREDENTIAL_PATHS[0],
+  codex_subscription: CODEX_CREDENTIAL_PATHS[0]
+}
+
+// 인증 실패 직후 CLI 가 로그인 파일을 정리하며 고쳐 쓰는 몫은 다시 로그인으로 보지 않는다
+export const RELOGIN_GRACE_MS = 10_000
 
 /** 구독 경로별 실행 파일 이름 · 자격 파일 자리 · 로그인 명령 */
 export const SUBSCRIPTION_CLI: Record<
@@ -63,6 +78,8 @@ export interface ProviderProbes {
   runVersion: (provider: SubscriptionProviderId) => Promise<boolean>
   /** 표시용 계정 문자열(이메일 등). 못 읽으면 null — 토큰은 절대 돌려주지 않는다 */
   readAccount: (provider: SubscriptionProviderId) => string | null
+  /** 파일의 마지막 수정 시각(ms). 없거나 못 읽으면 null — 파일 내용은 읽지 않는다 */
+  fileMtime?: (path: string) => number | null
 }
 
 export function defaultProbes(): ProviderProbes {
@@ -80,7 +97,14 @@ export function defaultProbes(): ProviderProbes {
         )
         child.on('error', () => resolve(false))
       }),
-    readAccount: (provider) => readAccountFromDisk(provider)
+    readAccount: (provider) => readAccountFromDisk(provider),
+    fileMtime: (path) => {
+      try {
+        return statSync(path).mtimeMs
+      } catch {
+        return null
+      }
+    }
   }
 }
 
@@ -161,8 +185,23 @@ export async function probeSubscription(
 }
 
 /**
+ * 연결된 구독이 최근 실행에서 로그인 만료로 막혔고, 그 뒤로 다시 로그인한 흔적(로그인 파일 갱신)이 없는가.
+ * 수정 시각을 못 읽으면 만료로 둔다 — 실행이 성공하거나 다시 연결하면 기록이 지워진다
+ */
+export function loginExpired(
+  provider: SubscriptionProviderId,
+  record: AiConnection,
+  probes: ProviderProbes
+): boolean {
+  if (record.expiredAt === undefined) return false
+  const mtime = probes.fileMtime?.(LOGIN_FILE[provider]) ?? null
+  return mtime === null || mtime <= record.expiredAt + RELOGIN_GRACE_MS
+}
+
+/**
  * 구독 카드 상태.
- * 설치 안 됨 → 자격 없음(로그인 필요) → 자격 있고 미연결(연결 가능) → 연결됨 순으로 판정한다
+ * 설치 안 됨 → 자격 없음(로그인 필요) → 자격 있고 미연결(연결 가능) → 연결됨 순으로 판정한다.
+ * 연결됐어도 최근 실행이 로그인 만료로 막혔으면 '로그인 만료'다
  */
 export async function detectSubscription(
   provider: SubscriptionProviderId,
@@ -175,15 +214,17 @@ export async function detectSubscription(
   let state: AiProviderState
   if (!installed) state = 'not_installed'
   else if (!hasCredential) state = 'needs_login'
-  else state = record.connected ? 'connected' : 'available'
-  // 연결된 카드는 저장해 둔 계정을, 아직 미연결이면 지금 파일에서 읽은 계정을 보여 준다
-  const account = state === 'connected' ? (record.account ?? undefined) : undefined
+  else if (!record.connected) state = 'available'
+  else state = loginExpired(provider, record, probes) ? 'expired' : 'connected'
+  // 연결된 카드(만료 포함)는 저장해 둔 계정을, 아직 미연결이면 지금 파일에서 읽은 계정을 보여 준다
+  const linked = state === 'connected' || state === 'expired'
+  const account = linked ? (record.account ?? undefined) : undefined
   const preview = state === 'available' ? (probes.readAccount(provider) ?? undefined) : undefined
   return {
     id: provider,
     state,
     maskedKeys: {},
-    connected: state === 'connected',
+    connected: linked,
     account: account ?? preview
   }
 }

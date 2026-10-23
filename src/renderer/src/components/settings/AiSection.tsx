@@ -84,6 +84,17 @@ export function AiSection(): React.JSX.Element {
         {status?.state === 'available' && (
           <p className="text-[11.5px] text-[var(--text2)]">{t('ai.availableHint')}</p>
         )}
+        {/* 최근 실행이 로그인 만료로 막혔다 — 터미널에서 다시 로그인하면 카드가 저절로 '연결됨'으로 돌아온다 */}
+        {status?.state === 'expired' && (
+          <>
+            <p className="text-[11.5px] text-[#b45309]">{t('ai.expiredHint')}</p>
+            <div>
+              <PrimaryButton disabled={ai.busy !== null} onClick={() => void ai.relogin(provider)}>
+                {t('ai.relogin')}
+              </PrimaryButton>
+            </div>
+          </>
+        )}
         {status?.state === 'connected' && ai.usage[provider] && (
           <UsageRows usage={ai.usage[provider] as AiUsage} />
         )}

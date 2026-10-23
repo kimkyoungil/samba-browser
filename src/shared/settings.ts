@@ -305,7 +305,8 @@ const aiConnectionSchema = z
   .object({
     connected: z.boolean().catch(false),
     account: z.string().optional().catch(undefined),
-    connectedAt: z.number().optional().catch(undefined)
+    connectedAt: z.number().optional().catch(undefined),
+    expiredAt: z.number().optional().catch(undefined)
   })
   .catch({ connected: false })
 

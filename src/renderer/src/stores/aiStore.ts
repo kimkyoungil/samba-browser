@@ -37,6 +37,8 @@ interface AiStoreState {
   connect: (provider: SubscriptionProviderId, openTerminal?: boolean) => Promise<void>
   disconnect: (provider: SubscriptionProviderId) => Promise<void>
   dismissLoginHint: () => void
+  /** 로그인 만료 카드의 [다시 로그인] — 로그인 안내를 띄우고 터미널에서 로그인 명령을 연다(연결 기록은 그대로) */
+  relogin: (provider: SubscriptionProviderId) => Promise<void>
   setProvider: (id: AiProviderId) => Promise<void>
   setApiKey: (vendor: ApiKeyVendor, key: string) => Promise<void>
   testKey: (vendor: ApiKeyVendor, key: string) => Promise<void>
@@ -135,6 +137,11 @@ export const useAiStore = create<AiStoreState>((set, get) => ({
   },
 
   dismissLoginHint: () => set({ loginHint: null }),
+
+  relogin: async (provider) => {
+    set({ loginHint: { provider, reason: 'needs_login' } })
+    await get().connect(provider, true)
+  },
 
   setProvider: async (id) => {
     const r = await window.samba.ai.setProvider(id)

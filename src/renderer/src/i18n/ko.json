@@ -388,6 +388,7 @@
       "serviceCreditSoon": "준비 중",
       "connected": "연결됨",
       "needsLogin": "로그인 필요",
+      "expired": "로그인 만료",
       "notInstalled": "설치되지 않음",
       "unset": "연결 안 됨",
       "keyKept": "키는 이 PC 에만 암호화되어 저장되며 동기화되지 않아요",
@@ -403,7 +404,8 @@
       "available": "연결 가능",
       "connect": "연결",
       "disconnect": "연결 해지",
-      "notConnectedShort": "연결 필요"
+      "notConnectedShort": "연결 필요",
+      "expiredShort": "다시 로그인 필요"
     }
   },
   "capture": {
@@ -1185,6 +1187,8 @@
     "loginNeededDetail": "터미널 창에서 로그인한 뒤 [다시 연결] 을 눌러 주세요. 앱은 아이디·비밀번호를 대신 입력하지 않아요",
     "openTerminal": "터미널 열기",
     "switchAccount": "다른 계정으로 바꾸기",
+    "expiredHint": "최근 실행이 로그인 만료로 막혔어요. [다시 로그인] 을 눌러 터미널에서 로그인하면 다시 쓸 수 있어요",
+    "relogin": "다시 로그인",
     "usage": {
       "session": "5시간 세션",
       "weeklyAll": "주간 전체",

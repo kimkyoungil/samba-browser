@@ -388,6 +388,7 @@
       "serviceCreditSoon": "Coming soon",
       "connected": "Connected",
       "needsLogin": "Sign-in required",
+      "expired": "Sign-in expired",
       "notInstalled": "Not installed",
       "unset": "Not connected",
       "keyKept": "Your key is encrypted on this PC only and is never synced",
@@ -403,7 +404,8 @@
       "available": "Available",
       "connect": "Connect",
       "disconnect": "Disconnect",
-      "notConnectedShort": "Not connected"
+      "notConnectedShort": "Not connected",
+      "expiredShort": "Sign in again"
     }
   },
   "capture": {
@@ -1185,6 +1187,8 @@
     "loginNeededDetail": "Log in from the terminal window, then press Reconnect. The app never types your credentials for you",
     "openTerminal": "Open terminal",
     "switchAccount": "Switch account",
+    "expiredHint": "The last run was blocked because the sign-in expired. Press [Sign in again] and sign in in the terminal to use it again",
+    "relogin": "Sign in again",
     "usage": {
       "session": "5-hour session",
       "weeklyAll": "Weekly (all)",

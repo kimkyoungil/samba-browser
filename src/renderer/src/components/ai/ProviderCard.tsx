@@ -30,6 +30,7 @@ const STATE_LABEL_KEYS: Record<AiProviderState, string> = {
   available: 'settings.ai.available',
   not_installed: 'settings.ai.notInstalled',
   needs_login: 'settings.ai.needsLogin',
+  expired: 'settings.ai.expired',
   disabled: 'settings.ai.serviceCreditSoon',
   unset: 'settings.ai.unset'
 }
@@ -72,7 +73,13 @@ export function ProviderCard({
         </div>
         <StatusBadge
           label={t(STATE_LABEL_KEYS[state])}
-          tone={state === 'connected' ? 'strong' : state === 'not_installed' ? 'warn' : 'neutral'}
+          tone={
+            state === 'connected'
+              ? 'strong'
+              : state === 'not_installed' || state === 'expired'
+                ? 'warn'
+                : 'neutral'
+          }
         />
       </div>
 
@@ -80,7 +87,8 @@ export function ProviderCard({
 
       {!disabled && (
         <div className="mt-3 flex flex-wrap items-center gap-2">
-          {connectable && state !== 'connected' && (
+          {/* 로그인 만료 카드는 [연결] 대신 카드 안의 [다시 로그인] 을 쓴다 — 연결을 다시 눌러도 로그인은 살아나지 않는다 */}
+          {connectable && state !== 'connected' && state !== 'expired' && (
             <button
               type="button"
               onClick={onConnect}
@@ -90,7 +98,7 @@ export function ProviderCard({
               {t('settings.ai.connect')}
             </button>
           )}
-          {connectable && state === 'connected' && (
+          {connectable && (state === 'connected' || state === 'expired') && (
             <button
               type="button"
               onClick={onDisconnect}

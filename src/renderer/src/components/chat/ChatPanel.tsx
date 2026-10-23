@@ -42,13 +42,32 @@ export function ChatPanel(): React.JSX.Element {
     engineOfProvider(provider) === engine
       ? provider
       : engine === 'claude' &&
-          providers.find((p) => p.id === otherProvider)?.state !== 'connected' &&
+          !['connected', 'expired'].includes(
+            providers.find((p) => p.id === otherProvider)?.state ?? ''
+          ) &&
           providers.find((p) => p.id === 'api_key')?.state === 'connected'
         ? 'api_key'
         : otherProvider
   const status = providers.find((p) => p.id === badgeProvider)
   // 구독 카드는 connected 일 때만, 내 API 키는 키가 있을 때만 쓸 수 있다
   const usable = status?.state === 'connected'
+  // 연결은 했지만 최근 실행이 로그인 만료로 막혔다 — '연결됨' 대신 '다시 로그인 필요'를 띄운다
+  const expired = status?.state === 'expired'
+  // 실행이 인증 실패로 끝났거나, 만료 상태에서 실행이 통했으면 연결 상태를 다시 읽는다.
+  // 만료인 동안에는 창에 돌아올 때마다(터미널에서 다시 로그인하고 오는 길) 다시 읽는다
+  const runStatus = useChatStore((s) => s.status)
+  const authError = useChatStore((s) => s.authError)
+  useEffect(() => {
+    if ((runStatus === 'failed' && authError === 'missing') || (runStatus === 'done' && expired))
+      void loadAi()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [runStatus, authError])
+  useEffect(() => {
+    if (!expired) return
+    const recheck = (): void => void loadAi()
+    window.addEventListener('focus', recheck)
+    return () => window.removeEventListener('focus', recheck)
+  }, [expired, loadAi])
   // 첫 실행 안내 — 연결된 제공자가 하나도 없으면 설정으로 가는 링크를 한 줄 보여 준다.
   // providers 가 아직 비어 있는 로딩 중에는 띄우지 않는다
   const noneConnected = providers.length > 0 && !providers.some((p) => p.state === 'connected')
@@ -65,7 +84,17 @@ export function ChatPanel(): React.JSX.Element {
             }
           />
           {t(PROVIDER_LABEL_KEYS[badgeProvider])}
-          {!usable && ` · ${t('settings.ai.notConnectedShort')}`}
+          {expired ? (
+            <button
+              type="button"
+              onClick={() => openSettings('ai')}
+              className="font-medium text-[#b45309] underline-offset-2 hover:underline"
+            >
+              · {t('settings.ai.expiredShort')}
+            </button>
+          ) : (
+            !usable && ` · ${t('settings.ai.notConnectedShort')}`
+          )}
           <button
             type="button"
             title={t('chat.collapsePanel')}

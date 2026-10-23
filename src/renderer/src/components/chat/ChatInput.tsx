@@ -1,9 +1,9 @@
 import type React from 'react'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ArrowUp, Square, X } from 'lucide-react'
+import { ArrowUp, FileText, Square, X } from 'lucide-react'
 import { useChatStore } from '@renderer/stores/chatStore'
-import { imageFilesOf, readAgentImage } from '@renderer/lib/paste-image'
+import { filesOf, readDroppedFile } from '@renderer/lib/drop-file'
 import {
   addToHistory,
   draftCursor,
@@ -13,6 +13,11 @@ import {
   type HistoryCursor
 } from '@renderer/lib/input-history'
 import { AGENT_IMAGE_MAX_COUNT, agentImageDataUrl, type AgentImage } from '@shared/agent-image'
+import {
+  AGENT_FILE_MAX_COUNT,
+  AGENT_TEXT_FILES_TOTAL_MAX_CHARS,
+  type AgentFile
+} from '@shared/agent-file'
 import { PermissionMenu } from './PermissionMenu'
 import { ModelEffortMenu } from './ModelEffortMenu'
 import { EngineMenu } from './EngineMenu'
@@ -25,8 +30,10 @@ export function ChatInput(): React.JSX.Element {
   const { send, status, stop, queue, enqueue, unqueue } = useChatStore()
   const running = status === 'running'
   const [text, setText] = useState('')
-  // 클립보드에서 붙여 넣은 이미지. 보내면 비운다
+  // 클립보드에서 붙여 넣거나 끌어다 놓은 이미지. 보내면 비운다
   const [images, setImages] = useState<AgentImage[]>([])
+  // 붙여 넣거나 끌어다 놓은 파일(PDF·글 파일). 보내면 비운다
+  const [files, setFiles] = useState<AgentFile[]>([])
   const [note, setNote] = useState('')
   // 보낸 문장 이력 — ↑/↓ 로 다시 꺼낸다(터미널과 같은 동작)
   const [history, setHistory] = useState<string[]>(loadInputHistory)
@@ -50,53 +57,97 @@ export function ChatInput(): React.JSX.Element {
         const back = d.images
         setImages((prev) => [...back, ...prev].slice(0, AGENT_IMAGE_MAX_COUNT))
       }
+      if (d.files && d.files.length > 0) {
+        const back = d.files
+        setFiles((prev) => [...back, ...prev].slice(0, AGENT_FILE_MAX_COUNT))
+      }
     }
     queueMicrotask(take)
     return useChatStore.subscribe((s) => {
       if (s.draftReturn) take()
     })
   }, [])
+  // 붙여 넣거나 끌어다 놓은 파일을 첨부로 읽는다. 사진은 사진 칸, PDF·글 파일은 파일 칸으로.
+  // 개수·크기를 넘거나 못 읽는 형식이면 붙이지 않고 이유를 한 줄 띄운다
+  const attach = async (list: File[]): Promise<void> => {
+    const addedImages: AgentImage[] = []
+    const addedFiles: AgentFile[] = []
+    let error = ''
+    let textTotal = files.reduce((n, f) => n + (f.kind === 'text' ? f.text.length : 0), 0)
+    for (const file of list) {
+      const r = await readDroppedFile(file)
+      if ('error' in r) {
+        error = t(r.error === 'too-large' ? 'chat.fileTooLarge' : 'chat.fileUnsupported', {
+          name: file.name
+        })
+        continue
+      }
+      if ('image' in r) {
+        if (images.length + addedImages.length >= AGENT_IMAGE_MAX_COUNT) {
+          error = t('chat.imageTooMany', { max: AGENT_IMAGE_MAX_COUNT })
+          continue
+        }
+        addedImages.push(r.image)
+        continue
+      }
+      if (files.length + addedFiles.length >= AGENT_FILE_MAX_COUNT) {
+        error = t('chat.fileTooMany', { max: AGENT_FILE_MAX_COUNT })
+        continue
+      }
+      if (r.file.kind === 'text') {
+        if (textTotal + r.file.text.length > AGENT_TEXT_FILES_TOTAL_MAX_CHARS) {
+          error = t('chat.fileTooLarge', { name: file.name })
+          continue
+        }
+        textTotal += r.file.text.length
+      }
+      addedFiles.push(r.file)
+    }
+    if (addedImages.length > 0) setImages((prev) => [...prev, ...addedImages])
+    if (addedFiles.length > 0) setFiles((prev) => [...prev, ...addedFiles])
+    setNote(error)
+  }
+  // 대화창 아무 데나 끌어다 놓은 파일을 받는다(ChatPanel 이 스토어에 넣어 둔다)
+  const attachRef = useRef(attach)
+  useEffect(() => {
+    attachRef.current = attach
+  })
+  useEffect(() => {
+    const take = (): void => {
+      const dropped = useChatStore.getState().takeDropped()
+      if (dropped) void attachRef.current(dropped)
+    }
+    queueMicrotask(take)
+    return useChatStore.subscribe((s) => {
+      if (s.dropped) take()
+    })
+  }, [])
   const submit = (): void => {
     const v = text.trim()
-    // 그림만 붙이고 글이 없어도 보낼 수 있다(모델이 그림을 보고 묻게)
-    if (!v && images.length === 0) return
+    // 그림·파일만 붙이고 글이 없어도 보낼 수 있다(모델이 그것을 보고 묻게)
+    if (!v && images.length === 0 && files.length === 0) return
     const nextHistory = addToHistory(history, v)
     setHistory(nextHistory)
     setCursor(draftCursor(nextHistory))
     saveInputHistory(nextHistory)
     setText('')
     setImages([])
+    setFiles([])
     setNote('')
     const attached = images.length > 0 ? images : undefined
+    const attachedFiles = files.length > 0 ? files : undefined
     // 일하는 중이면 대기열에 둔다 — 지금 작업이 끝나면 이어서 보낸다
-    if (running) enqueue(v, attached)
-    else void send(v, undefined, attached)
+    if (running) enqueue(v, attached, attachedFiles)
+    else void send(v, undefined, attached, attachedFiles)
   }
-  // 붙여넣기에 이미지가 들어 있으면 글 대신 그림으로 받는다(텍스트 붙여넣기는 그대로)
-  const onPaste = async (e: React.ClipboardEvent<HTMLTextAreaElement>): Promise<void> => {
-    const files = imageFilesOf(e.clipboardData)
-    if (files.length === 0) return
+  // 붙여넣기에 그림·파일이 들어 있으면 글 대신 첨부로 받는다(텍스트 붙여넣기는 그대로)
+  const onPaste = (e: React.ClipboardEvent<HTMLTextAreaElement>): void => {
+    const pasted = filesOf(e.clipboardData)
+    if (pasted.length === 0) return
     e.preventDefault()
-    const room = AGENT_IMAGE_MAX_COUNT - images.length
-    if (room <= 0) {
-      setNote(t('chat.imageTooMany', { max: AGENT_IMAGE_MAX_COUNT }))
-      return
-    }
-    const added: AgentImage[] = []
-    let error = ''
-    for (const file of files.slice(0, room)) {
-      const r = await readAgentImage(file)
-      if (typeof r === 'string') {
-        error = r === 'too-large' ? t('chat.imageTooLarge') : ''
-        continue
-      }
-      added.push(r)
-    }
-    if (files.length > room) error = t('chat.imageTooMany', { max: AGENT_IMAGE_MAX_COUNT })
-    setImages((prev) => [...prev, ...added])
-    setNote(error)
+    void attach(pasted)
   }
-  const canSend = text.trim() !== '' || images.length > 0
+  const canSend = text.trim() !== '' || images.length > 0 || files.length > 0
   return (
     <div className="border-t border-black/5 p-3">
       {queue.length > 0 && (
@@ -110,7 +161,10 @@ export function ChatInput(): React.JSX.Element {
                 {t('chat.queued')}
               </span>
               <span className="min-w-0 flex-1 truncate">
-                {q.text || t('chat.imagePasted', { n: q.images?.length ?? 0 })}
+                {q.text ||
+                  (q.files && q.files.length > 0
+                    ? q.files.map((f) => f.name).join(', ')
+                    : t('chat.imagePasted', { n: q.images?.length ?? 0 }))}
               </span>
               <button
                 type="button"
@@ -149,6 +203,29 @@ export function ChatInput(): React.JSX.Element {
           </span>
         </div>
       )}
+      {files.length > 0 && (
+        <div className="mb-2 flex flex-wrap items-center gap-1.5">
+          {files.map((f, i) => (
+            <span
+              key={i}
+              title={f.name}
+              className="flex max-w-[220px] items-center gap-1.5 rounded-lg border border-[var(--line)] bg-white px-2 py-1 text-[11.5px] text-[var(--text2)]"
+            >
+              <FileText className="h-3.5 w-3.5 shrink-0" />
+              <span className="min-w-0 truncate">{f.name}</span>
+              <button
+                type="button"
+                aria-label={t('chat.fileRemove')}
+                title={t('chat.fileRemove')}
+                onClick={() => setFiles((prev) => prev.filter((_, k) => k !== i))}
+                className="flex h-4 w-4 shrink-0 items-center justify-center rounded text-[var(--text3)] hover:bg-black/5 hover:text-[var(--text)]"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
       {note && <p className="mb-1.5 text-[11px] text-[#b91c1c]">{note}</p>}
       <div className="flex items-end gap-2 rounded-xl border border-[var(--line)] bg-[var(--bg)] px-3 py-2">
         <textarea
@@ -160,7 +237,7 @@ export function ChatInput(): React.JSX.Element {
             // 직접 고치기 시작하면 그 글이 새 '쓰던 글'이다
             setCursor(draftCursor(history))
           }}
-          onPaste={(e) => void onPaste(e)}
+          onPaste={onPaste}
           onKeyDown={(e) => {
             if (e.nativeEvent.isComposing) return
             // Enter 는 보내기, Shift+Enter 는 줄바꿈(클로드 웹과 같다)

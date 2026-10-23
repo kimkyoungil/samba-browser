@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import type { AgentEvent, ChatDto, ChatMessageDto, HandoffKind } from '@shared/ipc'
 import { RECENT_CHAT_LIMIT, titleFromMessage } from '@shared/chat'
 import { agentImageDataUrl, type AgentImage } from '@shared/agent-image'
+import type { AgentFile } from '@shared/agent-file'
 import { DEFAULT_SETTINGS, type AgentEffort } from '@shared/settings'
 import type { ChatEngine } from '@shared/ai'
 
@@ -14,12 +15,15 @@ export interface ChatMessage {
   images?: string[]
   // 글자 단위로 흘러오는 중인 답(아직 확정 전). text 뒤에 이어서 보여 준다
   partial?: string
+  // 사용자가 붙인 파일 이름(사진 말고). 이 세션 화면에만 있다 — 저장된 기록에는 '📎 이름' 한 줄로 남는다
+  files?: string[]
 }
 
 // 일하는 중에 보낸 다음 말. 지금 작업이 끝나면 차례로 보낸다
 export interface QueuedMessage {
   text: string
   images?: AgentImage[]
+  files?: AgentFile[]
 }
 export interface Step {
   label: string
@@ -94,14 +98,23 @@ interface ChatState {
   // 대화를 지운다(삭제 표식). 화면에 열려 있었으면 새 대화로 돌아간다
   removeChat: (chatId: number) => Promise<void>
   /** scheduleToken 은 예약이 보낸 실행임을 메인에 알리는 표식이다(사용자 입력에는 없다) */
-  send: (text: string, scheduleToken?: string, images?: AgentImage[]) => Promise<void>
+  send: (
+    text: string,
+    scheduleToken?: string,
+    images?: AgentImage[],
+    files?: AgentFile[]
+  ) => Promise<void>
   // 일하는 중에 보낸 말. 완료되면 맨 앞부터 하나씩 보내고, 중단·실패면 draftReturn 으로 입력칸에 돌려준다
   queue: QueuedMessage[]
-  enqueue: (text: string, images?: AgentImage[]) => void
+  enqueue: (text: string, images?: AgentImage[], files?: AgentFile[]) => void
   unqueue: (index: number) => void
   // 중단·실패로 못 보낸 대기 글. 입력칸이 takeDraftReturn 으로 받아 간다
   draftReturn: QueuedMessage | null
   takeDraftReturn: () => QueuedMessage | null
+  // 대화창에 끌어다 놓은 파일. 입력줄이 takeDropped 로 받아 첨부한다
+  dropped: File[] | null
+  dropFiles: (files: File[]) => void
+  takeDropped: () => File[] | null
   stop: () => Promise<void>
   reply: (requestId: string, approved: boolean) => void
   // 넘김 카드 응답 — skip=true 는 건너뛰고 계속, false 는 작업 중단
@@ -215,17 +228,24 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set((s) => ({ chats: s.chats.filter((c) => c.id !== chatId) }))
     if (get().activeChatId === chatId) get().newChat()
   },
-  send: async (text, scheduleToken, images) => {
+  send: async (text, scheduleToken, images, files) => {
     if (get().status === 'running') return
     const seq = get().runSeq + 1
     // 보낸 순간 입력줄에 보이던 AI — 새 대화를 만드는 동안 무엇이 바뀌어도 이 값으로 남긴다
     const engine = get().engine
     const engineChosen = get().engineChosen
     const previews = images && images.length > 0 ? images.map(agentImageDataUrl) : undefined
+    const fileNames = files && files.length > 0 ? files.map((f) => f.name) : undefined
     set((s) => ({
       messages: [
         ...s.messages,
-        { id: nid(), role: 'user', text, ...(previews ? { images: previews } : {}) },
+        {
+          id: nid(),
+          role: 'user',
+          text,
+          ...(previews ? { images: previews } : {}),
+          ...(fileNames ? { files: fileNames } : {})
+        },
         { id: nid(), role: 'ai', text: '', steps: [] }
       ],
       runSeq: seq,
@@ -261,23 +281,41 @@ export const useChatStore = create<ChatState>((set, get) => ({
           ? [text]
           : [text, chatId]
         : [text, chatId ?? undefined, scheduleToken]
-    // 이미지가 있을 때만 네 번째 인자를 붙인다(평소 경로의 호출 모양을 그대로 둔다)
+    // 이미지·파일이 있을 때만 네·다섯 번째 인자를 붙인다(평소 경로의 호출 모양을 그대로 둔다)
     const r =
-      images && images.length > 0
-        ? await window.samba.agent.run(text, chatId ?? undefined, scheduleToken, images)
-        : await window.samba.agent.run(...args)
+      files && files.length > 0
+        ? await window.samba.agent.run(text, chatId ?? undefined, scheduleToken, images, files)
+        : images && images.length > 0
+          ? await window.samba.agent.run(text, chatId ?? undefined, scheduleToken, images)
+          : await window.samba.agent.run(...args)
     if (!r.ok && get().runSeq === seq) set({ status: 'failed', currentLabel: r.error, retry: null })
   },
   queue: [],
-  enqueue: (text, images) =>
+  enqueue: (text, images, files) =>
     set((s) => ({
-      queue: [...s.queue, images && images.length > 0 ? { text, images } : { text }]
+      queue: [
+        ...s.queue,
+        {
+          text,
+          ...(images && images.length > 0 ? { images } : {}),
+          ...(files && files.length > 0 ? { files } : {})
+        }
+      ]
     })),
   unqueue: (index) => set((s) => ({ queue: s.queue.filter((_, i) => i !== index) })),
   draftReturn: null,
   takeDraftReturn: () => {
     const d = get().draftReturn
     if (d) set({ draftReturn: null })
+    return d
+  },
+  dropped: null,
+  dropFiles: (files) => {
+    if (files.length > 0) set((s) => ({ dropped: [...(s.dropped ?? []), ...files] }))
+  },
+  takeDropped: () => {
+    const d = get().dropped
+    if (d) set({ dropped: null })
     return d
   },
   stop: async () => {
@@ -383,7 +421,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
                   .map((q) => q.text)
                   .filter(Boolean)
                   .join('\n'),
-                images: draftParts.flatMap((q) => q.images ?? [])
+                images: draftParts.flatMap((q) => q.images ?? []),
+                files: draftParts.flatMap((q) => q.files ?? [])
               }
             }
           : {}),
@@ -396,7 +435,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         handoff: done ? null : get().handoff
       })
       // 상태가 끝으로 바뀐 뒤에 보낸다(send 는 실행 중이면 받지 않는다). 메인은 앞 실행의 뒷정리를 기다렸다가 시작한다
-      if (next) void get().send(next.text, undefined, next.images)
+      if (next) void get().send(next.text, undefined, next.images, next.files)
     }
   }
 }))

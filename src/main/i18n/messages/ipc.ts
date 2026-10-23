@@ -5,6 +5,8 @@ export const ipcMessages = defineMessages({
   ko: {
     'ipc.imagesInvalid':
       '붙여 넣은 이미지를 보낼 수 없어요 (PNG·JPEG·WebP·GIF, 한 장 5MB, 최대 4장)',
+    'ipc.filesInvalid':
+      '첨부한 파일을 보낼 수 없어요 (글 파일 한 개 20만 자·합계 30만 자, PDF 10MB, 최대 5개)',
     'ipc.pageConfirm': '페이지 확인: {message}',
     'ipc.saveFolderOutsideHome': '저장 폴더는 홈 폴더 안에서만 지정할 수 있어요',
     'ipc.unknownSubscriptionProvider': '알 수 없는 구독 경로',
@@ -24,6 +26,8 @@ export const ipcMessages = defineMessages({
   en: {
     'ipc.imagesInvalid':
       'The pasted image cannot be sent (PNG, JPEG, WebP or GIF, 5MB each, up to 4)',
+    'ipc.filesInvalid':
+      'The attached files cannot be sent (text files 200k characters each, 300k in total, PDF 10MB, up to 5)',
     'ipc.pageConfirm': 'Page confirmation: {message}',
     'ipc.saveFolderOutsideHome': 'The save folder must be inside your home folder',
     'ipc.unknownSubscriptionProvider': 'Unknown subscription provider',

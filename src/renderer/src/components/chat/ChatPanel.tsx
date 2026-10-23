@@ -1,5 +1,5 @@
 import type React from 'react'
-import { useEffect } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useChatStore } from '@renderer/stores/chatStore'
 import { useAiStore } from '@renderer/stores/aiStore'
@@ -71,8 +71,45 @@ export function ChatPanel(): React.JSX.Element {
   // 첫 실행 안내 — 연결된 제공자가 하나도 없으면 설정으로 가는 링크를 한 줄 보여 준다.
   // providers 가 아직 비어 있는 로딩 중에는 띄우지 않는다
   const noneConnected = providers.length > 0 && !providers.some((p) => p.state === 'connected')
+  // 파일을 대화창 위로 끌고 오는 중인가(안쪽 요소를 넘나들 때마다 들고 나므로 횟수로 센다)
+  const dropFiles = useChatStore((s) => s.dropFiles)
+  const [dragging, setDragging] = useState(false)
+  const dragDepth = useRef(0)
+  const hasFiles = (e: React.DragEvent): boolean =>
+    Array.from(e.dataTransfer.types).includes('Files')
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-t-2xl border border-[var(--line)] bg-white shadow-[0_1px_2px_rgba(0,0,0,.04),0_8px_24px_rgba(0,0,0,.06)]">
+    <div
+      onDragEnter={(e) => {
+        if (!hasFiles(e)) return
+        e.preventDefault()
+        dragDepth.current += 1
+        setDragging(true)
+      }}
+      onDragOver={(e) => {
+        if (!hasFiles(e)) return
+        // 막지 않으면 놓는 순간 앱 화면이 그 파일로 넘어간다
+        e.preventDefault()
+        e.dataTransfer.dropEffect = 'copy'
+      }}
+      onDragLeave={(e) => {
+        if (!hasFiles(e)) return
+        dragDepth.current = Math.max(0, dragDepth.current - 1)
+        if (dragDepth.current === 0) setDragging(false)
+      }}
+      onDrop={(e) => {
+        if (!hasFiles(e)) return
+        e.preventDefault()
+        dragDepth.current = 0
+        setDragging(false)
+        dropFiles(Array.from(e.dataTransfer.files))
+      }}
+      className="relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-t-2xl border border-[var(--line)] bg-white shadow-[0_1px_2px_rgba(0,0,0,.04),0_8px_24px_rgba(0,0,0,.06)]"
+    >
+      {dragging && (
+        <div className="pointer-events-none absolute inset-2 z-20 flex items-center justify-center rounded-xl border-2 border-dashed border-[var(--text)]/40 bg-white/85 text-[13px] font-medium text-[var(--text)]">
+          {t('chat.dropHere')}
+        </div>
+      )}
       <div className="flex items-center justify-between border-b border-black/5 px-3.5 py-3 font-semibold">
         {t('chat.title')}
         <span className="flex items-center gap-1.5 text-[12px] font-normal text-[var(--text2)]">

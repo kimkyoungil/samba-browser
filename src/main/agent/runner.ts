@@ -26,6 +26,7 @@ import type { AgentToolCall } from '../../shared/site-memory'
 import type { SiteMemoryBlock, SiteMemoryService } from './site-memory'
 import type { ScheduleRunOverrides } from '../../shared/schedule'
 import type { AgentImage } from '../../shared/agent-image'
+import { filesNote, textFilesBlock, type AgentFile } from '../../shared/agent-file'
 import {
   runQuery,
   runCodexQuery,
@@ -106,6 +107,9 @@ export type PlaybookProvider = () => PlaybookDto[]
 // Codex 백엔드로 이미지가 함께 왔을 때 지시문 끝에 붙이는 안내
 export const CODEX_NO_IMAGE_NOTE =
   '(The user attached an image, but this AI connection cannot see images. Say so briefly and ask them to describe it.)'
+// Codex 백엔드로 PDF 가 함께 왔을 때 지시문 끝에 붙이는 안내(글 파일은 지시문에 실려 그대로 읽는다)
+export const CODEX_NO_PDF_NOTE =
+  '(The user attached a PDF, but this AI connection cannot read PDF files. Say so briefly and ask them to paste the text or switch this chat to Claude.)'
 // 도구 통로를 못 연 Codex 대화의 지시문. Claude 쪽 시스템 프롬프트는 브라우저 도구를 부르라고 하므로 그대로 쓰면 없는 도구를 찾는다
 export const CODEX_CHAT_PROMPT = [
   'You are the chat assistant inside noden Browser, a desktop web browser, connected through Codex.',
@@ -520,7 +524,9 @@ export class AgentRunner {
     chatId?: number,
     overrides?: ScheduleRunOverrides,
     // AI 창에 붙여 넣은 이미지. 모델에만 실어 주고 대화 기록에는 남기지 않는다
-    images?: AgentImage[]
+    images?: AgentImage[],
+    // AI 창에 끌어다 놓은 파일. 글 파일은 지시문 뒤에, PDF 는 문서로 싣고 대화 기록에는 이름만 남긴다
+    files?: AgentFile[]
   ): Promise<void> {
     // 앞 실행이 끝 상태를 이미 보내 뒷정리만 남았으면 그게 끝날 때까지 기다린다 —
     // 화면은 끝 상태를 받자마자 대기열의 다음 말을 보내므로, 그 틈에 오면 '이미 실행 중'으로 튕기고
@@ -562,7 +568,16 @@ export class AgentRunner {
     this.abort = abort
     const gen = ++this.generation
     // 이 실행이 남길 대화 기록. 화면으로 나가는 이벤트와 같은 값만 모은다(라벨·본문)
-    const entry: TranscriptEntry = { prompt, text: '', steps: [] }
+    const entry: TranscriptEntry = {
+      prompt: `${prompt}${filesNote(files ?? [])}`,
+      text: '',
+      steps: []
+    }
+    // 모델에 넘길 지시문 = 사용자 글 + 글 파일 내용. 플레이북·사이트 기억은 사용자 글(prompt)만 본다
+    const filesText = textFilesBlock(files ?? [])
+    const pdfs = (files ?? []).flatMap((f) =>
+      f.kind === 'pdf' ? [{ name: f.name, data: f.data }] : []
+    )
     // 자동 이어가기 문장이 아니면 사용자의 새 지시 — 허용 횟수를 되돌린다
     const autoContinuing = prompt.startsWith(AUTO_CONTINUE_PROMPT)
     if (!autoContinuing) this.autoContinueLeft = 1
@@ -760,11 +775,12 @@ export class AgentRunner {
           chatId !== undefined && this.historyReader
             ? buildHistoryNote(this.historyReader(chatId), CODEX_HISTORY)
             : ''
-        const codexPrompt =
-          images && images.length > 0
-            ? `${prompt}
-${CODEX_NO_IMAGE_NOTE}`
-            : prompt
+        // Codex 경로는 PDF 도 못 읽는다 — 글 파일 내용은 지시문에 실려 그대로 간다
+        const codexPrompt = [
+          `${prompt}${filesText}`,
+          ...(images && images.length > 0 ? [CODEX_NO_IMAGE_NOTE] : []),
+          ...(pdfs.length > 0 ? [CODEX_NO_PDF_NOTE] : [])
+        ].join('\n')
         // 도구 통로를 못 열면(포트·서버 오류) 도구 없는 대화로라도 답한다 — 그때는 도구가 없다고 아는 지시문을 쓴다
         let tools: CodexToolServer | null = null
         try {
@@ -817,9 +833,10 @@ ${CODEX_NO_IMAGE_NOTE}`
           ? buildHistoryNote(this.historyReader(chatId))
           : ''
       const stream = runQuery({
-        prompt: historyNote === '' ? prompt : `${historyNote}${prompt}`,
+        prompt: `${historyNote}${prompt}${filesText}`,
         ...(resume === undefined ? {} : { resume }),
         ...(images && images.length > 0 ? { images } : {}),
+        ...(pdfs.length > 0 ? { documents: pdfs } : {}),
         systemPrompt: systemPrompt(s.permissionMode, s.agentEffort),
         model: runModel,
         // 채팅 입력줄에서 고른 추론 강도

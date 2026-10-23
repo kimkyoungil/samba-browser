@@ -68,6 +68,7 @@ import {
   type NotifySendResult
 } from '../shared/ipc'
 import type { AgentImage } from '../shared/agent-image'
+import type { AgentFile } from '../shared/agent-file'
 import type {
   DaangnAccountDto,
   DaangnBounds,
@@ -196,11 +197,14 @@ const api = {
       prompt: string,
       chatId?: number,
       scheduleToken?: string,
-      images?: AgentImage[]
+      images?: AgentImage[],
+      files?: AgentFile[]
     ): Promise<IpcResult<AgentRunAck>> =>
-      images === undefined
-        ? invoke(IPC.agentRun, prompt, chatId, scheduleToken)
-        : invoke(IPC.agentRun, prompt, chatId, scheduleToken, images),
+      files !== undefined
+        ? invoke(IPC.agentRun, prompt, chatId, scheduleToken, images, files)
+        : images === undefined
+          ? invoke(IPC.agentRun, prompt, chatId, scheduleToken)
+          : invoke(IPC.agentRun, prompt, chatId, scheduleToken, images),
     stop: (): Promise<IpcResult<void>> => invoke(IPC.agentStop),
     // 대화마다 고른 AI. chatId 가 null 이면(아직 안 만든 새 대화) 앱 기본 연결 쪽 값만 돌려준다
     chatEngine: (

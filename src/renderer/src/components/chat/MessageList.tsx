@@ -1,7 +1,7 @@
 import type React from 'react'
 import { memo, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Check, Copy } from 'lucide-react'
+import { Check, Copy, FileText } from 'lucide-react'
 import { useChatStore, type ChatMessage } from '@renderer/stores/chatStore'
 import { StepLog } from './StepLog'
 import { MarkdownText } from './MarkdownText'
@@ -131,6 +131,19 @@ const MessageRow = memo(function MessageRow({
                   alt=""
                   className="max-h-32 max-w-full rounded-lg object-contain"
                 />
+              ))}
+            </div>
+          )}
+          {m.files && m.files.length > 0 && (
+            <div className="mb-1.5 flex flex-wrap gap-1.5">
+              {m.files.map((name, k) => (
+                <span
+                  key={k}
+                  className="flex max-w-full items-center gap-1 rounded-md bg-white/15 px-1.5 py-0.5 text-[11.5px]"
+                >
+                  <FileText className="h-3 w-3 shrink-0" />
+                  <span className="truncate">{name}</span>
+                </span>
               ))}
             </div>
           )}

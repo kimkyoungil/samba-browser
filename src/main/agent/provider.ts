@@ -14,6 +14,8 @@ export interface ProviderInput {
   prompt: string
   // 지시문과 함께 보낼 이미지(AI 창에 붙여 넣은 스크린샷). 없으면 문자열 프롬프트 그대로
   images?: AgentImage[]
+  // 지시문과 함께 보낼 PDF(AI 창에 끌어다 놓은 파일). 문서 블록으로 싣는다
+  documents?: AgentPdf[]
   systemPrompt: string
   model: string
   mcpServers: Options['mcpServers']
@@ -212,22 +214,39 @@ export async function askText(input: AskTextInput): Promise<string | null> {
 }
 
 // Claude Agent SDK 호출. 연결된 Claude 구독 또는 내 API 키(ANTHROPIC_API_KEY)를 쓴다
+/** 모델에 문서로 싣는 PDF 한 개 */
+export interface AgentPdf {
+  name: string
+  /** base64 본문(data: 접두어 없음) */
+  data: string
+}
+
 /**
- * 이미지가 붙었으면 SDK 가 받는 사용자 메시지 스트림(텍스트 + 이미지 블록)으로 만든다.
- * 이미지가 없으면 문자열 그대로 — 기존 경로를 건드리지 않는다
+ * 이미지·PDF 가 붙었으면 SDK 가 받는 사용자 메시지 스트림(텍스트 + 이미지·문서 블록)으로 만든다.
+ * 둘 다 없으면 문자열 그대로 — 기존 경로를 건드리지 않는다
  */
 export function promptInputOf(
   prompt: string,
-  images?: AgentImage[]
+  images?: AgentImage[],
+  documents?: AgentPdf[]
 ): string | AsyncIterable<SDKUserMessage> {
-  if (!images || images.length === 0) return prompt
+  if ((!images || images.length === 0) && (!documents || documents.length === 0)) return prompt
   const message: SDKUserMessage = {
     type: 'user',
     parent_tool_use_id: null,
     message: {
       role: 'user',
       content: [
-        ...images.map((img) => ({
+        ...(documents ?? []).map((doc) => ({
+          type: 'document' as const,
+          title: doc.name,
+          source: {
+            type: 'base64' as const,
+            media_type: 'application/pdf' as const,
+            data: doc.data
+          }
+        })),
+        ...(images ?? []).map((img) => ({
           type: 'image' as const,
           source: { type: 'base64' as const, media_type: img.mediaType, data: img.data }
         })),
@@ -249,7 +268,7 @@ export function runQuery(input: ProviderInput): Query {
   // 키 경로인데 키가 사라졌으면 구독 자격으로 조용히 넘어가지 않고 멈춘다
   if (auth.mode === 'api_key' && !env) throw new Error(NOT_CONNECTED_ERROR)
   return query({
-    prompt: promptInputOf(input.prompt, input.images),
+    prompt: promptInputOf(input.prompt, input.images, input.documents),
     options: buildQueryOptions(input, env)
   })
 }

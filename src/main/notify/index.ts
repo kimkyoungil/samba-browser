@@ -7,7 +7,13 @@
 import type { AgentEvent } from '../../shared/ipc'
 import type { Settings } from '../../shared/settings'
 import { NOTIFY_CHANNELS, type NotifyChannel, type NotifySendResult } from '../../shared/notify'
-import { buildNotifyMessage, buildTestMessage, type NotifyLang } from './message'
+import {
+  buildDesktopNotice,
+  buildNotifyMessage,
+  buildTestMessage,
+  type NotifyLang,
+  type NotifyMessageInput
+} from './message'
 import { isChannelReady, sendNotify, type NotifyConfig, type NotifyFetch } from './send'
 
 export interface NotifierDeps {
@@ -16,6 +22,14 @@ export interface NotifierDeps {
   fetchImpl: NotifyFetch
   /** 전송 상한(테스트에서 줄여 쓴다) */
   timeoutMs?: number
+  /**
+   * 윈도우 알림. 앱 창을 보고 있지 않을 때만 띄운다 — 보고 있으면 화면에서 이미 안다.
+   * 없으면(테스트·옛 배선) 메신저만 보낸다
+   */
+  desktop?: {
+    appFocused: () => boolean
+    show: (title: string, body: string) => void
+  }
 }
 
 export interface AgentNotifier {
@@ -47,6 +61,14 @@ export function createAgentNotifier(deps: NotifierDeps): AgentNotifier {
 
   const lang = (s: Settings): NotifyLang => (s.language === 'en' ? 'en' : 'ko')
 
+  /** 윈도우 알림 한 건(켜져 있고, 앱 창을 보고 있지 않을 때만) */
+  const desktop = (input: NotifyMessageInput): void => {
+    const d = deps.desktop
+    if (!d || !deps.settings().notifyDesktopEnabled || d.appFocused()) return
+    const { title, body } = buildDesktopNotice(input)
+    d.show(title, body)
+  }
+
   /** 켜져 있고 값이 갖춰진 채널 모두에 뿌린다. 실패는 경고 한 줄로 끝낸다 */
   const broadcast = (text: string): void => {
     const s = deps.settings()
@@ -73,9 +95,9 @@ export function createAgentNotifier(deps: NotifierDeps): AgentNotifier {
         }
         if (e.type === 'confirm') {
           if (s.notifyOnAttention) {
-            broadcast(
-              buildNotifyMessage({ event: 'attention', prompt, reason: e.action, lang: lang(s) })
-            )
+            const input = { event: 'attention', prompt, reason: e.action, lang: lang(s) } as const
+            broadcast(buildNotifyMessage(input))
+            desktop(input)
           }
           return
         }
@@ -83,9 +105,9 @@ export function createAgentNotifier(deps: NotifierDeps): AgentNotifier {
           // 캡차·2FA·폰 결제 비밀번호 키패드가 모두 이 이벤트로 온다.
           // url 은 보내지 않는다(어디에 로그인 중인지까지 흘릴 이유가 없다)
           if (s.notifyOnAttention) {
-            broadcast(
-              buildNotifyMessage({ event: 'attention', prompt, reason: e.matched, lang: lang(s) })
-            )
+            const input = { event: 'attention', prompt, reason: e.matched, lang: lang(s) } as const
+            broadcast(buildNotifyMessage(input))
+            desktop(input)
           }
           return
         }
@@ -95,17 +117,19 @@ export function createAgentNotifier(deps: NotifierDeps): AgentNotifier {
           return
         }
         if (e.state === 'done' && s.notifyOnDone) {
-          broadcast(buildNotifyMessage({ event: 'done', prompt, text: lastText, lang: lang(s) }))
+          const input = { event: 'done', prompt, text: lastText, lang: lang(s) } as const
+          broadcast(buildNotifyMessage(input))
+          desktop(input)
         } else if (e.state === 'failed' && s.notifyOnFailed) {
-          broadcast(
-            buildNotifyMessage({
-              event: 'failed',
-              prompt,
-              text: lastText,
-              reason: e.message,
-              lang: lang(s)
-            })
-          )
+          const input = {
+            event: 'failed',
+            prompt,
+            text: lastText,
+            reason: e.message,
+            lang: lang(s)
+          } as const
+          broadcast(buildNotifyMessage(input))
+          desktop(input)
         }
         // 'stopped'(사용자가 직접 멈춤)는 알리지 않는다 — 사용자가 이미 화면 앞에 있다
       } catch (err: unknown) {

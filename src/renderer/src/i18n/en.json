@@ -1036,6 +1036,8 @@
     "notify": {
       "title": "Notifications",
       "desc": "Get a ping on Slack, Telegram or Discord when a task finishes",
+      "desktop": "Desktop notifications",
+      "desktopDesc": "When you are not looking at the noden window, show finished tasks and confirmations as Windows notifications. Click one to bring noden to the front",
       "slack": "Slack",
       "slackDesc": "Paste a Slack Incoming Webhook URL and we post to that channel",
       "slackInvalid": "Only URLs starting with https://hooks.slack.com/ are allowed",

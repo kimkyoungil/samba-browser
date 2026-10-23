@@ -172,6 +172,18 @@ export function NotifySection({ settings, update }: SectionProps): React.JSX.Ele
 
   return (
     <>
+      <SettingsSection
+        title={t('settingsPage.notify.desktop')}
+        description={t('settingsPage.notify.desktopDesc')}
+      >
+        <SettingsToggleRow label={t('settingsPage.notify.use')}>
+          <Switch
+            checked={settings.notifyDesktopEnabled}
+            onCheckedChange={(v) => update({ notifyDesktopEnabled: v })}
+          />
+        </SettingsToggleRow>
+      </SettingsSection>
+
       <ChannelCard
         channel="slack"
         title={t('settingsPage.notify.slack')}

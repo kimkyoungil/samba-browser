@@ -293,6 +293,8 @@ export const DEFAULT_SETTINGS = {
   notifyTelegramEnabled: false,
   notifyTelegramToken: '',
   notifyTelegramChatId: '',
+  // 앱 창을 보고 있지 않을 때 윈도우 알림으로도 띄운다(메신저 설정과 따로). 기본 켬
+  notifyDesktopEnabled: true,
   // 사건별 켬/끔(완료·실패·확인 필요). 기본은 셋 다 켬
   notifyOnDone: true,
   notifyOnFailed: true,
@@ -542,6 +544,7 @@ export const settingsSchema = z.object({
     .string()
     .catch(DEFAULT_SETTINGS.notifyTelegramChatId)
     .transform((v) => (isTelegramChatId(v) ? v.trim() : '')),
+  notifyDesktopEnabled: z.boolean().catch(DEFAULT_SETTINGS.notifyDesktopEnabled),
   notifyOnDone: z.boolean().catch(DEFAULT_SETTINGS.notifyOnDone),
   notifyOnFailed: z.boolean().catch(DEFAULT_SETTINGS.notifyOnFailed),
   notifyOnAttention: z.boolean().catch(DEFAULT_SETTINGS.notifyOnAttention)

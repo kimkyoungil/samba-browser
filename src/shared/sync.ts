@@ -196,6 +196,7 @@ export const SYNCED_SETTING_KEYS = [
   'notifyOnDone',
   'notifyOnFailed',
   'notifyOnAttention',
+  'notifyDesktopEnabled',
   // === 사용자 2026-10-02: "로그인한 PC 마다 설정이 다른 브라우저가 말이 되냐 — 모든 설정 다 동일하게" ===
   // 화면 배치·확장 표시·추천 숨김도 따라간다. 남는 제외 대상은 그 PC 에만 맞는 값뿐이다:
   // 실행 파일·폴더 경로(adbPath·scrcpyPath·captureDir·extensionPaths·extensionSources),

@@ -43,6 +43,15 @@ const LABELS = {
 /** 모든 알림 앞에 붙는 꼬리표. 다른 봇 메시지와 섞여도 알아볼 수 있게 한다 */
 export const NOTIFY_PREFIX = '[SAMBA]'
 
+/**
+ * 윈도우 알림(작업 끝·확인 필요)의 제목·본문. 메신저 문장과 같은 마스킹을 거친 줄을 쓰고,
+ * 꼬리표([SAMBA])는 떼어 제목만 남긴다
+ */
+export function buildDesktopNotice(input: NotifyMessageInput): { title: string; body: string } {
+  const [head, ...rest] = buildNotifyMessage(input).split('\n')
+  return { title: head.replace(`${NOTIFY_PREFIX} `, ''), body: rest.join('\n') }
+}
+
 /** 테스트 보내기 버튼이 쓰는 문장 */
 export function buildTestMessage(lang: NotifyLang): string {
   return `${NOTIFY_PREFIX} ${LABELS[lang].test}`

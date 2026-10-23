@@ -14,6 +14,7 @@ import { ChatSessionStore } from '../agent/chat-session'
 import {
   app,
   BrowserWindow as BrowserWindowCtor,
+  clipboard,
   dialog,
   ipcMain,
   Notification,
@@ -569,6 +570,12 @@ export function registerIpc(
       return { started: true }
     }
   )
+
+  // 채팅 말풍선 [복사]. 글자만 받는다(너무 긴 값은 자른다)
+  handleFromRenderer(IPC.clipboardWriteText, (text: unknown) => {
+    if (typeof text !== 'string') throw new Error('bad text')
+    clipboard.writeText(text.slice(0, 2_000_000))
+  })
 
   // 설정 화면의 [테스트 보내기] — 지금 입력된 값으로 한 줄 보내 본다
   handleFromRenderer(IPC.notifyTest, (channel: NotifyChannel) => notifier.test(channel))

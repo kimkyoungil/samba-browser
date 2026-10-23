@@ -19,6 +19,7 @@ export const IPC = {
   tabUpdated: 'tab:updated', // main → renderer 이벤트
   layoutSet: 'layout:set',
   agentRun: 'agent:run',
+  clipboardWriteText: 'clipboard:writeText', // 채팅 말풍선 [복사] — 앱 화면은 클립보드 권한이 막혀 있어 메인이 쓴다
   agentChatEngine: 'agent:chatEngine', // 그 대화에서 고른 AI(Claude/Codex). 없으면 앱 기본 연결
   agentSetChatEngine: 'agent:setChatEngine',
   agentStop: 'agent:stop',

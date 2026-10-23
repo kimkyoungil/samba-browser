@@ -1,6 +1,7 @@
 import type React from 'react'
 import { memo, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { Check, Copy } from 'lucide-react'
 import { useChatStore, type ChatMessage } from '@renderer/stores/chatStore'
 import { StepLog } from './StepLog'
 import { MarkdownText } from './MarkdownText'
@@ -77,6 +78,32 @@ export function MessageList(): React.JSX.Element {
   )
 }
 
+// 말풍선 [복사]. 앱 화면은 클립보드 권한이 막혀 있어 메인에 맡긴다. 눌렀으면 잠깐 체크 표시
+function CopyButton({ text, className }: { text: string; className?: string }): React.JSX.Element {
+  const { t } = useTranslation()
+  const [copied, setCopied] = useState(false)
+  useEffect(() => {
+    if (!copied) return
+    const timer = setTimeout(() => setCopied(false), 1500)
+    return () => clearTimeout(timer)
+  }, [copied])
+  return (
+    <button
+      type="button"
+      aria-label={t('chat.copy')}
+      title={copied ? t('chat.copied') : t('chat.copy')}
+      onClick={() => {
+        void window.samba.clipboard?.writeText(text).then((r) => {
+          if (r.ok) setCopied(true)
+        })
+      }}
+      className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-[var(--text3)] hover:bg-black/5 hover:text-[var(--text)] ${className ?? ''}`}
+    >
+      {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+    </button>
+  )
+}
+
 // 말풍선 하나. 글자가 흘러오는 동안 바뀌는 건 마지막 말풍선뿐이라, 나머지는 다시 그리지 않는다
 const MessageRow = memo(function MessageRow({
   m,
@@ -87,31 +114,45 @@ const MessageRow = memo(function MessageRow({
 }): React.JSX.Element {
   if (m.role === 'user')
     return (
-      <div className="max-w-[88%] self-end whitespace-pre-wrap break-words rounded-2xl rounded-br-[4px] bg-[var(--text)] px-3 py-2 leading-relaxed text-white">
-        {m.images && m.images.length > 0 && (
-          <div className="mb-1.5 flex flex-wrap gap-1.5">
-            {m.images.map((src, k) => (
-              <img
-                key={k}
-                src={src}
-                alt=""
-                className="max-h-32 max-w-full rounded-lg object-contain"
-              />
-            ))}
-          </div>
+      <div className="group flex max-w-[88%] items-end gap-1 self-end">
+        {m.text && (
+          <CopyButton
+            text={m.text}
+            className="opacity-0 transition-opacity group-hover:opacity-100"
+          />
         )}
-        {m.text}
+        <div className="min-w-0 whitespace-pre-wrap break-words rounded-2xl rounded-br-[4px] bg-[var(--text)] px-3 py-2 leading-relaxed text-white">
+          {m.images && m.images.length > 0 && (
+            <div className="mb-1.5 flex flex-wrap gap-1.5">
+              {m.images.map((src, k) => (
+                <img
+                  key={k}
+                  src={src}
+                  alt=""
+                  className="max-h-32 max-w-full rounded-lg object-contain"
+                />
+              ))}
+            </div>
+          )}
+          {m.text}
+        </div>
       </div>
     )
   const shown = m.partial ? (m.text ? `${m.text}\n${m.partial}` : m.partial) : m.text
   return (
-    <div className="max-w-[94%] self-start leading-relaxed">
+    <div className="group max-w-[94%] self-start leading-relaxed">
       {shown && <MarkdownText text={shown} />}
       {/* 글자가 흘러오는 동안 끝에 깜빡이는 커서 */}
       {m.partial ? (
         <span className="inline-block h-[1em] w-[2px] animate-pulse bg-[var(--text)]" />
       ) : null}
       <StepLog steps={m.steps ?? []} running={running} />
+      {/* 다 쓴 답만 복사한다(쓰는 중인 글은 아직 바뀐다) */}
+      {!running && m.text && (
+        <div className="mt-0.5 flex opacity-0 transition-opacity group-hover:opacity-100">
+          <CopyButton text={m.text} />
+        </div>
+      )}
     </div>
   )
 })

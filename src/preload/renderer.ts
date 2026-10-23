@@ -218,6 +218,10 @@ const api = {
       return () => ipcRenderer.off(IPC.agentEvent, h)
     }
   },
+  // 채팅 말풍선 [복사] — 앱 화면은 클립보드 권한이 막혀 있어 메인이 쓴다
+  clipboard: {
+    writeText: (text: string): Promise<IpcResult<void>> => invoke(IPC.clipboardWriteText, text)
+  },
   // AI 채팅 기록 — 본문은 평문이지만 비밀값은 담기지 않는다(진행 로그는 라벨만)
   chats: {
     list: (limit?: number): Promise<IpcResult<ChatDto[]>> => invoke(IPC.chatList, limit),

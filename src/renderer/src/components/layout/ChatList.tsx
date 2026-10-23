@@ -39,8 +39,10 @@ export function ChatList(): React.JSX.Element {
     void loadChats()
   }, [loadChats])
 
+  // 사이드바 높이가 모자라면 대화 줄만 안에서 스크롤된다 — 목록이 길어도 북마크 머리줄·설정이
+  // 창 밖으로 밀려 창 전체가 스크롤되지 않게(새 대화·검색칸 + 한두 줄은 늘 보인다)
   return (
-    <div className="flex flex-col">
+    <div className="flex min-h-[88px] flex-col">
       <button
         type="button"
         disabled={locked}
@@ -84,7 +86,7 @@ export function ChatList(): React.JSX.Element {
           {searching ? t('chat.searchEmpty') : t('chat.empty')}
         </div>
       ) : (
-        <ul className="flex flex-col">
+        <ul className="flex min-h-0 flex-col overflow-auto">
           {chats.map((chat) => (
             <ChatRow
               key={chat.id}

@@ -644,7 +644,8 @@ export function BookmarkTree(): React.JSX.Element {
 
   return (
     <MenuContext.Provider value={openMenu}>
-      <div className={cn('flex flex-col', open && 'min-h-0 flex-1')}>
+      {/* 펼친 북마크는 머리줄 + 한 줄만큼은 늘 남긴다 — 0 까지 줄면 머리줄이 아래 '설정' 위로 겹친다 */}
+      <div className={cn('flex flex-col', open && 'min-h-[72px] flex-1')}>
         <SectionHeader sectionKey="bookmarks" label={t('bookmark.title')} />
         {open && (
           <div

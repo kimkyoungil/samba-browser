@@ -75,7 +75,9 @@ export function parseKoreanTime(text: string, now: Date): number {
   if (ampm) {
     let h = Number(ampm[2]) % 12
     if (ampm[1] === '오후') h += 12
-    return day(now.getFullYear(), now.getMonth(), now.getDate(), h, Number(ampm[3]))
+    const today = day(now.getFullYear(), now.getMonth(), now.getDate(), h, Number(ampm[3]))
+    // 당근은 오늘 온 글만 시각만 쓴다 — 지금보다 뒤 시각이면 어제 글이다(어제 오후 11:41 이 오늘 오후 7:18 보다 위로 올라가던 문제)
+    return today > now.getTime() + 60_000 ? today - 86_400_000 : today
   }
   if (t === '방금' || t === '방금 전') return now.getTime()
   const rel = /^(\d+)\s*(분|시간|일|주|달|개월|년)\s*전$/.exec(t)

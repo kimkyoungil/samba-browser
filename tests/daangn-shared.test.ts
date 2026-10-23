@@ -54,6 +54,10 @@ describe('parseKoreanTime', () => {
     expect(parseKoreanTime('오전 12:05', now)).toBe(at(2026, 10, 21, 0, 5))
     expect(parseKoreanTime('오후 12:10', now)).toBe(at(2026, 10, 21, 12, 10))
   })
+  it('지금보다 뒤 시각이면 어제 글이다', () => {
+    expect(parseKoreanTime('오후 11:41', now)).toBe(at(2026, 10, 20, 23, 41))
+    expect(parseKoreanTime('오후 03:59', now)).toBe(at(2026, 10, 21, 15, 59))
+  })
   it('"어제" 는 어제 안의 시각이다', () => {
     const v = parseKoreanTime('어제', now)
     expect(v).toBeGreaterThanOrEqual(at(2026, 10, 20))

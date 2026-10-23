@@ -12,6 +12,7 @@ import {
   stepHistory,
   type HistoryCursor
 } from '@renderer/lib/input-history'
+import { draftOnQuit, loadDraft, saveDraft } from '@renderer/lib/input-draft'
 import { AGENT_IMAGE_MAX_COUNT, agentImageDataUrl, type AgentImage } from '@shared/agent-image'
 import {
   AGENT_FILE_MAX_COUNT,
@@ -29,7 +30,8 @@ export function ChatInput(): React.JSX.Element {
   const { t } = useTranslation()
   const { send, status, stop, queue, enqueue, unqueue } = useChatStore()
   const running = status === 'running'
-  const [text, setText] = useState('')
+  // 쓰다 만 글은 앱을 껐다 켜도 남는다(이 화면의 저장소에 둔다)
+  const [text, setText] = useState(loadDraft)
   // 클립보드에서 붙여 넣거나 끌어다 놓은 이미지. 보내면 비운다
   const [images, setImages] = useState<AgentImage[]>([])
   // 붙여 넣거나 끌어다 놓은 파일(PDF·글 파일). 보내면 비운다
@@ -39,6 +41,20 @@ export function ChatInput(): React.JSX.Element {
   const [history, setHistory] = useState<string[]>(loadInputHistory)
   const [cursor, setCursor] = useState<HistoryCursor>(() => draftCursor(loadInputHistory()))
   const box = useRef<HTMLTextAreaElement>(null)
+  useEffect(() => saveDraft(text), [text])
+  // 앱을 끌 때 아직 못 보낸 대기열 글도 입력칸 글에 붙여 남긴다(다시 켜면 입력칸으로 돌아온다)
+  const textRef = useRef(text)
+  useEffect(() => {
+    textRef.current = text
+  })
+  useEffect(() => {
+    const onUnload = (): void => {
+      const queued = useChatStore.getState().queue.map((q) => q.text)
+      if (queued.length > 0) saveDraft(draftOnQuit(textRef.current, queued))
+    }
+    window.addEventListener('beforeunload', onUnload)
+    return () => window.removeEventListener('beforeunload', onUnload)
+  }, [])
   // 글 길이에 맞춰 입력칸 높이를 늘린다
   useLayoutEffect(() => {
     const el = box.current

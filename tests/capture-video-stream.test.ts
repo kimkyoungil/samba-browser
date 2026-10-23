@@ -108,3 +108,24 @@ describe('부분 쓰기', () => {
     expect([...readFileSync(done.payload.filePath)]).toEqual([1, 2, 3, 4, 5])
   })
 })
+
+describe('창이 다 닫힌 뒤의 정리', () => {
+  it('창을 못 찾아도(마지막 창 닫힘) dispose 가 던지지 않는다', () => {
+    const capture = registerCaptureIpc({
+      handle: (() => undefined) as never,
+      send: () => undefined,
+      settings: () => ({ captureDir: dir, captureFormat: 'png' }) as never,
+      setSettings: () => undefined,
+      win: (() => {
+        throw new Error('no window')
+      }) as never,
+      tabs: {
+        active: () => null,
+        hasWebContents: () => false,
+        onActivated: () => undefined
+      } as never,
+      downloadsDir: () => dir
+    })
+    expect(() => capture.dispose()).not.toThrow()
+  })
+})

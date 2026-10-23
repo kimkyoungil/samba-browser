@@ -329,7 +329,14 @@ export function registerCaptureIpc(deps: CaptureIpcDeps): CaptureIpc {
   // 렌더러는 웹뷰에 가려 '보이지 않는 창' 으로 취급되어 타이머·rAF 가 초당 한두 번으로
   // 묶인다. 녹화 중에는 크롭 캔버스를 그 속도로 그리면 영상이 뚝뚝 끊기므로 잠시 풀어 준다
   const setThrottling = (allowed: boolean): void => {
-    const win = deps.win()
+    // 마지막 창이 닫히는 중(창의 closed → dispose)에는 창이 이미 하나도 없어 deps.win() 이 던진다.
+    // 그때 던지면 'A JavaScript error occurred in the main process'(no window) 창이 떠 앱이 깨끗이 안 꺼졌다(실기 2026-10-24)
+    let win: ReturnType<typeof deps.win>
+    try {
+      win = deps.win()
+    } catch {
+      return
+    }
     if (!win.isDestroyed()) win.webContents.setBackgroundThrottling(allowed)
   }
 

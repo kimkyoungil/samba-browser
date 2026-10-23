@@ -146,6 +146,10 @@ export class AgentRunner {
   private autoContinueLeft = 1
   // 지금 도는 실행이 사용자 지시가 아닌 후속 턴(자동 이어가기·자동 학습)인지. 사용자 지시가 들어오면 양보한다
   private followUpRunning = false
+  // 끝 상태(done·failed)를 화면에 이미 보낸 실행의 세대. 같으면 그 실행은 뒷정리(finally)만 남았다
+  private settledGeneration = 0
+  // 지금 실행의 뒷정리가 끝나면 풀린다. 끝 상태 직후에 들어온 다음 지시가 이걸 기다린다
+  private runFinished: Promise<void> | null = null
   // 폰 도구 배선. 없으면 폰 도구를 등록하지 않는다(3단계 전 실행·테스트)
   private phones: PhoneBridge | null = null
   // 자동화 플레이북 목록 공급자. 없으면 시스템 프롬프트에 아무것도 덧붙이지 않는다
@@ -469,6 +473,11 @@ export class AgentRunner {
     // AI 창에 붙여 넣은 이미지. 모델에만 실어 주고 대화 기록에는 남기지 않는다
     images?: AgentImage[]
   ): Promise<void> {
+    // 앞 실행이 끝 상태를 이미 보내 뒷정리만 남았으면 그게 끝날 때까지 기다린다 —
+    // 화면은 끝 상태를 받자마자 대기열의 다음 말을 보내므로, 그 틈에 오면 '이미 실행 중'으로 튕기고
+    // (그때는 notifyNotStarted 도 상태를 못 보내) 화면이 '생각 중'에 멈췄다
+    if (this.abort && this.settledGeneration === this.generation && this.runFinished)
+      await this.runFinished
     if (this.session || this.laneSessions > 0) throw new Error(BRIDGE_BUSY_ERROR)
     // 이미 실행 중이면 세대 가드 없이 status 를 emit 하면 진행 중인 실행의 UI 를 덮어쓸 수 있다.
     // 핸들러가 throw 를 { ok: false, error } 로 ack 하므로 에러만 던진다.
@@ -541,6 +550,7 @@ export class AgentRunner {
     // 이 실행이 최신 세대일 때만 UI 로 이벤트를 보낸다
     const emit = (e: AgentEvent): void => {
       if (gen !== this.generation) return
+      if (e.type === 'status' && e.state !== 'running') this.settledGeneration = gen
       if (e.type === 'text') entry.text = entry.text ? `${entry.text}\n${e.text}` : e.text
       if (e.type === 'step') entry.steps.push({ label: e.label, ok: e.ok })
       // 성공이면 완주 경로, 도구를 쓰다 실패(상한·오류)했으면 부분 경로를 남긴다.
@@ -629,6 +639,12 @@ export class AgentRunner {
     // 로그인 도구가 실패한다). done/failed/stopped·예외 어느 쪽으로 끝나도 finally 에서 푼다
     const releaseVaultHold = this.vault?.holdAutoLock('agent run') ?? ((): void => {})
     this.releaseVaultHold = releaseVaultHold
+    let markFinished = (): void => {}
+    this.runFinished = new Promise<void>((resolve) => {
+      markFinished = resolve
+    })
+    // 글자 단위로 받은 답 중 아직 문단으로 확정되지 않은 부분(화면의 '쓰는 중' 글)
+    let partial = ''
     try {
       const backend = agentBackend()
       // 연결된 경로가 없다 — 실행하지 않고 "연결 필요" 안내로 끝낸다
@@ -674,12 +690,33 @@ ${CODEX_NO_IMAGE_NOTE}`
         effort: s.agentEffort,
         mcpServers: { samba: server },
         allowedTools: SAMBA_TOOL_NAMES,
-        abort
+        abort,
+        partial: true
       })
       for await (const msg of stream) {
         // 중단됐으면 남은 메시지는 읽지 않는다(스트림이 늦게 끝나도 UI 는 즉시 정리됨)
         if (abort.signal.aborted) break
-        if (msg.type === 'assistant') {
+        if (msg.type === 'stream_event') {
+          // 글자 단위로 흘러오는 답. 화면의 '쓰는 중' 글로만 보낸다(기록·중복 제거는 아래 확정 글이 맡는다)
+          if (msg.parent_tool_use_id !== null) continue
+          const ev = msg.event
+          if (ev.type === 'message_start') partial = ''
+          else if (
+            ev.type === 'content_block_start' &&
+            ev.content_block.type === 'text' &&
+            partial !== ''
+          )
+            partial += '\n'
+          else if (ev.type === 'content_block_delta' && ev.delta.type === 'text_delta') {
+            partial += ev.delta.text
+            emit({ type: 'partial', text: partial })
+          }
+        } else if (msg.type === 'assistant') {
+          // 확정 글이 왔다 — '쓰는 중' 글을 지우고 그 자리에 확정 글을 붙인다
+          if (partial !== '') {
+            partial = ''
+            emit({ type: 'partial', text: '' })
+          }
           // SDKAssistantMessage.message = Anthropic API 메시지.
           // 같은 문단이 두 번 실려 오는 경우가 있어 중복 제거기를 거친다
           for (const block of msg.message.content) {
@@ -836,6 +873,8 @@ ${CODEX_NO_IMAGE_NOTE}`
           void this.run(next, chatId).catch(() => undefined)
         }, 0)
       }
+      // 뒷정리 끝 — 끝 상태 직후에 들어와 기다리던 다음 지시가 이제 시작한다(이어 돌기보다 먼저 자리를 잡는다)
+      markFinished()
     }
   }
 

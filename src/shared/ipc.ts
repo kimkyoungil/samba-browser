@@ -295,6 +295,9 @@ export interface Layout {
 
 export type AgentEvent =
   | { type: 'text'; text: string }
+  // 글자 단위로 흘러오는 중인 답(지금까지 쓴 전체). 화면에만 보이고 기록에는 남지 않는다 —
+  // 문단이 끝나면 text 가 확정 글을 다시 보내고, 그 직전에 빈 문자열로 지운다
+  | { type: 'partial'; text: string }
   | { type: 'step'; label: string; ok: boolean }
   | { type: 'confirm'; requestId: string; action: string; kind?: 'danger' | 'finish' }
   // 진행 상황만 알리는 이벤트(도구 호출 아님). SDK 재시도 대기와, 플레이북이 부르는

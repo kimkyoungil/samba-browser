@@ -294,6 +294,10 @@
   "chat": {
     "title": "AI",
     "placeholder": "Type an instruction…",
+    "placeholderRunning": "Working — sends after this task finishes",
+    "queued": "Queued",
+    "queueRemove": "Remove from queue",
+    "queueSend": "Add to queue",
     "imagePasted": "{{n}} image(s) attached",
     "imageRemove": "Remove image",
     "imageTooLarge": "Images over 5MB cannot be attached",

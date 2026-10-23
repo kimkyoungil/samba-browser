@@ -11,6 +11,14 @@ export interface ChatMessage {
   steps?: Step[]
   // 사용자가 붙여 넣은 이미지 미리보기(data URL). 이 세션 화면에만 있고 저장되지 않는다
   images?: string[]
+  // 글자 단위로 흘러오는 중인 답(아직 확정 전). text 뒤에 이어서 보여 준다
+  partial?: string
+}
+
+// 일하는 중에 보낸 다음 말. 지금 작업이 끝나면 차례로 보낸다
+export interface QueuedMessage {
+  text: string
+  images?: AgentImage[]
 }
 export interface Step {
   label: string
@@ -79,6 +87,13 @@ interface ChatState {
   removeChat: (chatId: number) => Promise<void>
   /** scheduleToken 은 예약이 보낸 실행임을 메인에 알리는 표식이다(사용자 입력에는 없다) */
   send: (text: string, scheduleToken?: string, images?: AgentImage[]) => Promise<void>
+  // 일하는 중에 보낸 말. 완료되면 맨 앞부터 하나씩 보내고, 중단·실패면 draftReturn 으로 입력칸에 돌려준다
+  queue: QueuedMessage[]
+  enqueue: (text: string, images?: AgentImage[]) => void
+  unqueue: (index: number) => void
+  // 중단·실패로 못 보낸 대기 글. 입력칸이 takeDraftReturn 으로 받아 간다
+  draftReturn: QueuedMessage | null
+  takeDraftReturn: () => QueuedMessage | null
   stop: () => Promise<void>
   reply: (requestId: string, approved: boolean) => void
   // 넘김 카드 응답 — skip=true 는 건너뛰고 계속, false 는 작업 중단
@@ -213,6 +228,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
         : await window.samba.agent.run(...args)
     if (!r.ok && get().runSeq === seq) set({ status: 'failed', currentLabel: r.error, retry: null })
   },
+  queue: [],
+  enqueue: (text, images) =>
+    set((s) => ({
+      queue: [...s.queue, images && images.length > 0 ? { text, images } : { text }]
+    })),
+  unqueue: (index) => set((s) => ({ queue: s.queue.filter((_, i) => i !== index) })),
+  draftReturn: null,
+  takeDraftReturn: () => {
+    const d = get().draftReturn
+    if (d) set({ draftReturn: null })
+    return d
+  },
   stop: async () => {
     await window.samba.agent.stop()
   },
@@ -233,7 +260,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const patchLast = (p: Partial<ChatMessage>): void =>
       set({ messages: [...msgs.slice(0, -1), { ...last, ...p }] })
     if (e.type === 'text' && last?.role === 'ai')
-      patchLast({ text: last.text ? `${last.text}\n${e.text}` : e.text })
+      patchLast({ text: last.text ? `${last.text}\n${e.text}` : e.text, partial: undefined })
+    if (e.type === 'partial' && last?.role === 'ai') patchLast({ partial: e.text })
     if (e.type === 'step' && last?.role === 'ai') {
       patchLast({ steps: [...(last.steps ?? []), { label: e.label, ok: e.ok }] })
       set((s) => ({ toolCalls: s.toolCalls + 1, currentLabel: e.label, retry: null }))
@@ -286,7 +314,39 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const done = e.state === 'done' || e.state === 'failed' || e.state === 'stopped'
       // 작업이 끝나면 메인이 방금 기록을 남겼다 — 목록의 제목·순서를 다시 읽는다
       if (done) void get().loadChats()
+      // 중단·실패로 끊긴 '쓰는 중' 글은 그때까지 쓴 대로 화면에 남긴다(기록에는 확정 글만 있다)
+      const messages =
+        done && last?.role === 'ai' && last.partial
+          ? [
+              ...msgs.slice(0, -1),
+              {
+                ...last,
+                text: last.text ? `${last.text}\n${last.partial}` : last.partial,
+                partial: undefined
+              }
+            ]
+          : get().messages
+      // 대기 중인 다음 말 — 완료면 맨 앞 것을 이어서 보내고, 중단·실패면 저절로 돌지 않게 입력칸으로 돌려준다
+      const queue = get().queue
+      const next = done && e.state === 'done' ? queue[0] : undefined
+      const returned = done && e.state !== 'done' && queue.length > 0 ? queue : []
+      const prevDraft = get().draftReturn
+      const draftParts = [...(prevDraft ? [prevDraft] : []), ...returned]
       set({
+        messages,
+        ...(next ? { queue: queue.slice(1) } : {}),
+        ...(returned.length > 0
+          ? {
+              queue: [],
+              draftReturn: {
+                text: draftParts
+                  .map((q) => q.text)
+                  .filter(Boolean)
+                  .join('\n'),
+                images: draftParts.flatMap((q) => q.images ?? [])
+              }
+            }
+          : {}),
         status: e.state,
         authError: auth,
         toolCalls: e.toolCalls ?? get().toolCalls,
@@ -295,6 +355,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         confirm: done ? null : get().confirm,
         handoff: done ? null : get().handoff
       })
+      // 상태가 끝으로 바뀐 뒤에 보낸다(send 는 실행 중이면 받지 않는다). 메인은 앞 실행의 뒷정리를 기다렸다가 시작한다
+      if (next) void get().send(next.text, undefined, next.images)
     }
   }
 }))

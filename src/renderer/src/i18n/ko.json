@@ -294,6 +294,10 @@
   "chat": {
     "title": "AI",
     "placeholder": "지시를 입력하세요…",
+    "placeholderRunning": "작업 중 — 보내면 끝난 뒤 이어서 보냅니다",
+    "queued": "대기",
+    "queueRemove": "대기 취소",
+    "queueSend": "대기열에 넣기",
     "imagePasted": "이미지 {{n}}장 첨부됨",
     "imageRemove": "이미지 제거",
     "imageTooLarge": "5MB 를 넘는 이미지는 붙일 수 없어요",

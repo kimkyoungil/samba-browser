@@ -157,7 +157,7 @@ export function agentBackend(auth: AgentAuth = currentAuth()): 'claude' | 'codex
   return 'claude'
 }
 
-/** Codex CLI 백엔드 실행(도구 없이 텍스트 응답 경로). 사건은 정규화된 CodexEvent 로 온다 */
+/** Codex CLI 백엔드 실행. 도구는 input.mcpServer 로 붙는다(없으면 텍스트만). 사건은 정규화된 CodexEvent 로 온다 */
 export function runCodexQuery(input: CodexInput): AsyncGenerator<CodexEvent> {
   return runCodex(input)
 }

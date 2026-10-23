@@ -11,19 +11,33 @@
 //    mcp_tool_call · web_search · todo_list · error
 //
 // 도구 연동 범위: samba 도구는 Claude Agent SDK 의 **인프로세스** MCP 서버(createSdkMcpServer)라
-// 별도 프로세스인 codex 가 붙을 수 없다. 그래서 이 어댑터는 `-c mcp_servers.*` 로 **외부 stdio
-// MCP 서버가 주어졌을 때만** 도구를 연결하고, 없으면 텍스트 응답 경로로만 동작한다.
+// 별도 프로세스인 codex 가 바로 붙을 수 없다. 채팅 실행은 그 서버를 실행 동안만 HTTP 로 열어
+// (codex-tools.ts) `-c mcp_servers.samba={url=…}` 로 붙이고, 주어진 서버가 없으면 텍스트 응답만 한다.
 
 import { spawn } from 'node:child_process'
 import { resolveCliBin } from '../ai/cli-bin'
+
+/** codex 에 붙일 MCP 서버 — 외부 stdio 프로그램, 또는 앱이 연 HTTP 통로 */
+export type CodexMcpServer =
+  | { name: string; command: string; args: string[] }
+  | {
+      name: string
+      url: string
+      /** bearer 토큰을 담은 환경 변수 이름(값은 CodexInput.env 로 자식 프로세스에만 넘긴다) */
+      bearerTokenEnvVar: string
+      /** 도구 호출 1건의 제한 시간(초). 확인 카드·사람 넘김을 기다리는 시간보다 길어야 한다 */
+      toolTimeoutSec?: number
+    }
 
 /** codex 에 넘길 실행 입력 */
 export interface CodexInput {
   prompt: string
   systemPrompt: string
   model: string
-  /** 도구를 붙일 외부 stdio MCP 서버(없으면 도구 없이 텍스트만) */
-  mcpServer?: { name: string; command: string; args: string[] }
+  /** 도구를 붙일 MCP 서버(없으면 도구 없이 텍스트만) */
+  mcpServer?: CodexMcpServer
+  /** codex 자식 프로세스에만 더할 환경 변수(도구 통로 토큰) */
+  env?: Record<string, string>
   /** 추론 강도(입력줄에서 고른 값). Codex 모델은 low·medium·high 를 다 받는다(~/.codex/models_cache.json) */
   effort?: 'low' | 'medium' | 'high'
   abort: AbortController
@@ -46,7 +60,12 @@ export interface CodexChild {
   on: (event: 'close' | 'error', listener: (arg: never) => void) => unknown
 }
 
-export type CodexSpawn = (command: string, args: string[], cwd?: string) => CodexChild
+export type CodexSpawn = (
+  command: string,
+  args: string[],
+  cwd?: string,
+  env?: Record<string, string>
+) => CodexChild
 
 export const CODEX_BIN = 'codex'
 
@@ -69,8 +88,20 @@ export function buildCodexArgs(
   ]
   if (input.model.trim()) args.push('-m', input.model.trim())
   if (input.effort) args.push('-c', `model_reasoning_effort=${JSON.stringify(input.effort)}`)
-  if (input.mcpServer) {
-    const { name, command, args: serverArgs } = input.mcpServer
+  const server = input.mcpServer
+  if (server && 'url' in server) {
+    // TOML 인라인 테이블로 HTTP 서버 하나를 얹는다(-c mcp_servers.<name>={url=…})
+    const fields = [
+      `url=${JSON.stringify(server.url)}`,
+      `bearer_token_env_var=${JSON.stringify(server.bearerTokenEnvVar)}`,
+      // codex exec 는 승인 정책이 never 라 MCP 도구를 "requires approval" 로 전부 거절한다(0.160.1 실측).
+      // 위험한 동작은 앱의 권한 모드·확인 카드가 막으므로 codex 쪽 승인은 넘긴다
+      'default_tools_approval_mode="approve"',
+      ...(server.toolTimeoutSec ? [`tool_timeout_sec=${server.toolTimeoutSec}`] : [])
+    ]
+    args.push('-c', `mcp_servers.${server.name}={${fields.join(',')}}`)
+  } else if (server) {
+    const { name, command, args: serverArgs } = server
     // TOML 인라인 테이블로 서버 하나를 얹는다(-c mcp_servers.<name>={...})
     const toml = `{command=${JSON.stringify(command)},args=[${serverArgs
       .map((a) => JSON.stringify(a))
@@ -134,7 +165,11 @@ function itemEvents(item: unknown): CodexEvent[] {
   }
   if (type === 'mcp_tool_call') {
     const label = [str(record.server), str(record.tool)].filter(Boolean).join('.') || 'tool'
-    return [{ type: 'step', label, ok: str(record.status) !== 'failed' }]
+    const ok = str(record.status) !== 'failed'
+    // 실패하면 codex 가 붙인 사유(승인 거절·시간 초과 등)를 라벨 뒤에 짧게 붙인다
+    const error = record.error && typeof record.error === 'object' ? record.error : null
+    const reason = ok || !error ? '' : str((error as Record<string, unknown>).message).slice(0, 120)
+    return [{ type: 'step', label: reason ? `${label}: ${reason}` : label, ok }]
   }
   if (type === 'command_execution') {
     const label = str(record.command) || 'command'
@@ -153,11 +188,17 @@ export function splitLines(buffer: string): { lines: string[]; rest: string } {
   return { lines: parts.map((l) => l.replace(/\r$/, '')), rest }
 }
 
-function defaultSpawn(command: string, args: string[], cwd?: string): CodexChild {
+function defaultSpawn(
+  command: string,
+  args: string[],
+  cwd?: string,
+  env?: Record<string, string>
+): CodexChild {
   // Windows 의 npm 셔틀(codex.cmd)은 spawn 이름만으로는 못 돌리므로 실제 실행 파일(node + .js)로 푼다
   const cli = resolveCliBin(command)
   const child = spawn(cli.command, [...cli.prefixArgs, ...args], {
     cwd,
+    ...(env ? { env: { ...process.env, ...env } } : {}),
     stdio: ['pipe', 'pipe', 'pipe'],
     windowsHide: true
   })
@@ -175,7 +216,7 @@ export async function* runCodex(
   const args = buildCodexArgs(input)
   let child: CodexChild
   try {
-    child = spawnImpl(CODEX_BIN, args, input.cwd)
+    child = spawnImpl(CODEX_BIN, args, input.cwd, input.env)
   } catch (e) {
     yield { type: 'done', ok: false, message: e instanceof Error ? e.message : String(e) }
     return

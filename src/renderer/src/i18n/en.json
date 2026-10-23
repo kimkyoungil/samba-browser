@@ -301,7 +301,7 @@
     "queueSend": "Add to queue",
     "showEarlier": "Show {{count}} earlier messages ({{total}} hidden)",
     "engineMenu": "AI for this chat",
-    "engineHint": "Pick which AI this chat uses. Saved per chat. Codex chats only (browser control is Claude).",
+    "engineHint": "Pick which AI this chat uses. Saved per chat. Both can operate the browser (Codex cannot see attached images).",
     "imagePasted": "{{n}} image(s) attached",
     "imageRemove": "Remove image",
     "imageTooLarge": "Images over 5MB cannot be attached",

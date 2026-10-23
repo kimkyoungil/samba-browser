@@ -39,6 +39,7 @@ import {
 } from './provider'
 import { resolveModel } from '../ai/models'
 import type { CodexInput } from './provider-codex'
+import { CODEX_TOOL_TOKEN_ENV, openCodexToolServer, type CodexToolServer } from './codex-tools'
 import type { AgentAuth } from '../ai/auth-route'
 import type { ChatEngine } from '../../shared/ai'
 import { makeCounter } from './counter'
@@ -105,7 +106,7 @@ export type PlaybookProvider = () => PlaybookDto[]
 // Codex 백엔드로 이미지가 함께 왔을 때 지시문 끝에 붙이는 안내
 export const CODEX_NO_IMAGE_NOTE =
   '(The user attached an image, but this AI connection cannot see images. Say so briefly and ask them to describe it.)'
-// Codex 대화의 지시문. Claude 쪽 시스템 프롬프트는 브라우저 도구를 부르라고 하므로 그대로 쓰면 없는 도구를 찾는다
+// 도구 통로를 못 연 Codex 대화의 지시문. Claude 쪽 시스템 프롬프트는 브라우저 도구를 부르라고 하므로 그대로 쓰면 없는 도구를 찾는다
 export const CODEX_CHAT_PROMPT = [
   'You are the chat assistant inside noden Browser, a desktop web browser, connected through Codex.',
   'In this chat you have NO browser-control tools: you cannot open pages, click, type, read tabs or see the screen.',
@@ -115,6 +116,18 @@ export const CODEX_CHAT_PROMPT = [
 ].join(' ')
 /** Codex 대화는 세션을 이어받지 않으므로 매번 이만큼의 앞부분 대화를 싣는다(Codex 문맥 창이 커서 넉넉히) */
 const CODEX_HISTORY = { turns: 12, chars: 1500 }
+/** Codex 에 붙는 도구 서버 이름. codex 의 도구 흔적 라벨이 `samba.<도구>` 로 온다 */
+const CODEX_TOOL_SERVER = 'samba'
+/** 도구 1건 제한 시간(초) — 확인 카드 응답 대기(30분)보다 길게 잡아 codex 가 먼저 끊지 않게 한다 */
+export const CODEX_TOOL_TIMEOUT_SEC = Math.ceil(CONFIRM_TIMEOUT_MS / 1000) + 60
+// 도구가 붙은 Codex 대화에서 Claude 와 같은 시스템 프롬프트 뒤에 붙이는 안내.
+// codex 는 자기 셸·웹 검색도 갖고 있어, 이 말이 없으면 사이트를 브라우저 대신 셸로 읽으려 든다
+export const CODEX_TOOLS_NOTE = [
+  'CODEX NOTE',
+  '- You run through Codex. The browser tools named above (get_page, navigate, click, new_tab, ...) are the tools of the MCP server "samba" - call them for anything on web pages and tabs.',
+  "- Never use your shell, file reads or web search to look at websites: only the samba tools see the user's browser, its tabs and signed-in sessions. Your shell is read-only and is not the browser.",
+  '- When the task is finished, call done(summary) and then give the user the same short answer.'
+].join('\n')
 
 /** 대화마다 고른 AI 로 실행할 때의 경로·모델. 앱 기본 연결을 그대로 쓰면 null */
 export interface EngineRoute {
@@ -715,7 +728,7 @@ export class AgentRunner {
         emit({ type: 'status', state: 'failed', message: 'auth:notConnected', toolCalls: 0 })
         return
       }
-      // Codex 구독 경로: Codex CLI 를 백엔드로 텍스트 응답을 받는다(samba 도구는 붙지 않는다)
+      // Codex 구독 경로: Codex CLI 를 백엔드로 돌리고, Claude 와 같은 도구 서버를 이 실행 동안만 HTTP 로 열어 붙인다
       if (backend === 'codex') {
         // Codex 경로는 이미지를 받지 않는다 — 조용히 빼지 않고 모델에게 그 사실을 알린다
         // Codex 는 대화를 이어받지 않는다 — 앞부분 대화를 매번 지시문 앞에 붙여 맥락을 넘긴다
@@ -728,19 +741,44 @@ export class AgentRunner {
             ? `${prompt}
 ${CODEX_NO_IMAGE_NOTE}`
             : prompt
-        settled = await this.runOnCodex(
-          {
-            prompt: `${codexHistory}${codexPrompt}`,
-            systemPrompt: CODEX_CHAT_PROMPT,
-            model: runModel,
-            effort: s.agentEffort,
-            // Codex 의 읽기 전용 셸이 앱 폴더를 뒤지지 않게 임시 폴더에서 돈다
-            cwd: tmpdir(),
-            abort
-          },
-          deduper,
-          emit
-        )
+        // 도구 통로를 못 열면(포트·서버 오류) 도구 없는 대화로라도 답한다 — 그때는 도구가 없다고 아는 지시문을 쓴다
+        let tools: CodexToolServer | null = null
+        try {
+          tools = await openCodexToolServer(server)
+        } catch (e) {
+          console.error('Codex 도구 통로 열기 실패', e instanceof Error ? e.message : String(e))
+        }
+        try {
+          settled = await this.runOnCodex(
+            {
+              prompt: `${codexHistory}${codexPrompt}`,
+              systemPrompt: tools
+                ? `${systemPrompt(s.permissionMode, s.agentEffort)}\n\n${CODEX_TOOLS_NOTE}`
+                : CODEX_CHAT_PROMPT,
+              model: runModel,
+              effort: s.agentEffort,
+              // Codex 의 읽기 전용 셸이 앱 폴더를 뒤지지 않게 임시 폴더에서 돈다
+              cwd: tmpdir(),
+              abort,
+              ...(tools
+                ? {
+                    mcpServer: {
+                      name: CODEX_TOOL_SERVER,
+                      url: tools.url,
+                      bearerTokenEnvVar: CODEX_TOOL_TOKEN_ENV,
+                      toolTimeoutSec: CODEX_TOOL_TIMEOUT_SEC
+                    },
+                    env: { [CODEX_TOOL_TOKEN_ENV]: tools.token }
+                  }
+                : {})
+            },
+            deduper,
+            emit,
+            counter.count
+          )
+        } finally {
+          await tools?.close()
+        }
         return
       }
       // 같은 대화면 SDK 세션을 이어받는다(앞선 지시·탭·도구 결과를 기억). 세션이 없거나 한 세션으로
@@ -1162,14 +1200,15 @@ ${CODEX_NO_IMAGE_NOTE}`
   }
 
   /**
-   * Codex CLI 백엔드로 1건을 실행한다. samba 도구는 인프로세스 MCP 라 붙지 않으므로
-   * 이 경로는 텍스트 응답(그리고 codex 자신이 쓴 도구 흔적)만 화면에 올린다.
+   * Codex CLI 백엔드로 1건을 실행한다. 텍스트 응답과 도구 흔적을 화면에 올린다 —
+   * samba 도구는 스스로 진행 줄을 올리므로 codex 의 같은 흔적은 실패했을 때만 올린다.
    * 종료 상태를 보냈으면 true 를 돌려준다
    */
   private async runOnCodex(
     input: CodexInput,
     deduper: ReturnType<typeof createTextDeduper>,
-    emit: (e: AgentEvent) => void
+    emit: (e: AgentEvent) => void,
+    toolCalls: () => number = () => 0
   ): Promise<boolean> {
     let lastError = ''
     for await (const event of runCodexQuery(input)) {
@@ -1178,6 +1217,7 @@ ${CODEX_NO_IMAGE_NOTE}`
         const text = deduper.accept(event.text)
         if (text) emit({ type: 'text', text })
       } else if (event.type === 'step') {
+        if (event.ok && event.label.startsWith(`${CODEX_TOOL_SERVER}.`)) continue
         emit({ type: 'step', label: event.label, ok: event.ok })
       } else if (event.type === 'error') {
         lastError = event.message
@@ -1187,7 +1227,7 @@ ${CODEX_NO_IMAGE_NOTE}`
         emit({
           type: 'status',
           state: event.ok ? 'done' : 'failed',
-          toolCalls: 0,
+          toolCalls: toolCalls(),
           message: event.ok ? undefined : kind ? `auth:${kind}` : message
         })
         return true

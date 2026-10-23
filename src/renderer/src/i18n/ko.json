@@ -301,7 +301,7 @@
     "queueSend": "대기열에 넣기",
     "showEarlier": "이전 메시지 {{count}}개 더 보기 (남은 {{total}}개)",
     "engineMenu": "이 대화의 AI",
-    "engineHint": "이 대화를 어느 AI 로 할지 고릅니다. 대화마다 따로 남습니다. Codex 는 글 대화만 합니다(브라우저 조작은 Claude).",
+    "engineHint": "이 대화를 어느 AI 로 할지 고릅니다. 대화마다 따로 남습니다. 둘 다 브라우저를 조작합니다(Codex 는 첨부 사진을 못 봅니다).",
     "imagePasted": "이미지 {{n}}장 첨부됨",
     "imageRemove": "이미지 제거",
     "imageTooLarge": "5MB 를 넘는 이미지는 붙일 수 없어요",

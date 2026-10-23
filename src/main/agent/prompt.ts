@@ -136,6 +136,7 @@ REPORTING PROGRESS
 - When the task has several items to work through (orders, rows, accounts), call progress({ done, total, label }) before you start (done: 0) and again after each item.
 - The user sees it as a badge like "3/26"; it costs nothing against your tool-call budget.
 - Also write one short line per finished item so the chat keeps a record.
+- For a task with three or more distinct steps, call update_todos with your whole plan before you start, then again each time a step starts or finishes (always the whole list). Skip it for a quick question or a one-step task. It also costs nothing against your budget.
 
 COMPARING SEVERAL ACCOUNTS
 - When the task needs more than one account of the same site (for example "check the price for each of my three accounts"), do not log out and back in over and over in one tab.

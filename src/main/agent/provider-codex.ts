@@ -16,6 +16,7 @@
 
 import { spawn } from 'node:child_process'
 import { resolveCliBin } from '../ai/cli-bin'
+import type { AgentTodo } from '../../shared/ipc'
 
 /** codex 에 붙일 MCP 서버 — 외부 stdio 프로그램, 또는 앱이 연 HTTP 통로 */
 export type CodexMcpServer =
@@ -40,6 +41,8 @@ export interface CodexInput {
   env?: Record<string, string>
   /** 추론 강도(입력줄에서 고른 값). Codex 모델은 low·medium·high 를 다 받는다(~/.codex/models_cache.json) */
   effort?: 'low' | 'medium' | 'high'
+  /** 생각 요약을 받을지(대화 화면에 '생각 과정'으로 띄우는 실행만). 번역 같은 짧은 호출은 끈다 */
+  thinking?: boolean
   abort: AbortController
   cwd?: string
 }
@@ -48,6 +51,10 @@ export interface CodexInput {
 export type CodexEvent =
   | { type: 'text'; text: string }
   | { type: 'step'; label: string; ok: boolean }
+  // 생각 요약 한 덩어리(reasoning 항목). 앞 덩어리에 이어 붙여 보여 준다
+  | { type: 'thinking'; text: string }
+  // codex 가 세운 계획(todo_list 항목, 매번 전체)
+  | { type: 'todos'; items: AgentTodo[] }
   | { type: 'error'; message: string }
   | { type: 'done'; ok: boolean; message?: string }
 
@@ -74,7 +81,7 @@ export const CODEX_BIN = 'codex'
  * 브라우저 조작은 samba 도구가 하고, codex 쪽 셸 실행은 읽기 전용으로 묶어 둔다
  */
 export function buildCodexArgs(
-  input: Pick<CodexInput, 'model' | 'mcpServer' | 'effort'>
+  input: Pick<CodexInput, 'model' | 'mcpServer' | 'effort' | 'thinking'>
 ): string[] {
   const args = [
     'exec',
@@ -88,6 +95,8 @@ export function buildCodexArgs(
   ]
   if (input.model.trim()) args.push('-m', input.model.trim())
   if (input.effort) args.push('-c', `model_reasoning_effort=${JSON.stringify(input.effort)}`)
+  // 생각 요약을 켠다 — 끄면(기본) reasoning 항목이 아예 오지 않는다(실기 2026-10-24 확인)
+  if (input.thinking === true) args.push('-c', 'model_reasoning_summary="detailed"')
   const server = input.mcpServer
   if (server && 'url' in server) {
     // TOML 인라인 테이블로 HTTP 서버 하나를 얹는다(-c mcp_servers.<name>={url=…})
@@ -144,14 +153,34 @@ export function parseCodexLine(line: string): CodexEvent[] {
   }
   if (type === 'turn.completed') return [{ type: 'done', ok: true }]
   if (type === 'item.completed') return itemEvents(event.item)
+  // 계획(todo_list)은 세울 때·고칠 때마다 started/updated 로 다시 온다 — 그때마다 화면 목록을 바꾼다
+  if (type === 'item.started' || type === 'item.updated') {
+    const todos = todoEvent(event.item)
+    return todos ? [todos] : []
+  }
   return []
+}
+
+/** todo_list 항목 → 할 일 목록 사건. codex 는 끝남 여부만 알려 준다(하는 중 표시는 없다) */
+function todoEvent(item: unknown): CodexEvent | null {
+  if (!item || typeof item !== 'object') return null
+  const record = item as Record<string, unknown>
+  if (str(record.type) !== 'todo_list' || !Array.isArray(record.items)) return null
+  const items: AgentTodo[] = []
+  for (const raw of record.items) {
+    if (!raw || typeof raw !== 'object') continue
+    const todo = raw as Record<string, unknown>
+    const text = str(todo.text).trim()
+    if (text) items.push({ text, status: todo.completed === true ? 'done' : 'pending' })
+  }
+  return items.length > 0 ? { type: 'todos', items } : null
 }
 
 function str(v: unknown): string {
   return typeof v === 'string' ? v : ''
 }
 
-// item.completed 하나를 화면 사건으로 바꾼다. 추론(reasoning)은 화면에 올리지 않는다
+// item.completed 하나를 화면 사건으로 바꾼다. 추론(reasoning)은 접힌 '생각 과정'으로만 올린다
 function itemEvents(item: unknown): CodexEvent[] {
   if (!item || typeof item !== 'object') return []
   const record = item as Record<string, unknown>
@@ -159,6 +188,14 @@ function itemEvents(item: unknown): CodexEvent[] {
   if (type === 'agent_message') {
     const text = str(record.text) || str(record.message)
     return text ? [{ type: 'text', text }] : []
+  }
+  if (type === 'reasoning') {
+    const text = str(record.text).trim()
+    return text ? [{ type: 'thinking', text }] : []
+  }
+  if (type === 'todo_list') {
+    const todos = todoEvent(item)
+    return todos ? [todos] : []
   }
   if (type === 'error') {
     return [{ type: 'error', message: str(record.message) || 'codex item error' }]

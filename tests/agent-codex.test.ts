@@ -52,9 +52,10 @@ describe('buildCodexArgs — 실제로 확인한 인자만 쓴다', () => {
 })
 
 describe('parseCodexLine — JSONL 사건 파싱', () => {
-  it('agent_message 만 텍스트로 올리고 reasoning 은 버린다', () => {
+  it('agent_message 만 답 글로 올리고 reasoning 은 생각 과정으로 따로 보낸다', () => {
     const events = FIXTURE.flatMap(parseCodexLine)
     expect(events).toEqual([
+      { type: 'thinking', text: '생각 중' },
       { type: 'text', text: '안녕하세요' },
       { type: 'step', label: 'samba.open_url', ok: true },
       { type: 'done', ok: true }

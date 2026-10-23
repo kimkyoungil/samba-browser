@@ -146,7 +146,11 @@ export function buildQueryOptions(
     abortController: input.abort,
     // 같은 대화의 앞선 실행을 이어받는다 — 앞선 지시·도구 결과를 기억한 채로 돈다
     ...(input.resume === undefined ? {} : { resume: input.resume }),
-    ...(input.partial === true ? { includePartialMessages: true } : {})
+    // 화면에 흘려 보내는 실행이면 생각 과정도 요약본으로 받는다(기본값은 생각 글을 비워서 보낸다).
+    // 생각의 양은 그대로 모델이 정한다(adaptive) — 보이게만 할 뿐이다
+    ...(input.partial === true
+      ? { includePartialMessages: true, thinking: { type: 'adaptive', display: 'summarized' } }
+      : {})
   }
 }
 

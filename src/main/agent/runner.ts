@@ -146,6 +146,16 @@ export const CODEX_TOOLS_NOTE = [
   '- When the task is finished, call done(summary) and then give the user the same short answer.'
 ].join('\n')
 
+// 화면에 보여 줄 생각 과정 상한(글자). 넘으면 앞부분을 버린다 — 몇 시간짜리 작업에서
+// 생각 글이 끝없이 불어 글자마다 IPC 로 통째 실려 가지 않게
+export const THINKING_SHOW_MAX = 20_000
+
+/** 생각 글을 이어 붙인다. 상한을 넘으면 앞을 잘라 '…' 로 시작하게 둔다 */
+export function appendThinking(prev: string, add: string): string {
+  const next = prev + add
+  return next.length > THINKING_SHOW_MAX ? `…${next.slice(-(THINKING_SHOW_MAX - 1))}` : next
+}
+
 /** 대화마다 고른 AI 로 실행할 때의 경로·모델. 앱 기본 연결을 그대로 쓰면 null */
 export interface EngineRoute {
   engine: ChatEngine
@@ -803,6 +813,8 @@ export class AgentRunner {
     })
     // 글자 단위로 받은 답 중 아직 문단으로 확정되지 않은 부분(화면의 '쓰는 중' 글)
     let partial = ''
+    // 이번 실행의 생각 과정(요약본). 화면의 접힌 '생각 과정' 칸으로만 간다
+    let thinking = ''
     try {
       const backend = agentBackend(runAuth)
       // 연결된 경로가 없다 — 실행하지 않고 "연결 필요" 안내로 끝낸다
@@ -841,6 +853,8 @@ export class AgentRunner {
                 : appendUserInstructions(CODEX_CHAT_PROMPT, s.agentInstructions ?? ''),
               model: runModel,
               effort: s.agentEffort,
+              // 대화 화면의 '생각 과정' 칸에 띄울 생각 요약을 받는다
+              thinking: true,
               // Codex 의 읽기 전용 셸이 앱 폴더를 뒤지지 않게 임시 폴더에서 돈다
               cwd: tmpdir(),
               abort,
@@ -905,9 +919,19 @@ export class AgentRunner {
             partial !== ''
           )
             partial += '\n'
+          // 생각 덩어리가 새로 시작하면 앞 덩어리와 빈 줄로 띄운다
+          else if (
+            ev.type === 'content_block_start' &&
+            ev.content_block.type === 'thinking' &&
+            thinking !== ''
+          )
+            thinking = appendThinking(thinking, '\n\n')
           else if (ev.type === 'content_block_delta' && ev.delta.type === 'text_delta') {
             partial += ev.delta.text
             emit({ type: 'partial', text: partial })
+          } else if (ev.type === 'content_block_delta' && ev.delta.type === 'thinking_delta') {
+            thinking = appendThinking(thinking, ev.delta.thinking)
+            emit({ type: 'thinking', text: thinking })
           }
         } else if (msg.type === 'assistant') {
           // SDK 는 API 오류(인증 실패·한도 등)를 어시스턴트 메시지의 error 칸으로 알리고, 결과 메시지에는
@@ -1164,6 +1188,7 @@ export class AgentRunner {
             ? { type: 'progress', kind: 'task', done, total }
             : { type: 'progress', kind: 'task', done, total, label }
         ),
+      onTodos: (items) => emit({ type: 'todos', items }),
       confirm: o.confirm,
       handoff: o.handoff,
       phone: phones
@@ -1303,11 +1328,18 @@ export class AgentRunner {
     toolCalls: () => number = () => 0
   ): Promise<boolean> {
     let lastError = ''
+    let thinking = ''
     for await (const event of runCodexQuery(input)) {
       if (input.abort.signal.aborted) return false
       if (event.type === 'text') {
         const text = deduper.accept(event.text)
         if (text) emit({ type: 'text', text })
+      } else if (event.type === 'thinking') {
+        // 생각 요약은 덩어리째 온다 — 앞 덩어리에 빈 줄로 이어 붙인다
+        thinking = appendThinking(thinking, thinking === '' ? event.text : `\n\n${event.text}`)
+        emit({ type: 'thinking', text: thinking })
+      } else if (event.type === 'todos') {
+        emit({ type: 'todos', items: event.items })
       } else if (event.type === 'step') {
         if (event.ok && event.label.startsWith(`${CODEX_TOOL_SERVER}.`)) continue
         emit({ type: 'step', label: event.label, ok: event.ok })

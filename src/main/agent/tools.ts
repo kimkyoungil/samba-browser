@@ -65,7 +65,7 @@ import {
 import type { AgentTarget } from '../browser/targets'
 import { automationBlocked, runAsAutomation } from '../browser/human-activity'
 import type { AgentToolCall, SiteActionTool } from '../../shared/site-memory'
-import type { HandoffKind } from '../../shared/ipc'
+import type { AgentTodo, AgentTodoStatus, HandoffKind } from '../../shared/ipc'
 import { PLAYBOOK_INSTRUCTIONS_MAX, type PlaybookDto } from '../../shared/playbook'
 
 // 읽기 전용 모드에서 실행 자체를 거부할 때 돌려주는 문자열(AI 가 읽고 판단)
@@ -216,6 +216,11 @@ const KEYPAD_ACCOUNT_UNKNOWN =
 export const PROGRESS_INVALID = 'refused: progress needs 0 <= done <= total and total >= 1'
 // 진행 라벨 표시 상한(상품명이 길어도 진행 배지가 무너지지 않게)
 const PROGRESS_LABEL_MAX = 80
+// update_todos 목록 상한(줄 수·한 줄 글자). 넘치면 체크리스트가 대화창을 덮는다
+const TODO_MAX = 20
+const TODO_TEXT_MAX = 120
+// update_todos 가 쓸 수 없는 목록을 받았을 때 돌려주는 문자열
+export const TODOS_INVALID = `refused: update_todos needs 1-${TODO_MAX} items with non-empty text`
 // 플레이북 수정 확인 카드에 보여 줄 덧붙일 글의 상한(카드가 무너지지 않게)
 const PLAYBOOK_PREVIEW_MAX = 400
 // diff 를 부탁했는데 직전 읽기와 똑같을 때 돌려주는 문자열
@@ -269,6 +274,15 @@ export function validateProgress(done: number, total: number): string | null {
   if (!Number.isInteger(done) || !Number.isInteger(total)) return PROGRESS_INVALID
   if (total < 1 || done < 0 || done > total) return PROGRESS_INVALID
   return null
+}
+
+/** update_todos 입력 정리. 빈 줄은 버리고 긴 줄은 자른다. 남는 게 없거나 상한을 넘으면 null */
+export function cleanTodos(items: { text: string; status: AgentTodoStatus }[]): AgentTodo[] | null {
+  if (items.length > TODO_MAX) return null
+  const out = items
+    .map((item) => ({ text: item.text.trim().slice(0, TODO_TEXT_MAX), status: item.status }))
+    .filter((item) => item.text !== '')
+  return out.length > 0 ? out : null
 }
 
 // https·제외 도메인·접근 정책 판정은 하네스·자동 채움과 공유한다(vault/access-gate.ts)
@@ -498,6 +512,8 @@ export interface ToolContext {
   onStep: (label: string, ok: boolean) => void
   // 진행 상황 보고(progress 도구). 주입되지 않으면 도구는 받기만 하고 아무 데도 알리지 않는다
   onProgress?: (p: { done: number; total: number; label?: string }) => void
+  // 할 일 목록 보고(update_todos 도구, 매번 전체). 주입되지 않으면 받기만 한다
+  onTodos?: (items: AgentTodo[]) => void
   // 행동 도구(click·type·select·scroll·switch_tab·dismiss_overlay·run_js) 호출 1건을 그대로 넘긴다.
   // 사이트 기억이 성공 경로를 뽑는 유일한 입구다 — 관찰 도구는 여기로 오지 않는다
   onCall?: (call: AgentToolCall) => void
@@ -2524,6 +2540,30 @@ ${submittedNote}`
     }
   )
 
+  // 할 일 목록도 progress 처럼 guard·진행 로그를 거치지 않는다 — 화면 체크리스트로만 뜬다
+  const updateTodos = tool(
+    'update_todos',
+    'Show the user a checklist of your plan for this task and keep it current. Send the WHOLE ' +
+      'list every time: mark the step you are on in_progress and finished steps done.',
+    {
+      items: z
+        .array(
+          z.object({
+            text: z.string().describe("one short step, in the user's language"),
+            status: z.enum(['pending', 'in_progress', 'done'])
+          })
+        )
+        .describe('every step of the plan, in order')
+    },
+    async ({ items }) => {
+      const todos = cleanTodos(items)
+      if (!todos) return text(TODOS_INVALID)
+      ctx.onTodos?.(todos)
+      const done = todos.filter((item) => item.status === 'done').length
+      return text(`ok: ${done}/${todos.length} done`)
+    }
+  )
+
   // 사이트 기억에 한 줄 남긴다. 저장 전에 비밀값·개인정보를 지우는 일은 서비스가 한다.
   // 지우기(forget)는 도구로 열지 않는다 — 설정 화면에서만 지운다
   const rememberSite = tool(
@@ -2731,6 +2771,7 @@ ${submittedNote}`
     fillSecret,
     login,
     progress,
+    updateTodos,
     ...(ctx.siteMemory ? [rememberSite] : []),
     ...(ctx.scripts ? [saveScript, runScript] : []),
     ...(ctx.playbooks ? [listPlaybooks, updatePlaybook] : []),
@@ -2775,6 +2816,7 @@ export const SAMBA_TOOL_NAMES = [
   'fill_secret',
   'login',
   'progress',
+  'update_todos',
   // 사이트 기억이 붙지 않은 실행에서도 이름은 허용 목록에 있어야 모델이 거부 문구를 받는다
   'remember_site',
   // 스크립트 저장소가 붙지 않은 실행에서도 이름은 허용 목록에 있어야 모델이 거부 문구를 받는다

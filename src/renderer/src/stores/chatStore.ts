@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { AgentEvent, ChatDto, ChatMessageDto, HandoffKind } from '@shared/ipc'
+import type { AgentEvent, AgentTodo, ChatDto, ChatMessageDto, HandoffKind } from '@shared/ipc'
 import { RECENT_CHAT_LIMIT, titleFromMessage } from '@shared/chat'
 import { agentImageDataUrl, type AgentImage } from '@shared/agent-image'
 import type { AgentFile } from '@shared/agent-file'
@@ -17,6 +17,9 @@ export interface ChatMessage {
   partial?: string
   // 사용자가 붙인 파일 이름(사진 말고). 이 세션 화면에만 있다 — 저장된 기록에는 '📎 이름' 한 줄로 남는다
   files?: string[]
+  // AI 가 이번 답을 쓰며 생각한 과정(요약본)과 세운 할 일 목록. 이 세션 화면에만 있다
+  thinking?: string
+  todos?: AgentTodo[]
 }
 
 // 일하는 중에 보낸 다음 말. 지금 작업이 끝나면 차례로 보낸다
@@ -361,6 +364,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
     if (e.type === 'text' && last?.role === 'ai')
       patchLast({ text: last.text ? `${last.text}\n${e.text}` : e.text, partial: undefined })
     if (e.type === 'partial' && last?.role === 'ai') patchLast({ partial: e.text })
+    // 생각 과정·할 일 목록은 매번 전체가 온다 — 그대로 갈아 끼운다
+    if (e.type === 'thinking' && last?.role === 'ai') patchLast({ thinking: e.text })
+    if (e.type === 'todos' && last?.role === 'ai') patchLast({ todos: e.items })
     if (e.type === 'step' && last?.role === 'ai') {
       patchLast({ steps: [...(last.steps ?? []), { label: e.label, ok: e.ok }] })
       set((s) => ({ toolCalls: s.toolCalls + 1, currentLabel: e.label, retry: null }))

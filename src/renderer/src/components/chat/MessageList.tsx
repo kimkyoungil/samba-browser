@@ -6,6 +6,8 @@ import { useChatStore, type ChatMessage } from '@renderer/stores/chatStore'
 import { StepLog } from './StepLog'
 import { MarkdownText } from './MarkdownText'
 import { CopyButton } from './CopyButton'
+import { ThinkingBlock } from './ThinkingBlock'
+import { TodoChecklist } from './TodoChecklist'
 
 // 맨 아래에서 이만큼(px) 안쪽이면 '따라 내려가는 중'으로 본다
 const STICK_GAP = 40
@@ -129,6 +131,9 @@ const MessageRow = memo(function MessageRow({
   const shown = m.partial ? (m.text ? `${m.text}\n${m.partial}` : m.partial) : m.text
   return (
     <div className="group max-w-[94%] self-start leading-relaxed">
+      {/* 답 글이 흘러오기 시작하면 '생각하는 중' 표시를 멈춘다 */}
+      {m.thinking && <ThinkingBlock text={m.thinking} live={running && !shown} />}
+      {m.todos && m.todos.length > 0 && <TodoChecklist items={m.todos} running={running} />}
       {shown && <MarkdownText text={shown} />}
       {/* 글자가 흘러오는 동안 끝에 깜빡이는 커서 */}
       {m.partial ? (

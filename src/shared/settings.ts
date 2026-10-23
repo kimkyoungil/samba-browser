@@ -22,7 +22,7 @@ import {
 } from './capture'
 import { isDiscordWebhook, isSlackWebhook, isTelegramChatId, isTelegramToken } from './notify'
 import { isSupabaseAnonKey, isSupabaseProjectUrl } from './sync'
-import { isHttpUrl, isInternalUrl, NEW_TAB_URL } from './url'
+import { isHttpUrl, isInternalUrl, NEW_TAB_URL, upgradeInternalUrl } from './url'
 import { playbookListSchema, type PlaybookDto } from './playbook'
 import { RECOMMEND_MAX, type DismissedRecommendation } from './activity-patterns'
 
@@ -323,7 +323,7 @@ export const settingsSchema = z.object({
     .min(MIN_SIDEBAR_WIDTH)
     .max(MAX_SIDEBAR_WIDTH)
     .catch(DEFAULT_SETTINGS.sidebarWidth),
-  lastUrl: z.string().min(1).catch(DEFAULT_SETTINGS.lastUrl),
+  lastUrl: z.string().min(1).transform(upgradeInternalUrl).catch(DEFAULT_SETTINGS.lastUrl),
   dangerWords: z.array(z.string()).catch([]),
   maxToolCalls: z.number().catch(DEFAULT_SETTINGS.maxToolCalls),
   permissionMode: z.enum(PERMISSION_MODES).catch(DEFAULT_SETTINGS.permissionMode),
@@ -356,12 +356,14 @@ export const settingsSchema = z.object({
   autofillAutoSubmit: z.boolean().catch(DEFAULT_SETTINGS.autofillAutoSubmit),
   vaultExcludedHosts: z.array(z.string()).catch(DEFAULT_SETTINGS.vaultExcludedHosts),
   // === 홈/새 탭/검색엔진 (신규 추가분) =======================================
-  // 홈 주소. http/https 나 내부 페이지(samba://newtab)가 아니면 기본값으로 되돌린다
+  // 홈 주소. http/https 나 내부 페이지(noden://newtab)가 아니면 기본값으로 되돌린다.
+  // 옛 samba://newtab 은 noden://newtab 으로 옮긴다(겉이름 noden 으로 바꾼 뒤)
   // 로컬 OCR 사용 여부
   ocrEnabled: z.boolean().catch(DEFAULT_SETTINGS.ocrEnabled),
   homeUrl: z
     .string()
     .refine((v) => isHttpUrl(v) || isInternalUrl(v))
+    .transform(upgradeInternalUrl)
     .catch(DEFAULT_SETTINGS.homeUrl),
   newTabUrl: z.enum(NEW_TAB_URL_MODES).catch(DEFAULT_SETTINGS.newTabUrl),
   searchEngine: z.enum(SEARCH_ENGINES).catch(DEFAULT_SETTINGS.searchEngine),

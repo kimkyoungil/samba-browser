@@ -3,6 +3,7 @@
 // 자동화(하네스·AI)가 연 탭은 기억하지 않는다 — 다시 뜨면 주인 없는 작업 탭이 된다.
 import { readFileSync, writeFileSync } from 'node:fs'
 import type { TabInfo } from '../../shared/ipc'
+import { upgradeInternalUrl } from '../../shared/url'
 
 export interface SavedTab {
   url: string
@@ -53,7 +54,8 @@ function parseTabList(parsed: unknown): SavedTab[] {
     const t = v as Partial<SavedTab>
     if (typeof t.url !== 'string' || t.url === '' || typeof t.profile !== 'string') continue
     out.push({
-      url: t.url,
+      // 옛 새 탭 주소(samba://newtab)로 저장된 탭은 새 주소(noden://newtab)로 연다
+      url: upgradeInternalUrl(t.url),
       profile: t.profile,
       mobile: t.mobile === true,
       active: t.active === true

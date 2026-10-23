@@ -6,11 +6,11 @@ import { MAX_ELEMENTS } from '../src/shared/snapshot'
 import {
   MAX_ELEMENTS as PAGE_MAX_ELEMENTS,
   PAGE_IPC,
-  INTERNAL_PROTOCOL,
+  INTERNAL_PROTOCOLS,
   GESTURE_ACTION_LABELS
 } from '../src/preload/page-constants'
 import { WEBSTORE_HOST as PAGE_WEBSTORE_HOST } from '../src/preload/page-webstore'
-import { INTERNAL_SCHEME } from '../src/shared/url'
+import { INTERNAL_SCHEMES } from '../src/shared/url'
 import { GESTURE_ACTIONS } from '../src/shared/gestures'
 import { WEBSTORE_HOST } from '../src/shared/extensions'
 
@@ -71,7 +71,7 @@ describe('page-constants 는 shared 원본과 동기화되어야 한다', () => 
   })
 
   it('내부 스킴 상수가 shared/url 과 같다', () => {
-    expect(INTERNAL_PROTOCOL).toBe(`${INTERNAL_SCHEME}:`)
+    expect([...INTERNAL_PROTOCOLS]).toEqual(INTERNAL_SCHEMES.map((s) => `${s}:`))
   })
 })
 

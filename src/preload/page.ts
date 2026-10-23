@@ -15,7 +15,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import {
   GESTURE_ACTION_LABELS,
-  INTERNAL_PROTOCOL,
+  INTERNAL_PROTOCOLS,
   PAGE_IPC,
   PICKER_LABELS,
   WEBSTORE_LABELS
@@ -281,9 +281,9 @@ if (isTopFrame && !isExtensionDocument) {
   // === 크롬 웹스토어 끝 =======================================================
 
   // === 자체 새 탭 페이지 브리지 ===============================================
-  // 내부 스킴(samba:) 문서에서만 메인 월드에 노출한다. 웹 페이지는 protocol 이 http(s) 라
+  // 내부 스킴(noden:·옛 samba:) 문서에서만 메인 월드에 노출한다. 웹 페이지는 protocol 이 http(s) 라
   // 이 분기에 들어올 수 없고, 메인도 발신자 URL 을 다시 검증한다
-  if (location.protocol === INTERNAL_PROTOCOL) {
+  if (INTERNAL_PROTOCOLS.includes(location.protocol)) {
     contextBridge.exposeInMainWorld('sambaNewTab', {
       init: (): Promise<NewTabInitDto> =>
         ipcRenderer.invoke(PAGE_IPC.newTabInit) as Promise<NewTabInitDto>,

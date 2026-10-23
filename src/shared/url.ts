@@ -8,14 +8,24 @@ const WEB_PROTOCOLS = ['http:', 'https:']
 const BLANK_URL = 'about:blank'
 
 // === 내부 페이지 (새 탭) ====================================================
-// 앱이 직접 제공하는 화면에만 쓰는 내부 스킴. protocol.handle('samba', …) 가 응답한다
-export const INTERNAL_SCHEME = 'samba'
+// 앱이 직접 제공하는 화면에만 쓰는 내부 스킴. protocol.handle('noden', …) 가 응답한다
+// (2026-10-23 겉이름을 noden 으로 — 종전 samba:// 로 저장된 탭·홈 주소도 계속 열리게 옛 스킴도 같이 받는다)
+export const INTERNAL_SCHEME = 'noden'
+export const LEGACY_INTERNAL_SCHEME = 'samba'
+export const INTERNAL_SCHEMES = [INTERNAL_SCHEME, LEGACY_INTERNAL_SCHEME] as const
 
 // 자체 새 탭 페이지 주소
-export const NEW_TAB_URL = 'samba://newtab'
+export const NEW_TAB_URL = 'noden://newtab'
+// 옛 새 탭 주소(저장된 설정·탭에 남아 있을 수 있다)
+export const LEGACY_NEW_TAB_URL = 'samba://newtab'
 
-// 내부 페이지 허용 목록 — 여기 없는 samba: 주소는 탭에 열 수 없다
-const INTERNAL_URLS: string[] = [NEW_TAB_URL]
+// 내부 페이지 허용 목록 — 여기 없는 내부 스킴 주소는 탭에 열 수 없다
+const INTERNAL_URLS: string[] = [NEW_TAB_URL, LEGACY_NEW_TAB_URL]
+
+/** 옛 새 탭 주소(samba://newtab)면 새 주소로 바꾼다. 그 밖의 값은 그대로 */
+export function upgradeInternalUrl(url: string): string {
+  return url.trim().toLowerCase().replace(/\/+$/, '') === LEGACY_NEW_TAB_URL ? NEW_TAB_URL : url
+}
 // === 내부 페이지 끝 =========================================================
 
 // 거부 시 AI 에게 돌려줄 문자열(도구 결과·오류 메시지 공용)

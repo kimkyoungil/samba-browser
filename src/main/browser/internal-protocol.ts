@@ -6,7 +6,7 @@ import { protocol } from 'electron'
 import { readFile } from 'node:fs/promises'
 import type { Session } from 'electron'
 import { extname, join, normalize, resolve, sep } from 'node:path'
-import { INTERNAL_SCHEME } from '../../shared/url'
+import { INTERNAL_SCHEMES } from '../../shared/url'
 
 // 내부 페이지 파일 응답의 content-type
 const MIME: Record<string, string> = {
@@ -39,12 +39,13 @@ const PAGES: Record<string, string> = {
  * secure 로 등록해야 보안 컨텍스트 취급을 받아 모듈 스크립트가 로드된다
  */
 export function registerInternalScheme(): void {
-  protocol.registerSchemesAsPrivileged([
-    {
-      scheme: INTERNAL_SCHEME,
+  // noden:// 과 옛 samba:// 를 같이 등록한다(옛 주소로 저장된 탭·홈 주소가 계속 열리게)
+  protocol.registerSchemesAsPrivileged(
+    INTERNAL_SCHEMES.map((scheme) => ({
+      scheme,
       privileges: { standard: true, secure: true, supportFetchAPI: true }
-    }
-  ])
+    }))
+  )
 }
 
 // 개발 모드에서는 vite 개발 서버의 같은 경로로 넘긴다
@@ -82,8 +83,10 @@ let installed: Handler | null = null
 /** 탭 세션에 내부 스킴 핸들러를 붙인다. 같은 세션에는 1회만 */
 export function attachInternalProtocol(ses: Session): void {
   if (!installed) return
-  if (ses.protocol.isProtocolHandled(INTERNAL_SCHEME)) return
-  ses.protocol.handle(INTERNAL_SCHEME, installed)
+  for (const scheme of INTERNAL_SCHEMES) {
+    if (ses.protocol.isProtocolHandled(scheme)) continue
+    ses.protocol.handle(scheme, installed)
+  }
 }
 
 export function registerInternalProtocol(opts: {
@@ -111,5 +114,5 @@ export function registerInternalProtocol(opts: {
     }
   }
   installed = handler
-  protocol.handle(INTERNAL_SCHEME, handler)
+  for (const scheme of INTERNAL_SCHEMES) protocol.handle(scheme, handler)
 }

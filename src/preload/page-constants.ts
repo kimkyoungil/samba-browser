@@ -13,7 +13,7 @@
 //   - PAGE_IPC.captureRegionMode/captureElementRect ← 같은 파일의 IPC 동명 채널
 //   - PAGE_IPC.webstoreInstall/webstoreInstallResult ← 같은 파일의 IPC.pageWebstoreInstall/pageWebstoreInstallResult
 //   - PAGE_IPC.agentCall/agentResult ← 같은 파일의 IPC.pageAgentCall/pageAgentResult
-//   - INTERNAL_PROTOCOL ← src/shared/url.ts 의 INTERNAL_SCHEME + ':'
+//   - INTERNAL_PROTOCOLS ← src/shared/url.ts 의 INTERNAL_SCHEMES 각각 + ':'
 //
 // 왜 복제하는가:
 // page.ts 는 sandbox:true 로 주입되는 preload 라 다른 파일을 require() 할 수 없다.
@@ -81,7 +81,8 @@ export const PICKER_LABELS = {
 } as const
 
 // 내부 페이지 스킴(location.protocol 형태). 새 탭 페이지에서만 브리지를 노출하는 조건이다
-export const INTERNAL_PROTOCOL = 'samba:'
+// noden: 이 지금 이름, samba: 는 옛 주소로 저장된 탭용
+export const INTERNAL_PROTOCOLS: readonly string[] = ['noden:', 'samba:']
 
 // 마우스 제스처 궤적 라벨에 쓰는 동작 이름(ko/en).
 // 키 집합은 src/shared/gestures.ts 의 GESTURE_ACTIONS 와 같아야 한다(preload-bundle 테스트가 대조)

@@ -31,6 +31,9 @@ import {
   runQuery,
   runCodexQuery,
   agentBackend,
+  createPromptChannel,
+  userMessageOf,
+  type PromptChannel,
   classifyAuthError,
   isFatalApiError,
   advanceSubscriptionFallback,
@@ -152,6 +155,15 @@ export const CODEX_TOOLS_NOTE = [
   '- When the task is finished, call done(summary) and then give the user the same short answer.'
 ].join('\n')
 
+/** 결과가 답한 사용자 말 uuid 들(user_message_uuids, 없으면 user_message_uuid). 옛 CLI 는 빈 배열 */
+export function answeredMessageIds(result: {
+  user_message_uuid?: string
+  user_message_uuids?: string[]
+}): string[] {
+  if (Array.isArray(result.user_message_uuids)) return result.user_message_uuids
+  return typeof result.user_message_uuid === 'string' ? [result.user_message_uuid] : []
+}
+
 // 화면에 보여 줄 생각 과정 상한(글자). 넘으면 앞부분을 버린다 — 몇 시간짜리 작업에서
 // 생각 글이 끝없이 불어 글자마다 IPC 로 통째 실려 가지 않게
 export const THINKING_SHOW_MAX = 20_000
@@ -243,6 +255,11 @@ export class AgentRunner {
   private session: ToolSession | null = null
   // 지금 도는 실행의 대화 기록(앱을 끌 때 바로 남긴다)
   private liveRun: LiveRun | null = null
+  // 지금 도는 Claude 실행에 말을 더 넣는 문(일하는 중 끼어들기). Codex·자동 이어가기 턴에는 없다
+  private liveInject: {
+    chatId: number | undefined
+    push: (text: string, images: AgentImage[], files: AgentFile[]) => string | null
+  } | null = null
   // 동시에 열린 레인 세션 수와 레인별 탭 보기 상태(하네스 계정 동시 처리)
   private laneSessions = 0
   private readonly lanes = new Map<string, LaneState>()
@@ -561,6 +578,23 @@ export class AgentRunner {
    * 작업이 끝나며 남기는 기록(run 의 finally)은 앱이 DB 를 닫은 뒤라 남지 못해, 일하는 도중 끈 질문이
    * 통째로 사라졌다. 앱 종료 순서에서 DB 를 닫기 전에 부른다
    */
+  /**
+   * 일하는 중 끼어들기 — 이 대화의 Claude 실행이 도는 중이면 말을 입력 통로에 넣어, AI 가 다음 도구 호출
+   * 사이에 집어 들게 한다(하던 턴을 끊지 않는다). 넣은 말의 id, 못 넣으면 null — 화면이 대기열로 돌린다
+   * (Codex 실행·자동 이어가기 턴·끝 상태를 이미 보낸 실행·다른 대화)
+   */
+  inject(
+    text: string,
+    chatId: number | undefined,
+    images: AgentImage[] = [],
+    files: AgentFile[] = []
+  ): string | null {
+    const live = this.liveInject
+    if (!live || live.chatId !== chatId || this.followUpRunning) return null
+    if (this.settledGeneration === this.generation) return null
+    return live.push(text, images, files)
+  }
+
   /** 대화의 AI 세션 연결을 버린다 — 다음 지시는 남은 기록 요약으로 새 세션을 연다(고쳐 다시 보내기) */
   forgetChatSession(chatId: number): void {
     this.chatSessions?.clear(chatId)
@@ -607,7 +641,7 @@ export class AgentRunner {
     files?: AgentFile[]
   ): Promise<void> {
     // 이 실행의 꼬리표. 이어 돌기가 넘겨준 것이 있으면 물려받는다(첫 await 전에 받아야 섞이지 않는다)
-    const turnId = this.inheritTurnId ?? randomUUID()
+    let turnId = this.inheritTurnId ?? randomUUID()
     this.inheritTurnId = null
     // 앞 실행이 끝 상태를 이미 보내 뒷정리만 남았으면 그게 끝날 때까지 기다린다 —
     // 화면은 끝 상태를 받자마자 대기열의 다음 말을 보내므로, 그 틈에 오면 '이미 실행 중'으로 튕기고
@@ -648,14 +682,28 @@ export class AgentRunner {
     const abort = new AbortController()
     this.abort = abort
     const gen = ++this.generation
-    // 이 실행이 남길 대화 기록. 화면으로 나가는 이벤트와 같은 값만 모은다(라벨·본문)
-    const entry: TranscriptEntry = {
+    // 이 실행이 남길 대화 기록. 화면으로 나가는 이벤트와 같은 값만 모은다(라벨·본문).
+    // 일하는 중 끼어든 말이 있으면 그 자리에서 기록을 나눈다(끼어든 말부터 새 기록)
+    let entry: TranscriptEntry = {
       prompt: `${prompt}${filesNote(files ?? [])}`,
       text: '',
       steps: []
     }
     const live: LiveRun = { chatId, entry, partial: '', saved: false }
     this.liveRun = live
+    // 지금 조각의 기록을 남기고 화면에 그 사용자 말의 줄 번호를 알린다. 저장 실패가 실행을 깨뜨리지는 않는다.
+    // 앱을 끄며 이미 남겼으면(saveRunningOnQuit) 다시 남기지 않는다
+    const saveTranscript = (): void => {
+      if (chatId === undefined || !this.transcript || live.saved) return
+      live.saved = true
+      try {
+        const saved = this.transcript(chatId, entry)
+        // 그새 다음 실행이 시작됐어도 꼬리표로 짝을 찾으니 세대와 상관없이 알린다
+        if (saved) this.emit({ type: 'saved', turnId, rowId: saved.userRowId })
+      } catch (e: unknown) {
+        console.error('대화 기록 저장 실패', e instanceof Error ? e.message : String(e))
+      }
+    }
     // 모델에 넘길 지시문 = 사용자 글 + 글 파일 내용. 플레이북·사이트 기억은 사용자 글(prompt)만 본다
     const filesText = textFilesBlock(files ?? [])
     const pdfs = (files ?? []).flatMap((f) =>
@@ -850,6 +898,29 @@ export class AgentRunner {
     let partial = ''
     // 이번 실행의 생각 과정(요약본). 화면의 접힌 '생각 과정' 칸으로만 간다
     let thinking = ''
+    // 일하는 중 끼어든 말 — 입력 통로에는 넣었고, 화면·기록은 AI 가 다음 응답을 시작할 때 나눈다
+    const injected: { id: string; text: string; prompt: string }[] = []
+    // 결과가 아직 '답함'으로 찍지 않은 끼어든 말 — 남아 있으면 그 말에 답할 턴이 이어지니 끝내지 않는다
+    const unanswered = new Set<string>()
+    let channel: PromptChannel | null = null
+    // 이 실행이 연 끼어들기 문. 닫을 때는 자기 것만 치운다(자동 이어가기를 끊고 들어온 새 실행의 문은 두고)
+    let injectDoor: AgentRunner['liveInject'] = null
+    const runChannelClose = (): void => {
+      channel?.close()
+      if (injectDoor !== null && this.liveInject === injectDoor) this.liveInject = null
+    }
+    // 끼어든 말을 AI 가 집어 든 뒤의 첫 응답 — 앞 말의 기록을 지금까지로 마감하고 끼어든 말로 새 기록을 연다
+    const splitForInjected = (): void => {
+      const batch = injected.splice(0)
+      saveTranscript()
+      entry = { prompt: batch.map((b) => b.prompt).join('\n'), text: '', steps: [] }
+      live.entry = entry
+      live.partial = ''
+      live.saved = false
+      turnId = randomUUID()
+      emit({ type: 'split', injectIds: batch.map((b) => b.id), texts: batch.map((b) => b.text) })
+      emit({ type: 'turn', turnId })
+    }
     try {
       const backend = agentBackend(runAuth)
       // 연결된 경로가 없다 — 실행하지 않고 "연결 필요" 안내로 끝낸다
@@ -925,7 +996,34 @@ export class AgentRunner {
         resume === undefined && chatId !== undefined && !learning && this.historyReader
           ? buildHistoryNote(this.historyReader(chatId))
           : ''
+      // 입력 통로로 돈다 — 일하는 동안 보낸 말을 다음 도구 호출 사이에 AI 가 집어 든다(하던 턴은 끊지 않는다)
+      const runChannel = createPromptChannel(
+        userMessageOf(`${historyNote}${prompt}${filesText}`, images, pdfs)
+      )
+      channel = runChannel
+      injectDoor = {
+        chatId,
+        push: (text, injectImages, injectFiles) => {
+          if (abort.signal.aborted || runChannel.closed()) return null
+          const id = randomUUID()
+          const injectPdfs = injectFiles.flatMap((f) =>
+            f.kind === 'pdf' ? [{ name: f.name, data: f.data }] : []
+          )
+          const message = userMessageOf(
+            `${text}${textFilesBlock(injectFiles)}`,
+            injectImages,
+            injectPdfs,
+            id
+          )
+          if (!runChannel.push(message)) return null
+          unanswered.add(id)
+          injected.push({ id, text, prompt: `${text}${filesNote(injectFiles)}` })
+          return id
+        }
+      }
+      this.liveInject = injectDoor
       const stream = runQuery({
+        channel: runChannel,
         prompt: `${historyNote}${prompt}${filesText}`,
         ...(resume === undefined ? {} : { resume }),
         ...(images && images.length > 0 ? { images } : {}),
@@ -947,8 +1045,11 @@ export class AgentRunner {
           // 글자 단위로 흘러오는 답. 화면의 '쓰는 중' 글로만 보낸다(기록·중복 제거는 아래 확정 글이 맡는다)
           if (msg.parent_tool_use_id !== null) continue
           const ev = msg.event
-          if (ev.type === 'message_start') partial = ''
-          else if (
+          if (ev.type === 'message_start') {
+            partial = ''
+            // 끼어든 말이 있으면 이 응답부터 그 말에 이어진다 — 화면·기록을 여기서 나눈다
+            if (injected.length > 0) splitForInjected()
+          } else if (
             ev.type === 'content_block_start' &&
             ev.content_block.type === 'text' &&
             partial !== ''
@@ -1017,6 +1118,14 @@ export class AgentRunner {
           // 재시도 가능한 오류(rate_limit·overloaded·server_error)는 진행 띠에만 알린다
           emit({ type: 'progress', kind: 'apiRetry', attempt: msg.attempt, reason: msg.error })
         } else if (msg.type === 'result') {
+          // 이 턴이 답한 말들. 끼어든 말이 아직 남았으면 그 말에 답할 다음 턴이 이어진다 — 끝내지 않는다
+          // (답한 말을 알려 주지 않는 옛 CLI 면 기다리지 않고 끝낸다)
+          const answered = answeredMessageIds(msg)
+          for (const id of answered) unanswered.delete(id)
+          const turnFailed = msg.subtype !== 'success' || msg.is_error
+          if (unanswered.size > 0 && answered.length > 0 && !turnFailed) continue
+          // 마지막 결과 — 통로를 닫는다(더는 끼어들 수 없고, SDK 는 이 턴 뒤 끝난다)
+          runChannelClose()
           const failed = msg.subtype !== 'success' || msg.is_error
           const window = largestContextWindow(msg.modelUsage)
           if (window !== undefined) contextWindow = window
@@ -1138,19 +1247,11 @@ export class AgentRunner {
         this.markAutomationIdle()
         this.clearPending()
       }
-      // 중단으로 끝났어도 그때까지의 대화는 남긴다. 저장 실패가 실행을 깨뜨리지는 않는다.
-      // 앱을 끄며 이미 남겼으면(saveRunningOnQuit) 다시 남기지 않는다
+      // 끼어들기 통로를 닫는다(중단·오류로 끝났어도)
+      runChannelClose()
+      // 중단으로 끝났어도 그때까지의 대화는 남긴다
       if (this.liveRun === live) this.liveRun = null
-      if (chatId !== undefined && this.transcript && !live.saved) {
-        live.saved = true
-        try {
-          const saved = this.transcript(chatId, entry)
-          // 그새 다음 실행이 시작됐어도 꼬리표로 짝을 찾으니 세대와 상관없이 알린다
-          if (saved) this.emit({ type: 'saved', turnId, rowId: saved.userRowId })
-        } catch (e: unknown) {
-          console.error('대화 기록 저장 실패', e instanceof Error ? e.message : String(e))
-        }
-      }
+      saveTranscript()
       // 이어서 돌릴 것이 있으면 이 실행이 완전히 끝난 다음(실행 상태를 비운 뒤)에 시작한다.
       // 그 사이 사용자가 새 지시를 넣었으면(세대가 바뀜) 양보한다
       const next = followUp

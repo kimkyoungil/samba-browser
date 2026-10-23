@@ -601,6 +601,26 @@ export function registerIpc(
     }
   )
 
+  // 일하는 중 끼어들기 — 도는 Claude 실행의 입력 통로에 말을 넣는다. 못 넣으면(Codex·자동 이어가기 턴·
+  // 이미 끝남) injected=false 로 답하고, 화면이 대기열에 둔다. 첨부는 실행과 같은 규칙으로 검증한다
+  handleFromRenderer(
+    IPC.agentInject,
+    (prompt: unknown, chatId?: unknown, rawImages?: unknown, rawFiles?: unknown) => {
+      if (typeof prompt !== 'string') throw new Error('bad prompt')
+      const images = parseAgentImages(rawImages)
+      if (images === null) throw new Error(tr('ipc.imagesInvalid'))
+      const files = parseAgentFiles(rawFiles)
+      if (files === null) throw new Error(tr('ipc.filesInvalid'))
+      const id = agent.inject(
+        prompt,
+        typeof chatId === 'number' && Number.isInteger(chatId) ? chatId : undefined,
+        images,
+        files
+      )
+      return id === null ? { injected: false } : { injected: true, id }
+    }
+  )
+
   // 채팅 말풍선 [복사]. 글자만 받는다(너무 긴 값은 자른다)
   handleFromRenderer(IPC.clipboardWriteText, (text: unknown) => {
     if (typeof text !== 'string') throw new Error('bad text')

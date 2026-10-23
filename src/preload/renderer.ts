@@ -205,6 +205,14 @@ const api = {
         : images === undefined
           ? invoke(IPC.agentRun, prompt, chatId, scheduleToken)
           : invoke(IPC.agentRun, prompt, chatId, scheduleToken, images),
+    // 일하는 중 끼어들기. injected=false 면 지금 실행에 못 넣었다(화면이 대기열에 둔다)
+    inject: (
+      prompt: string,
+      chatId?: number,
+      images?: AgentImage[],
+      files?: AgentFile[]
+    ): Promise<IpcResult<{ injected: boolean; id?: string }>> =>
+      invoke(IPC.agentInject, prompt, chatId, images, files),
     stop: (): Promise<IpcResult<void>> => invoke(IPC.agentStop),
     // 대화마다 고른 AI. chatId 가 null 이면(아직 안 만든 새 대화) 앱 기본 연결 쪽 값만 돌려준다
     chatEngine: (

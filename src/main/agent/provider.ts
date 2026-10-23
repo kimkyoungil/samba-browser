@@ -29,6 +29,11 @@ export interface ProviderInput {
   partial?: boolean
   /** 이번 실행의 인증 경로. 대화마다 AI 를 고른 대화가 넘긴다. 없으면 앱 기본 연결(currentAuth) */
   auth?: AgentAuth
+  /**
+   * 실행 도중 사용자 말을 더 밀어 넣을 입력 통로(일하는 중 끼어들기). 주면 prompt·images·documents 대신
+   * 이 통로가 SDK 의 입력이 되고, 호출부가 닫을 때까지 SDK 가 다음 말을 기다린다
+   */
+  channel?: PromptChannel
 }
 
 // 사용자가 설정에 넣어 둔 내 API 키를 읽는 함수. 메인 프로세스가 주입한다.
@@ -225,6 +230,42 @@ export interface AgentPdf {
   data: string
 }
 
+/** SDK 가 받는 사용자 메시지 한 건(글 + 이미지·문서 블록). uuid 를 주면 결과가 그 말에 답했는지 알려 준다 */
+export function userMessageOf(
+  prompt: string,
+  images?: AgentImage[],
+  documents?: AgentPdf[],
+  uuid?: string
+): SDKUserMessage {
+  const plain = (!images || images.length === 0) && (!documents || documents.length === 0)
+  return {
+    type: 'user',
+    parent_tool_use_id: null,
+    ...(uuid === undefined ? {} : { uuid: uuid as SDKUserMessage['uuid'] }),
+    message: {
+      role: 'user',
+      content: plain
+        ? prompt
+        : [
+            ...(documents ?? []).map((doc) => ({
+              type: 'document' as const,
+              title: doc.name,
+              source: {
+                type: 'base64' as const,
+                media_type: 'application/pdf' as const,
+                data: doc.data
+              }
+            })),
+            ...(images ?? []).map((img) => ({
+              type: 'image' as const,
+              source: { type: 'base64' as const, media_type: img.mediaType, data: img.data }
+            })),
+            { type: 'text' as const, text: prompt }
+          ]
+    }
+  }
+}
+
 /**
  * 이미지·PDF 가 붙었으면 SDK 가 받는 사용자 메시지 스트림(텍스트 + 이미지·문서 블록)으로 만든다.
  * 둘 다 없으면 문자열 그대로 — 기존 경로를 건드리지 않는다
@@ -235,32 +276,56 @@ export function promptInputOf(
   documents?: AgentPdf[]
 ): string | AsyncIterable<SDKUserMessage> {
   if ((!images || images.length === 0) && (!documents || documents.length === 0)) return prompt
-  const message: SDKUserMessage = {
-    type: 'user',
-    parent_tool_use_id: null,
-    message: {
-      role: 'user',
-      content: [
-        ...(documents ?? []).map((doc) => ({
-          type: 'document' as const,
-          title: doc.name,
-          source: {
-            type: 'base64' as const,
-            media_type: 'application/pdf' as const,
-            data: doc.data
-          }
-        })),
-        ...(images ?? []).map((img) => ({
-          type: 'image' as const,
-          source: { type: 'base64' as const, media_type: img.mediaType, data: img.data }
-        })),
-        { type: 'text' as const, text: prompt }
-      ]
-    }
-  }
+  const message = userMessageOf(prompt, images, documents)
   return (async function* () {
     yield message
   })()
+}
+
+/** 실행 도중 말을 더 넣을 수 있는 입력 통로. 닫으면 SDK 는 남은 턴을 마치고 끝난다 */
+export interface PromptChannel {
+  iterable: AsyncIterable<SDKUserMessage>
+  /** 말을 넣는다. 이미 닫혔으면 false */
+  push: (message: SDKUserMessage) => boolean
+  close: () => void
+  closed: () => boolean
+}
+
+/** 첫 말을 담은 입력 통로를 연다(일하는 중 끼어들기용) */
+export function createPromptChannel(first: SDKUserMessage): PromptChannel {
+  const queue: SDKUserMessage[] = [first]
+  let wake: (() => void) | null = null
+  let done = false
+  const ping = (): void => {
+    const w = wake
+    wake = null
+    w?.()
+  }
+  return {
+    iterable: (async function* () {
+      while (true) {
+        while (queue.length > 0) {
+          const next = queue.shift()
+          if (next) yield next
+        }
+        if (done) return
+        await new Promise<void>((resolve) => {
+          wake = resolve
+        })
+      }
+    })(),
+    push: (message) => {
+      if (done) return false
+      queue.push(message)
+      ping()
+      return true
+    },
+    close: () => {
+      done = true
+      ping()
+    },
+    closed: () => done
+  }
 }
 
 export function runQuery(input: ProviderInput): Query {
@@ -272,7 +337,7 @@ export function runQuery(input: ProviderInput): Query {
   // 키 경로인데 키가 사라졌으면 구독 자격으로 조용히 넘어가지 않고 멈춘다
   if (auth.mode === 'api_key' && !env) throw new Error(NOT_CONNECTED_ERROR)
   return query({
-    prompt: promptInputOf(input.prompt, input.images, input.documents),
+    prompt: input.channel?.iterable ?? promptInputOf(input.prompt, input.images, input.documents),
     options: buildQueryOptions(input, env)
   })
 }

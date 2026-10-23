@@ -25,6 +25,7 @@ export const IPC = {
   agentStop: 'agent:stop',
   agentEvent: 'agent:event', // main → renderer 이벤트
   agentConfirmReply: 'agent:confirmReply',
+  agentInject: 'agent:inject', // 일하는 중 끼어들기(Claude 실행의 입력 통로에 말을 넣는다)
   // --- AI 채팅 기록 — 본문은 평문이지만 비밀값은 담기지 않는다(진행 로그는 라벨만) ----
   chatList: 'chat:list',
   chatSearch: 'chat:search', // 제목·내용에 검색어가 든 대화(사이드바 검색칸)
@@ -321,6 +322,9 @@ export type AgentEvent =
   | { type: 'turn'; turnId: string }
   // 실행 기록을 남겼다 — rowId 는 그 실행의 사용자 말 줄 번호(고쳐 다시 보내기가 여기부터 지운다)
   | { type: 'saved'; turnId: string; rowId: number }
+  // 일하는 중 끼어든 말을 AI 가 집어 들었다 — 화면은 '곧 전달' 칩을 말풍선으로 바꾸고 새 답 말풍선을 연다
+  // (texts 는 화면에 칩이 없을 때 쓰는 글. 첨부 미리보기는 화면이 가진 것을 쓴다)
+  | { type: 'split'; injectIds: string[]; texts: string[] }
   | { type: 'step'; label: string; ok: boolean }
   | { type: 'confirm'; requestId: string; action: string; kind?: 'danger' | 'finish' }
   // 진행 상황만 알리는 이벤트(도구 호출 아님). SDK 재시도 대기와, 플레이북이 부르는

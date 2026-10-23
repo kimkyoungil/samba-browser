@@ -28,8 +28,10 @@ const INPUT_MAX_HEIGHT = 200
 
 export function ChatInput(): React.JSX.Element {
   const { t } = useTranslation()
-  const { send, status, stop, queue, enqueue, unqueue } = useChatStore()
+  const { send, status, stop, queue, unqueue, injecting, sendWhileRunning, engine } = useChatStore()
   const running = status === 'running'
+  // Claude 대화는 일하는 중 보낸 말을 바로 끼워 넣고, Codex 는 끝난 뒤 이어서 보낸다(대기열)
+  const canInject = engine === 'claude'
   // 쓰다 만 글은 앱을 껐다 켜도 남는다(이 화면의 저장소에 둔다)
   const [text, setText] = useState(loadDraft)
   // 클립보드에서 붙여 넣거나 끌어다 놓은 이미지. 보내면 비운다
@@ -49,7 +51,9 @@ export function ChatInput(): React.JSX.Element {
   })
   useEffect(() => {
     const onUnload = (): void => {
-      const queued = useChatStore.getState().queue.map((q) => q.text)
+      // AI 가 아직 집어 들지 못한 끼어든 말도 같이 남긴다
+      const st = useChatStore.getState()
+      const queued = [...st.injecting, ...st.queue].map((q) => q.text)
       if (queued.length > 0) saveDraft(draftOnQuit(textRef.current, queued))
     }
     window.addEventListener('beforeunload', onUnload)
@@ -152,8 +156,8 @@ export function ChatInput(): React.JSX.Element {
     setNote('')
     const attached = images.length > 0 ? images : undefined
     const attachedFiles = files.length > 0 ? files : undefined
-    // 일하는 중이면 대기열에 둔다 — 지금 작업이 끝나면 이어서 보낸다
-    if (running) enqueue(v, attached, attachedFiles)
+    // 일하는 중이면 지금 실행에 끼워 넣는다(못 넣으면 대기열 — 지금 작업이 끝나면 이어서 보낸다)
+    if (running) void sendWhileRunning(v, attached, attachedFiles)
     else void send(v, undefined, attached, attachedFiles)
   }
   // 붙여넣기에 그림·파일이 들어 있으면 글 대신 첨부로 받는다(텍스트 붙여넣기는 그대로)
@@ -166,6 +170,27 @@ export function ChatInput(): React.JSX.Element {
   const canSend = text.trim() !== '' || images.length > 0 || files.length > 0
   return (
     <div className="border-t border-black/5 p-3">
+      {/* 끼워 넣은 말 — AI 가 다음 단계 사이에 집어 들면 말풍선으로 바뀐다(되돌릴 수 없다) */}
+      {injecting.length > 0 && (
+        <div className="mb-2 flex flex-col gap-1">
+          {injecting.map((q) => (
+            <div
+              key={q.id}
+              className="flex items-center gap-2 rounded-lg bg-black/[.04] px-2.5 py-1.5 text-[12px] text-[var(--text2)]"
+            >
+              <span className="shrink-0 animate-pulse rounded-full border border-[var(--accent)] px-1.5 text-[10.5px] text-[var(--accent)]">
+                {t('chat.injecting')}
+              </span>
+              <span className="min-w-0 flex-1 truncate">
+                {q.text ||
+                  (q.files && q.files.length > 0
+                    ? q.files.map((f) => f.name).join(', ')
+                    : t('chat.imagePasted', { n: q.images?.length ?? 0 }))}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
       {queue.length > 0 && (
         <div className="mb-2 flex flex-col gap-1">
           {queue.map((q, i) => (
@@ -276,7 +301,11 @@ export function ChatInput(): React.JSX.Element {
             setCursor(step.cursor)
             setText(step.value)
           }}
-          placeholder={running ? t('chat.placeholderRunning') : t('chat.placeholder')}
+          placeholder={
+            running
+              ? t(canInject ? 'chat.placeholderInject' : 'chat.placeholderRunning')
+              : t('chat.placeholder')
+          }
           style={{ maxHeight: INPUT_MAX_HEIGHT }}
           className="min-w-0 flex-1 resize-none bg-transparent leading-relaxed outline-none"
         />
@@ -295,8 +324,10 @@ export function ChatInput(): React.JSX.Element {
           <button
             onClick={submit}
             disabled={!canSend}
-            aria-label={running ? t('chat.queueSend') : t('chat.send')}
-            title={running ? t('chat.queueSend') : t('chat.send')}
+            aria-label={
+              running ? t(canInject ? 'chat.injectSend' : 'chat.queueSend') : t('chat.send')
+            }
+            title={running ? t(canInject ? 'chat.injectSend' : 'chat.queueSend') : t('chat.send')}
             className="mb-px flex h-6.5 w-6.5 shrink-0 items-center justify-center rounded-lg bg-[var(--text)] text-white disabled:opacity-40"
           >
             <ArrowUp className="h-3.5 w-3.5" />

@@ -33,6 +33,10 @@ export interface QueuedMessage {
   images?: AgentImage[]
   files?: AgentFile[]
 }
+// 일하는 중 끼어든 말(메인이 받은 id). AI 가 집어 들면(split) 말풍선이 된다
+export interface InjectingMessage extends QueuedMessage {
+  id: string
+}
 export interface Step {
   label: string
   ok: boolean
@@ -120,6 +124,9 @@ interface ChatState {
   // 일하는 중에 보낸 말. 완료되면 맨 앞부터 하나씩 보내고, 중단·실패면 draftReturn 으로 입력칸에 돌려준다
   queue: QueuedMessage[]
   enqueue: (text: string, images?: AgentImage[], files?: AgentFile[]) => void
+  // 일하는 중 끼어들기 — 도는 실행에 말을 넣는다. 못 넣으면(Codex·이미 끝남·대기열이 있음) 대기열에 둔다
+  injecting: InjectingMessage[]
+  sendWhileRunning: (text: string, images?: AgentImage[], files?: AgentFile[]) => Promise<void>
   unqueue: (index: number) => void
   // 중단·실패로 못 보낸 대기 글. 입력칸이 takeDraftReturn 으로 받아 간다
   draftReturn: QueuedMessage | null
@@ -344,6 +351,28 @@ export const useChatStore = create<ChatState>((set, get) => ({
       ]
     })),
   unqueue: (index) => set((s) => ({ queue: s.queue.filter((_, i) => i !== index) })),
+  injecting: [],
+  sendWhileRunning: async (text, images, files) => {
+    // 이미 대기열에 말이 있으면 순서가 뒤바뀌지 않게 이것도 대기열 뒤에 둔다
+    const inject = window.samba.agent.inject
+    if (get().queue.length > 0 || !inject) return get().enqueue(text, images, files)
+    const chatId = get().activeChatId
+    const r = await inject(text, chatId ?? undefined, images, files)
+    const id = r.ok && r.data.injected ? r.data.id : undefined
+    // 못 넣었거나 그사이 실행이 끝났으면 대기열로 — 끝난 뒤 이어서 보낸다
+    if (id === undefined || get().status !== 'running') return get().enqueue(text, images, files)
+    set((s) => ({
+      injecting: [
+        ...s.injecting,
+        {
+          id,
+          text,
+          ...(images && images.length > 0 ? { images } : {}),
+          ...(files && files.length > 0 ? { files } : {})
+        }
+      ]
+    }))
+  },
   draftReturn: null,
   takeDraftReturn: () => {
     const d = get().draftReturn
@@ -415,6 +444,48 @@ export const useChatStore = create<ChatState>((set, get) => ({
         set({
           messages: [...msgs.slice(0, -2), { ...user, turnId: e.turnId }, last]
         })
+    }
+    // 끼어든 말을 AI 가 집어 들었다 — 칩을 말풍선으로 바꾸고 새 답 말풍선을 연다(묶여 들어간 말은 한 말풍선)
+    if (e.type === 'split') {
+      const picked = get().injecting.filter((q) => e.injectIds.includes(q.id))
+      const images = picked.flatMap((q) => q.images ?? [])
+      const files = picked.flatMap((q) => q.files ?? [])
+      const text = picked.length > 0 ? picked.map((q) => q.text).join('\n') : e.texts.join('\n')
+      // 앞 답에 남은 '쓰는 중' 글은 그때까지 쓴 대로 굳힌다
+      const before =
+        last?.role === 'ai' && last.partial
+          ? [
+              ...msgs.slice(0, -1),
+              {
+                ...last,
+                text: last.text ? `${last.text}\n${last.partial}` : last.partial,
+                partial: undefined
+              }
+            ]
+          : msgs
+      set((s) => ({
+        injecting: s.injecting.filter((q) => !e.injectIds.includes(q.id)),
+        messages: [
+          ...before,
+          {
+            id: nid(),
+            role: 'user',
+            text,
+            ...(images.length > 0 ? { images: images.map(agentImageDataUrl) } : {}),
+            ...(files.length > 0 ? { files: files.map((f) => f.name) } : {}),
+            ...(images.length > 0 || files.length > 0
+              ? {
+                  sent: {
+                    ...(images.length > 0 ? { images } : {}),
+                    ...(files.length > 0 ? { files } : {})
+                  }
+                }
+              : {})
+          },
+          { id: nid(), role: 'ai', text: '', steps: [] }
+        ]
+      }))
+      return
     }
     // 기록을 남겼다 — 꼬리표가 같은 말에 줄 번호를 단다(이어 돌기가 남긴 뒤 줄은 첫 번호를 지킨다)
     if (e.type === 'saved') {
@@ -488,14 +559,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
               }
             ]
           : get().messages
-      // 대기 중인 다음 말 — 완료면 맨 앞 것을 이어서 보내고, 중단·실패면 저절로 돌지 않게 입력칸으로 돌려준다
-      const queue = get().queue
+      // 대기 중인 다음 말 — 완료면 맨 앞 것을 이어서 보내고, 중단·실패면 저절로 돌지 않게 입력칸으로 돌려준다.
+      // AI 가 집어 들지 못하고 끝난 끼어든 말도 대기열 맨 앞으로 돌린다(같은 규칙으로 보내거나 돌려준다)
+      const leftover = done ? get().injecting : []
+      const queue = leftover.length > 0 ? [...leftover.map(toQueued), ...get().queue] : get().queue
       const next = done && e.state === 'done' ? queue[0] : undefined
       const returned = done && e.state !== 'done' && queue.length > 0 ? queue : []
       const prevDraft = get().draftReturn
       const draftParts = [...(prevDraft ? [prevDraft] : []), ...returned]
       set({
         messages,
+        ...(leftover.length > 0 ? { injecting: [], queue } : {}),
         ...(next ? { queue: queue.slice(1) } : {}),
         ...(returned.length > 0
           ? {
@@ -523,6 +597,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
   }
 }))
+
+/** 끼어든 말을 대기열 모양으로(메인이 준 id 는 버린다) */
+function toQueued(q: InjectingMessage): QueuedMessage {
+  return {
+    text: q.text,
+    ...(q.images ? { images: q.images } : {}),
+    ...(q.files ? { files: q.files } : {})
+  }
+}
 
 /** 저장된 메시지 한 줄을 화면 메시지로 바꾼다(system 은 AI 말풍선으로 보여 준다) */
 function toChatMessage(row: ChatMessageDto): ChatMessage {

@@ -952,6 +952,11 @@
       "shortcutWorkspace": "작업공간 전환"
     },
     "agent": {
+      "instructionsTitle": "AI 지침",
+      "instructionsDesc": "모든 대화(Claude·Codex)에 늘 적용돼요. 예: 존댓말로, 결론부터, 숫자는 표로",
+      "instructionsPlaceholder": "예) 답은 존댓말로, 결론부터 짧게. 금액은 원 단위로 콤마를 찍어 줘.",
+      "instructionsSaved": "칸을 벗어나면 저장돼요",
+      "instructionsUnsaved": "저장 전 — 칸 밖을 누르면 저장돼요",
       "notifyTitle": "알림",
       "notify": "작업 완료 알림",
       "notifyDesc": "에이전트가 일을 마치면 알려 줘요",

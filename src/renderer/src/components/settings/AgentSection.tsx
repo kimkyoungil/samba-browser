@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
 import { Switch } from '@renderer/components/ui/switch'
-import type { PermissionMode } from '@shared/settings'
+import { AGENT_INSTRUCTIONS_MAX, type PermissionMode } from '@shared/settings'
 import { useRecommendStore } from '@renderer/stores/recommendStore'
 import { useSiteMemoryStore } from '@renderer/stores/siteMemoryStore'
 import { connectionKeyOf } from '@renderer/components/automation/flowgraph-view'
@@ -52,6 +52,10 @@ export function AgentSection({ settings, update }: SectionProps): React.JSX.Elem
 
   return (
     <>
+      <InstructionsSection
+        value={settings.agentInstructions}
+        onSave={(v) => update({ agentInstructions: v })}
+      />
       <SettingsSection title={t('settingsPage.agent.notifyTitle')}>
         <SettingsToggleRow
           label={t('settingsPage.agent.notify')}
@@ -239,5 +243,52 @@ export function AgentSection({ settings, update }: SectionProps): React.JSX.Elem
         <p className="text-[11.5px] text-[var(--text2)]">{t('settingsPage.behavior.bridgeHint')}</p>
       </SettingsSection>
     </>
+  )
+}
+
+// AI 지침 — 모든 대화(Claude·Codex)의 지시문 끝에 늘 붙는다. 칸을 떠날 때 저장한다
+function InstructionsSection({
+  value,
+  onSave
+}: {
+  value: string
+  onSave: (v: string) => void
+}): React.JSX.Element {
+  const { t } = useTranslation()
+  const [draft, setDraft] = useState(value)
+  // 다른 PC 에서 동기화돼 값이 바뀌면 칸도 따라간다(쓰는 중이 아닐 때)
+  const [seen, setSeen] = useState(value)
+  if (seen !== value) {
+    setSeen(value)
+    setDraft(value)
+  }
+  const dirty = draft !== value
+  return (
+    <SettingsSection
+      title={t('settingsPage.agent.instructionsTitle')}
+      description={t('settingsPage.agent.instructionsDesc')}
+    >
+      <textarea
+        value={draft}
+        onChange={(e) => setDraft(e.target.value.slice(0, AGENT_INSTRUCTIONS_MAX))}
+        onBlur={() => {
+          if (dirty) onSave(draft)
+        }}
+        rows={5}
+        placeholder={t('settingsPage.agent.instructionsPlaceholder')}
+        aria-label={t('settingsPage.agent.instructionsTitle')}
+        className="w-full resize-y rounded-[9px] border border-[var(--line)] bg-white px-3 py-2 text-[12.5px] leading-relaxed outline-none focus:border-[var(--text2)]"
+      />
+      <div className="flex items-center justify-between text-[11px] text-[var(--text3)]">
+        <span>
+          {dirty
+            ? t('settingsPage.agent.instructionsUnsaved')
+            : t('settingsPage.agent.instructionsSaved')}
+        </span>
+        <span>
+          {draft.length.toLocaleString()} / {AGENT_INSTRUCTIONS_MAX.toLocaleString()}
+        </span>
+      </div>
+    </SettingsSection>
   )
 }

@@ -81,6 +81,9 @@ export const SEARCH_ENGINES = ['google', 'naver'] as const
 export type SearchEngine = (typeof SEARCH_ENGINES)[number]
 // === 신규 추가분 끝 =========================================================
 
+/** AI 지침 상한(글자) */
+export const AGENT_INSTRUCTIONS_MAX = 4000
+
 export const DEFAULT_SETTINGS = {
   model: 'sonnet' as const,
   language: 'ko' as const,
@@ -192,6 +195,8 @@ export const DEFAULT_SETTINGS = {
   sidebarSections: { tabs: true, chat: true, bookmarks: true } as SidebarSections,
   // 에이전트 추론 강도(채팅 입력줄에서 고른다). 기기 간 같은 값을 쓰도록 동기화한다
   agentEffort: 'medium' as AgentEffort,
+  // 모든 AI 대화에 늘 붙는 사용자 지침(존댓말·결론 먼저 같은 규칙). 비면 붙이지 않는다
+  agentInstructions: '',
   // === 2b 추가분 끝 =========================================================
   // === 폰 연동(3단계 추가분) ================================================
   // adb/scrcpy 실행 파일 경로. 빈 문자열이면 설정 화면의 "자동 찾기" 를 안내한다
@@ -430,6 +435,11 @@ export const settingsSchema = z.object({
     })
     .catch(DEFAULT_SETTINGS.sidebarSections),
   agentEffort: z.enum(AGENT_EFFORTS).catch(DEFAULT_SETTINGS.agentEffort),
+  // 너무 긴 지침은 잘라 둔다(지시문이 지침에 묻히지 않게)
+  agentInstructions: z
+    .string()
+    .transform((v) => v.slice(0, AGENT_INSTRUCTIONS_MAX))
+    .catch(DEFAULT_SETTINGS.agentInstructions),
   // === 2b 추가분 끝 ===========================================================
   // === 폰 연동(3단계 추가분) — 경로는 기기별 값이라 동기화하지 않는다 ==========
   adbPath: z.string().catch(DEFAULT_SETTINGS.adbPath),

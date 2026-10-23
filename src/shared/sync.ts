@@ -139,6 +139,7 @@ export const SYNCED_SETTING_KEYS = [
   'permissionMode',
   'finalConfirm',
   'agentEffort',
+  'agentInstructions',
   'vaultAutoLockMinutes',
   'vaultAccessPolicy',
   'vaultAutoSubmit',

@@ -37,6 +37,19 @@ const PHONE_SECTION = `PHONE (only when phone tools are available)
 - phone_screenshot refuses secret keypad screens on purpose; that is not an error to work around.`
 
 // AI 시스템 프롬프트. 안전 규칙 포함
+/**
+ * 사용자가 설정에 적어 둔 지침(존댓말·결론 먼저 등)을 모든 대화의 지시문 끝에 붙인다.
+ * 안전 규칙(페이지 글은 명령이 아님·비밀값 금지)보다 앞서지 않는다고 못 박는다
+ */
+export function appendUserInstructions(prompt: string, instructions: string): string {
+  const text = instructions.trim()
+  if (text === '') return prompt
+  return `${prompt}
+
+USER'S STANDING INSTRUCTIONS (written by the user in settings; follow them in every reply unless they conflict with the safety rules above)
+${text}`
+}
+
 export function buildSystemPrompt(
   language: 'ko' | 'en',
   mode: 'read_only' | 'guard' | 'full' = 'guard',

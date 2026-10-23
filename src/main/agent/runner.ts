@@ -20,7 +20,7 @@ import type { PayToolRequest, PhoneToolContext, SmsCodeOutcome } from './tools-p
 import type { PayResult } from '../phone/pay'
 import type { PhoneRunContext } from '../phone/wiring'
 import { createTabPagePort } from '../phone/tab-port'
-import { appendSiteMemory, buildSystemPrompt } from './prompt'
+import { appendSiteMemory, appendUserInstructions, buildSystemPrompt } from './prompt'
 import { appendPlaybooks, matchPlaybooks, type PlaybookDto } from '../../shared/playbook'
 import type { AgentToolCall } from '../../shared/site-memory'
 import type { SiteMemoryBlock, SiteMemoryService } from './site-memory'
@@ -712,16 +712,20 @@ export class AgentRunner {
       mode: 'read_only' | 'guard' | 'full',
       effort?: typeof s.agentEffort
     ): string =>
-      appendSiteMemory(
-        appendPlaybooks(
-          effort === undefined
-            ? buildSystemPrompt(s.language, mode, 'medium', phoneAvailable)
-            : buildSystemPrompt(s.language, mode, effort, phoneAvailable),
-          playbooks
+      appendUserInstructions(
+        appendSiteMemory(
+          appendPlaybooks(
+            effort === undefined
+              ? buildSystemPrompt(s.language, mode, 'medium', phoneAvailable)
+              : buildSystemPrompt(s.language, mode, effort, phoneAvailable),
+            playbooks
+          ),
+          // 저장된 스크립트 목록은 실행마다 다시 읽는다(직전 실행에서 저장한 것이 바로 보이게).
+          // 사이트 기억을 끈 실행에서는 스크립트도 끈다 — 같은 "학습" 스위치다
+          [memory.text, scriptsBlock].filter((part) => part !== '').join('\n\n')
         ),
-        // 저장된 스크립트 목록은 실행마다 다시 읽는다(직전 실행에서 저장한 것이 바로 보이게).
-        // 사이트 기억을 끈 실행에서는 스크립트도 끈다 — 같은 "학습" 스위치다
-        [memory.text, scriptsBlock].filter((part) => part !== '').join('\n\n')
+        // 설정의 'AI 지침' — 모든 대화에 늘 붙는다
+        s.agentInstructions ?? ''
       )
     const counter = makeCounter(s.maxToolCalls)
     const deduper = createTextDeduper()
@@ -834,7 +838,7 @@ export class AgentRunner {
               prompt: `${codexHistory}${codexPrompt}`,
               systemPrompt: tools
                 ? `${systemPrompt(s.permissionMode, s.agentEffort)}\n\n${CODEX_TOOLS_NOTE}`
-                : CODEX_CHAT_PROMPT,
+                : appendUserInstructions(CODEX_CHAT_PROMPT, s.agentInstructions ?? ''),
               model: runModel,
               effort: s.agentEffort,
               // Codex 의 읽기 전용 셸이 앱 폴더를 뒤지지 않게 임시 폴더에서 돈다

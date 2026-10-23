@@ -952,6 +952,11 @@
       "shortcutWorkspace": "Switch workspace"
     },
     "agent": {
+      "instructionsTitle": "AI instructions",
+      "instructionsDesc": "Applied to every chat (Claude and Codex). e.g. be polite, lead with the answer, use tables for numbers",
+      "instructionsPlaceholder": "e.g. Lead with the conclusion and keep it short. Format amounts with commas.",
+      "instructionsSaved": "Saved when you leave the box",
+      "instructionsUnsaved": "Not saved yet — click outside the box to save",
       "notifyTitle": "Notifications",
       "notify": "Notify when done",
       "notifyDesc": "Let you know when the agent finishes a task",

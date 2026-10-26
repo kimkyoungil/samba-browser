@@ -98,6 +98,7 @@ import {
 } from '../../shared/ai'
 import type { AiProviderId, ApiKeyVendor, ChatEngine, TaskModelKey } from '../../shared/ai'
 import { ChatEngineStore } from '../agent/chat-engine'
+import { CodexThreadStore } from '../agent/codex-threads'
 import { ApiKeyStore } from '../ai/keys'
 import {
   defaultProbes,
@@ -390,6 +391,8 @@ export function registerIpc(
     new ChatSessionStore(join(app.getPath('userData'), 'chat-sessions.json')),
     (chatId) => chats.messages(chatId).map((m) => ({ role: m.role, content: m.content }))
   )
+  // Codex 대화가 다음 말에 이어받을 스레드(앞 대화·사진을 Codex 가 기억한다). 이 PC 에만 남는다
+  agent.setCodexThreads(new CodexThreadStore(join(app.getPath('userData'), 'codex-threads.json')))
   // 대화마다 고른 AI(Claude/Codex). 이 PC 에만 남는다(로그인·연결 상태에 묶여 있어 동기화하지 않는다)
   const chatEngines = new ChatEngineStore(join(app.getPath('userData'), 'chat-engines.json'))
   const chatEngineOf = (chatId: number | null | undefined): ChatEngine | null =>
@@ -648,6 +651,8 @@ export function registerIpc(
   handleFromRenderer(IPC.chatDelete, (chatId: number) => {
     // 지운 대화의 AI 선택도 같이 지운다(같은 번호가 다시 쓰일 일은 없지만 파일이 쌓이지 않게)
     chatEngines.clear(chatId)
+    // 이어받던 Claude 세션·Codex 스레드 연결도 버린다
+    agent.forgetChatSession(chatId)
     return chats.remove(chatId)
   })
   // 보낸 말 고쳐 다시 보내기·답 다시 받기 — 그 말부터 끝까지 지우고, 이어받던 AI 세션도 버린다

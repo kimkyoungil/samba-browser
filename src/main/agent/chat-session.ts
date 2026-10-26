@@ -153,7 +153,7 @@ export interface HistoryMessage {
  */
 export function buildHistoryNote(
   messages: readonly HistoryMessage[],
-  // Codex 대화는 세션을 이어받지 않고 매번 이 요약으로 맥락을 넘긴다 — 그쪽은 더 길게 싣는다
+  // Codex 대화가 새 스레드로 시작할 때(첫 말·AI 를 바꾼 뒤)도 이 요약으로 맥락을 넘긴다 — 그쪽은 더 길게 싣는다
   opts: { turns?: number; chars?: number } = {}
 ): string {
   const turns = opts.turns ?? HISTORY_NOTE_TURNS

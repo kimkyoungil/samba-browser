@@ -43,6 +43,12 @@ export interface CodexInput {
   effort?: 'low' | 'medium' | 'high'
   /** 생각 요약을 받을지(대화 화면에 '생각 과정'으로 띄우는 실행만). 번역 같은 짧은 호출은 끈다 */
   thinking?: boolean
+  /** 첫 지시에 붙일 사진 파일 경로들(`--image`). 호출부가 임시 파일로 써 두고 끝나면 지운다 */
+  imagePaths?: string[]
+  /** 이어받을 Codex 스레드 id. 있으면 `codex exec resume <id>` 로 보내 앞 대화를 Codex 가 그대로 기억한다 */
+  resume?: string
+  /** 스레드를 남겨 다음 말이 이어받게 한다(대화 실행). 끄면 `--ephemeral` — 번역 같은 한 번짜리 호출 */
+  keepThread?: boolean
   abort: AbortController
   cwd?: string
 }
@@ -55,6 +61,8 @@ export type CodexEvent =
   | { type: 'thinking'; text: string }
   // codex 가 세운 계획(todo_list 항목, 매번 전체)
   | { type: 'todos'; items: AgentTodo[] }
+  // 이 실행의 Codex 스레드 id(thread.started). 다음 말이 이어받는다
+  | { type: 'thread'; id: string }
   | { type: 'error'; message: string }
   | { type: 'done'; ok: boolean; message?: string }
 
@@ -81,18 +89,24 @@ export const CODEX_BIN = 'codex'
  * 브라우저 조작은 samba 도구가 하고, codex 쪽 셸 실행은 읽기 전용으로 묶어 둔다
  */
 export function buildCodexArgs(
-  input: Pick<CodexInput, 'model' | 'mcpServer' | 'effort' | 'thinking'>
+  input: Pick<
+    CodexInput,
+    'model' | 'mcpServer' | 'effort' | 'thinking' | 'imagePaths' | 'resume' | 'keepThread'
+  >
 ): string[] {
   const args = [
     'exec',
+    ...(input.resume ? ['resume'] : []),
     '--json',
     '--skip-git-repo-check',
-    '--ephemeral',
     // 사용자/프로젝트 config.toml 의 훅·MCP 를 상속하지 않는다(우리 설정만 쓴다)
-    '--ignore-user-config',
-    '--sandbox',
-    'read-only'
+    '--ignore-user-config'
   ]
+  // 대화 실행은 스레드를 남겨 다음 말이 이어받는다. 한 번짜리 호출(번역 등)은 남기지 않는다
+  if (!input.resume && input.keepThread !== true) args.push('--ephemeral')
+  // 이어받기 명령에는 --sandbox 가 없다 — 같은 읽기 전용 제한을 설정 값으로 건다(실기 codex-cli 0.160.1)
+  if (input.resume) args.push('-c', 'sandbox_mode="read-only"')
+  else args.push('--sandbox', 'read-only')
   if (input.model.trim()) args.push('-m', input.model.trim())
   if (input.effort) args.push('-c', `model_reasoning_effort=${JSON.stringify(input.effort)}`)
   // 생각 요약을 켠다 — 끄면(기본) reasoning 항목이 아예 오지 않는다(실기 2026-10-24 확인)
@@ -117,6 +131,10 @@ export function buildCodexArgs(
       .join(',')}]}`
     args.push('-c', `mcp_servers.${name}=${toml}`)
   }
+  // 사진은 한 장씩 `--image=경로` 로 붙인다(`-i a b` 꼴은 뒤의 인자까지 사진으로 먹을 수 있다)
+  for (const path of input.imagePaths ?? []) args.push(`--image=${path}`)
+  // 이어받기: 스레드 id 다음의 '-' 는 지시를 stdin 에서 읽으라는 뜻이다
+  if (input.resume) args.push(input.resume, '-')
   return args
 }
 
@@ -152,6 +170,10 @@ export function parseCodexLine(line: string): CodexEvent[] {
     return [{ type: 'done', ok: false, message: message || 'turn.failed' }]
   }
   if (type === 'turn.completed') return [{ type: 'done', ok: true }]
+  if (type === 'thread.started') {
+    const id = str(event.thread_id)
+    return id ? [{ type: 'thread', id }] : []
+  }
   if (type === 'item.completed') return itemEvents(event.item)
   // 계획(todo_list)은 세울 때·고칠 때마다 started/updated 로 다시 온다 — 그때마다 화면 목록을 바꾼다
   if (type === 'item.started' || type === 'item.updated') {

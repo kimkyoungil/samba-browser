@@ -55,6 +55,8 @@ describe('parseCodexLine — JSONL 사건 파싱', () => {
   it('agent_message 만 답 글로 올리고 reasoning 은 생각 과정으로 따로 보낸다', () => {
     const events = FIXTURE.flatMap(parseCodexLine)
     expect(events).toEqual([
+      // 시작 줄의 스레드 id 는 다음 말이 이어받는다
+      { type: 'thread', id: '01a0b7a9-b0c5-7b02-924a-000b608f2083' },
       { type: 'thinking', text: '생각 중' },
       { type: 'text', text: '안녕하세요' },
       { type: 'step', label: 'samba.open_url', ok: true },

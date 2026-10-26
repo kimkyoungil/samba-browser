@@ -301,7 +301,7 @@
     "queueSend": "Add to queue",
     "showEarlier": "Show {{count}} earlier messages ({{total}} hidden)",
     "engineMenu": "AI for this chat",
-    "engineHint": "Pick which AI this chat uses. Saved per chat. Both can operate the browser (Codex cannot see attached images).",
+    "engineHint": "Pick which AI this chat uses. Saved per chat. Both can operate the browser, read images and PDFs, and remember the conversation.",
     "copy": "Copy",
     "copied": "Copied",
     "dropHere": "Drop to attach (images, PDF, text files)",

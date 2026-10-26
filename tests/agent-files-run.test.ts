@@ -45,7 +45,7 @@ vi.mock('../src/main/agent/tools', () => ({
   SAMBA_TOOL_NAMES: []
 }))
 
-const { AgentRunner, CODEX_NO_PDF_NOTE } = await import('../src/main/agent/runner')
+const { AgentRunner } = await import('../src/main/agent/runner')
 
 const FILES: AgentFile[] = [
   { kind: 'text', name: '주문.csv', text: '주문번호,금액\n1001,32000' },
@@ -100,13 +100,15 @@ describe('실행기 — 첨부 파일', () => {
     expect(saved[0].prompt).not.toContain('1001')
   })
 
-  it('Codex: 글 파일 내용은 싣고, PDF 는 못 읽는다고 알린다', async () => {
+  it('Codex: 글 파일 내용은 싣고, PDF 는 글자를 뽑아 싣는다(못 뽑으면 그렇다고 알린다)', async () => {
     const { runner } = makeRunner(true)
     await runner.run('이 주문 합계 내줘', 2, undefined, undefined, FILES)
-    await new Promise((r) => setTimeout(r, 20))
+    await new Promise((r) => setTimeout(r, 200))
     const prompt = codexInputs[0].prompt
     expect(prompt).toContain('1001,32000')
-    expect(prompt).toContain(CODEX_NO_PDF_NOTE)
+    // 시험 PDF 는 깨진 데이터라 글자를 못 뽑는다
+    expect(prompt).toContain('no text could be read from it')
+    expect(prompt).toContain('견적.pdf')
   })
 
   it('첨부가 없으면 종전과 같다', async () => {

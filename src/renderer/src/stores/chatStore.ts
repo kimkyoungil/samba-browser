@@ -146,6 +146,10 @@ interface ChatState {
   injecting: InjectingMessage[]
   sendWhileRunning: (text: string, images?: AgentImage[], files?: AgentFile[]) => Promise<void>
   unqueue: (index: number) => void
+  // [지금 보내기] — 대기열의 그 말을 하던 일에 바로 끼워 넣는다(못 끼우면 하던 일을 멈추고 그 말을 먼저 보낸다)
+  sendNow: (index: number) => Promise<void>
+  // 하던 일을 멈추고 먼저 보낼 말. 멈춤이 끝 상태로 돌아오면 보낸다
+  sendNowItem: QueuedMessage | null
   // 중단·실패로 못 보낸 대기 글. 입력칸이 takeDraftReturn 으로 받아 간다
   draftReturn: QueuedMessage | null
   takeDraftReturn: () => QueuedMessage | null
@@ -471,6 +475,34 @@ export const useChatStore = create<ChatState>((set, get) => ({
       ]
     })),
   unqueue: (index) => set((s) => ({ queue: s.queue.filter((_, i) => i !== index) })),
+  sendNowItem: null,
+  sendNow: async (index) => {
+    const q = get().queue[index]
+    if (!q) return
+    const target = q.chatId ?? get().runChatId
+    // 그새 일이 끝났으면 대기열이 알아서 보낸다
+    if (get().status !== 'running') return
+    // 다른 대화의 일을 멈추지는 않는다 — 그 일이 끝나면 차례대로 보낸다
+    if (target !== get().runChatId) return
+    const drop = (): void => set((s) => ({ queue: s.queue.filter((x) => x !== q) }))
+    // 1) 지금 실행에 끼워 넣는다(Claude). /compact 는 대화 전체를 요약해야 하니 끼우지 않는다
+    const inject = window.samba.agent.inject
+    if (inject && parseCompactCommand(q.text) === null) {
+      const r = await inject(q.text, target ?? undefined, q.images, q.files)
+      const id = r.ok && r.data.injected ? r.data.id : undefined
+      // 그새 일이 끝났으면 대기열이 이미 보냈거나 보낸다
+      if (get().status !== 'running' || !get().queue.includes(q)) return
+      if (id !== undefined) {
+        drop()
+        set((s) => ({ injecting: [...s.injecting, { ...q, id }] }))
+        return
+      }
+    }
+    // 2) 끼워 넣을 수 없으면(Codex·/compact) 하던 일을 멈추고 이 말을 먼저 보낸다
+    drop()
+    set({ sendNowItem: q })
+    await get().stop()
+  },
   injecting: [],
   sendWhileRunning: async (text, images, files) => {
     // 이미 대기열에 말이 있으면 순서가 뒤바뀌지 않게 이것도 대기열 뒤에 둔다.
@@ -698,16 +730,20 @@ export const useChatStore = create<ChatState>((set, get) => ({
       // 대기 중인 다음 말 — 완료면 맨 앞 것을 이어서 보내고, 중단·실패면 이 대화 몫은 저절로 돌지 않게
       // 입력칸으로 돌려준다(다른 대화 몫은 이 대화의 실패와 상관없으니 이어서 보낸다).
       // AI 가 집어 들지 못하고 끝난 끼어든 말도 이 대화 몫으로 대기열 맨 앞에 돌린다
+      // [지금 보내기]로 하던 일을 멈춘 경우엔 그 말을 먼저 보내고, 남은 대기열은 그대로 둔다
+      const urgent = done ? get().sendNowItem : null
       const leftover = done ? get().injecting : []
       const all = [...leftover.map(toQueued), ...get().queue]
       const sameChat = (q: QueuedMessage): boolean => (q.chatId ?? target) === target
-      const returned = done && e.state !== 'done' ? all.filter(sameChat) : []
+      const returned = done && e.state !== 'done' && !urgent ? all.filter(sameChat) : []
       const queue = returned.length > 0 ? all.filter((q) => !sameChat(q)) : all
-      const next = done ? queue[0] : undefined
+      const next = done ? (urgent ?? queue[0]) : undefined
       const prevDraft = get().draftReturn
       const draftParts = [...(prevDraft ? [prevDraft] : []), ...returned]
       set({
-        ...(done ? { injecting: [], queue: next ? queue.slice(1) : queue } : {}),
+        ...(done
+          ? { injecting: [], sendNowItem: null, queue: urgent || !next ? queue : queue.slice(1) }
+          : {}),
         ...(returned.length > 0
           ? {
               draftReturn: {

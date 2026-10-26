@@ -29,7 +29,7 @@ const INPUT_MAX_HEIGHT = 200
 
 export function ChatInput(): React.JSX.Element {
   const { t } = useTranslation()
-  const { send, status, stop, queue, unqueue, injecting, sendWhileRunning, engine } = useChatStore()
+  const { send, status, stop, enqueue, sendWhileRunning, engine } = useChatStore()
   const runChatId = useChatStore((s) => s.runChatId)
   const activeChatId = useChatStore((s) => s.activeChatId)
   // 이 대화가 일하는 중인가. 다른 대화가 일하는 중이면 보낸 말은 그 일이 끝난 뒤 이 대화에서 돈다(대기)
@@ -147,7 +147,8 @@ export function ChatInput(): React.JSX.Element {
       if (s.dropped) take()
     })
   }, [])
-  const submit = (): void => {
+  // later — Ctrl+Enter: 일하는 중이면 끼워 넣지 않고 끝난 뒤 보낸다(대기열, Claude 앱처럼)
+  const submit = (later = false): void => {
     const v = text.trim()
     // 그림·파일만 붙이고 글이 없어도 보낼 수 있다(모델이 그것을 보고 묻게)
     if (!v && images.length === 0 && files.length === 0) return
@@ -162,7 +163,8 @@ export function ChatInput(): React.JSX.Element {
     const attached = images.length > 0 ? images : undefined
     const attachedFiles = files.length > 0 ? files : undefined
     // 일하는 중이면 지금 실행에 끼워 넣는다(못 넣으면 대기열 — 지금 작업이 끝나면 이어서 보낸다)
-    if (running) void sendWhileRunning(v, attached, attachedFiles)
+    if (running && later) enqueue(v, attached, attachedFiles)
+    else if (running) void sendWhileRunning(v, attached, attachedFiles)
     else void send(v, undefined, attached, attachedFiles)
   }
   // 붙여넣기에 그림·파일이 들어 있으면 글 대신 첨부로 받는다(텍스트 붙여넣기는 그대로)
@@ -177,58 +179,6 @@ export function ChatInput(): React.JSX.Element {
   const slashHint = /^\/[a-z]*$/i.test(text) && '/compact'.startsWith(text.toLowerCase())
   return (
     <div className="border-t border-black/5 p-3">
-      {/* 끼워 넣은 말 — AI 가 다음 단계 사이에 집어 들면 말풍선으로 바뀐다(되돌릴 수 없다) */}
-      {injecting.length > 0 && (
-        <div className="mb-2 flex flex-col gap-1">
-          {injecting.map((q) => (
-            <div
-              key={q.id}
-              className="flex items-center gap-2 rounded-lg bg-black/[.04] px-2.5 py-1.5 text-[12px] text-[var(--text2)]"
-            >
-              <span className="shrink-0 animate-pulse rounded-full border border-[var(--accent)] px-1.5 text-[10.5px] text-[var(--accent)]">
-                {t('chat.injecting')}
-              </span>
-              <span className="min-w-0 flex-1 truncate">
-                {q.text ||
-                  (q.files && q.files.length > 0
-                    ? q.files.map((f) => f.name).join(', ')
-                    : t('chat.imagePasted', { n: q.images?.length ?? 0 }))}
-              </span>
-            </div>
-          ))}
-        </div>
-      )}
-      {queue.some((q) => (q.chatId ?? runChatId) === activeChatId) && (
-        <div className="mb-2 flex flex-col gap-1">
-          {queue.map((q, i) =>
-            (q.chatId ?? runChatId) !== activeChatId ? null : (
-              <div
-                key={i}
-                className="flex items-center gap-2 rounded-lg bg-black/[.04] px-2.5 py-1.5 text-[12px] text-[var(--text2)]"
-              >
-                <span className="shrink-0 rounded-full border border-[var(--line)] px-1.5 text-[10.5px]">
-                  {t('chat.queued')}
-                </span>
-                <span className="min-w-0 flex-1 truncate">
-                  {q.text ||
-                    (q.files && q.files.length > 0
-                      ? q.files.map((f) => f.name).join(', ')
-                      : t('chat.imagePasted', { n: q.images?.length ?? 0 }))}
-                </span>
-                <button
-                  type="button"
-                  aria-label={t('chat.queueRemove')}
-                  title={t('chat.queueRemove')}
-                  onClick={() => unqueue(i)}
-                  className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-[var(--text3)] hover:bg-black/5 hover:text-[var(--text)]"
-                >
-                  <X className="h-3 w-3" />
-                </button>
-              </div>
-            )
-          )}
-        </div>
-      )}
       {images.length > 0 && (
         <div className="mb-2 flex flex-wrap items-center gap-2">
           {images.map((img, i) => (
@@ -311,10 +261,10 @@ export function ChatInput(): React.JSX.Element {
               setText('/compact ')
               return
             }
-            // Enter 는 보내기, Shift+Enter 는 줄바꿈(클로드 웹과 같다)
+            // Enter 는 보내기, Shift+Enter 는 줄바꿈, Ctrl+Enter 는 끝난 뒤 보내기(클로드 앱과 같다)
             if (e.key === 'Enter' && !e.shiftKey) {
               e.preventDefault()
-              return submit()
+              return submit(e.ctrlKey || e.metaKey)
             }
             if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return
             // 여러 줄 글에서는 ↑/↓ 가 줄 이동이다 — 맨 윗줄의 ↑, 맨 아랫줄의 ↓ 일 때만 이전 문장을 꺼낸다
@@ -356,7 +306,7 @@ export function ChatInput(): React.JSX.Element {
         )}
         {(!running || canSend) && (
           <button
-            onClick={submit}
+            onClick={() => submit()}
             disabled={!canSend}
             aria-label={
               running

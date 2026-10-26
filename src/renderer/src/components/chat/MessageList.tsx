@@ -10,6 +10,7 @@ import { ThinkingBlock } from './ThinkingBlock'
 import { TodoChecklist } from './TodoChecklist'
 import { UserMessage } from './UserMessage'
 import { CompactNote } from './CompactNote'
+import { PendingMessages } from './PendingMessages'
 import { COMPACT_MARK } from '@shared/chat'
 
 // 맨 아래에서 이만큼(px) 안쪽이면 '따라 내려가는 중'으로 본다
@@ -25,6 +26,8 @@ export function MessageList(): React.JSX.Element {
   const activeChatId = useChatStore((s) => s.activeChatId)
   // 지금 보는 대화가 일하는 대화인가(다른 대화를 보는 중이면 마지막 말풍선에 '쓰는 중'을 달지 않는다)
   const viewRunning = useChatStore((s) => s.status === 'running' && s.runChatId === s.activeChatId)
+  // 맨 아래 대기 말풍선 수 — 늘면 따라 내려간다
+  const pendingCount = useChatStore((s) => s.queue.length + s.injecting.length)
   const box = useRef<HTMLDivElement>(null)
   // 위로 올려 읽는 중이면 흘러오는 답을 따라 내리지 않는다. 새 말풍선이 생기면 다시 따라간다
   const stick = useRef(true)
@@ -50,7 +53,7 @@ export function MessageList(): React.JSX.Element {
     if (messages.length !== count.current) stick.current = true
     count.current = messages.length
     if (stick.current) el.scrollTop = el.scrollHeight
-  }, [messages])
+  }, [messages, pendingCount])
   const hidden = Math.max(0, messages.length - shown)
   const visible = hidden > 0 ? messages.slice(hidden) : messages
   return (
@@ -84,6 +87,8 @@ export function MessageList(): React.JSX.Element {
           last={hidden + i === messages.length - 1}
         />
       ))}
+      {/* 일하는 중에 보낸 말 — 맨 아래 흐린 말풍선([지금 보내기 · 취소]) */}
+      <PendingMessages />
     </div>
   )
 }

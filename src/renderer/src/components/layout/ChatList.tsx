@@ -5,6 +5,16 @@ import { Pin, PinOff, Plus, Search, X } from 'lucide-react'
 import { cn } from '@renderer/lib/utils'
 import { useChatStore } from '@renderer/stores/chatStore'
 import { useUiStore } from '@renderer/stores/uiStore'
+import { useOverlayStore } from '@renderer/stores/overlayStore'
+import { Button } from '@renderer/components/ui/button'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle
+} from '@renderer/components/ui/dialog'
 import type { ChatDto } from '@shared/ipc'
 
 export function ChatList(): React.JSX.Element {
@@ -33,6 +43,14 @@ export function ChatList(): React.JSX.Element {
   const hasMore = chats.length >= chatLimit
   // 일하는 대화(그 줄에 도는 표시, 일하는 동안 지우기 막음). 다른 대화·새 대화는 일하는 중에도 연다
   const runningChatId = useChatStore((s) => (s.status === 'running' ? s.runChatId : null))
+  // 지우기 확인 창에 올린 대화(✕ 한 번으로 바로 지워지지 않게 — 사장님 요청)
+  const [deleting, setDeleting] = useState<ChatDto | null>(null)
+  // 확인 창이 떠 있는 동안 웹 화면을 접는다 — 앱 화면 위에 따로 얹힌 웹 화면이 창을 가리지 않게
+  const setWebviewHidden = useOverlayStore((s) => s.setWebviewHidden)
+  useEffect(() => {
+    setWebviewHidden(deleting !== null)
+    return () => setWebviewHidden(false)
+  }, [deleting, setWebviewHidden])
 
   // 앱이 뜨면 최근 대화를 한 번 읽어 온다
   useEffect(() => {
@@ -100,7 +118,7 @@ export function ChatList(): React.JSX.Element {
                 setView('browser')
               }}
               onPin={() => void pinChat(chat.id, chat.pinned !== true)}
-              onDelete={() => void removeChat(chat.id)}
+              onDelete={() => setDeleting(chat)}
             />
           ))}
         </ul>
@@ -114,6 +132,34 @@ export function ChatList(): React.JSX.Element {
           {t('chat.moreChats')}
         </button>
       )}
+      <Dialog open={deleting !== null} onOpenChange={(o) => !o && setDeleting(null)}>
+        <DialogContent className="rounded-2xl sm:max-w-[380px]" showCloseButton={false}>
+          <DialogHeader>
+            <DialogTitle>{t('chat.deleteConfirmTitle')}</DialogTitle>
+            <DialogDescription className="break-all">
+              {deleting ? deleting.title || t('chat.untitled') : ''}
+            </DialogDescription>
+          </DialogHeader>
+          <p className="text-[12.5px] text-[var(--text2)]">{t('chat.deleteConfirmBody')}</p>
+          <DialogFooter>
+            {/* 처음 초점은 [취소] — Enter 를 잘못 눌러도 지워지지 않는다 */}
+            <Button type="button" variant="outline" onClick={() => setDeleting(null)}>
+              {t('chat.deleteCancel')}
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={() => {
+                const target = deleting
+                setDeleting(null)
+                if (target) void removeChat(target.id)
+              }}
+            >
+              {t('chat.deleteConfirm')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
@@ -188,7 +234,7 @@ function ChatRow({
       >
         {pinned ? <PinOff className="h-3.5 w-3.5" /> : <Pin className="h-3.5 w-3.5" />}
       </button>
-      {/* 탭의 X 처럼 확인 없이 바로 지운다(사용자 요청). 일하는 대화는 끝난 뒤에 지운다 */}
+      {/* 지우기 — 누르면 확인 창이 뜬다. 일하는 대화는 끝난 뒤에 지운다 */}
       {!running && (
         <button
           type="button"

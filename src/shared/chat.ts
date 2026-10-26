@@ -57,6 +57,31 @@ export interface AppendMessageInput {
   steps?: ChatStepDto[]
 }
 
+/** 다른 앱(Aside)에서 가져올 대화 미리 보기 — 찾거나 고른 파일 하나 */
+export interface ChatImportPreview {
+  /** 가져올 파일(메인이 찾았거나 사용자가 고른 것만 옮길 수 있다) */
+  path: string
+  /** 파일에 든 대화방·말 수 */
+  chats: number
+  messages: number
+  /** 이번에 새로 만들 대화방, 이미 가져온 방에 덧붙일 방, 옮길 말 수(이미 가져온 말은 빼고) */
+  newChats: number
+  appendChats: number
+  newMessages: number
+  /** 첫·마지막 말 시각(없으면 null) */
+  from: number | null
+  to: number | null
+}
+
+/** 가져오기 결과 */
+export interface ChatImportResult {
+  createdChats: number
+  appendedChats: number
+  messages: number
+  /** 노든 그림 폴더로 옮겨 대화에 띄운 그림 수 */
+  images: number
+}
+
 export function isChatRole(value: unknown): value is ChatRole {
   return typeof value === 'string' && (CHAT_ROLES as readonly string[]).includes(value)
 }

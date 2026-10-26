@@ -41,6 +41,8 @@ import {
   type ChatDetailDto,
   type ChatMessageDto,
   type AppendMessageInput,
+  type ChatImportPreview,
+  type ChatImportResult,
   type PlaybookDto,
   type PlaybookInput,
   type ScheduleDispatchDto,
@@ -257,7 +259,13 @@ const api = {
       invoke(IPC.chatPin, chatId, pinned),
     // 한 메시지부터 끝까지 지운다(지운 줄 수). 그 대화의 AI 세션도 새로 시작한다
     truncate: (chatId: number, messageId: number): Promise<IpcResult<number>> =>
-      invoke(IPC.chatTruncate, chatId, messageId)
+      invoke(IPC.chatTruncate, chatId, messageId),
+    // Aside 대화 가져오기 — 메인이 내보내기 파일을 찾거나(없으면 null) 사용자가 고른 파일을 미리 보고,
+    // 미리 본 파일만 대화방으로 옮긴다
+    importFind: (): Promise<IpcResult<ChatImportPreview | null>> => invoke(IPC.chatImportFind),
+    importPick: (): Promise<IpcResult<ChatImportPreview | null>> => invoke(IPC.chatImportPick),
+    importRun: (path: string): Promise<IpcResult<ChatImportResult>> =>
+      invoke(IPC.chatImportRun, path)
   },
   // 알림 연동 — 설정 화면의 [테스트 보내기]. 웹훅 주소·봇 토큰은 메인이 쥔 값을 쓴다
   notify: {

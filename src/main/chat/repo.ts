@@ -15,6 +15,7 @@ import {
   type ChatDetailDto,
   type ChatDto,
   type ChatMessageDto,
+  type ChatRole,
   type ChatStepDto
 } from '../../shared/chat'
 import type { OutboxRecorder, WorkspaceScope } from '../../shared/sync'
@@ -23,6 +24,13 @@ import type { OutboxRecorder, WorkspaceScope } from '../../shared/sync'
 const DEFAULT_LIST_LIMIT = 50
 /** 검색어 상한(글자) — 그보다 긴 값은 자른다 */
 export const CHAT_SEARCH_MAX = 100
+
+/** 가져온 말 한 줄 — 원래 앱에서 찍힌 시각을 그대로 쓴다 */
+export interface ImportMessageInput {
+  role: ChatRole
+  content: string
+  createdAt: number
+}
 
 /** LIKE 의 와일드카드(% _)와 탈출 문자를 글자 그대로 찾게 바꾼다 */
 export function likePattern(query: string): string {
@@ -137,6 +145,11 @@ export class ChatRepo {
     return { chat: toChatDto(chat), messages: this.messages(chatId) }
   }
 
+  /** 대화가 (이 작업공간에) 살아 있는가 — 메시지는 읽지 않는다 */
+  exists(chatId: number): boolean {
+    return this.findVisible(chatId) !== null
+  }
+
   /** 대화의 메시지를 시간순으로 돌려준다(지워진 메시지는 빼고) */
   messages(chatId: number): ChatMessageDto[] {
     return this.d
@@ -249,6 +262,61 @@ export class ChatRepo {
     this.record('chat_messages', row.id, 'upsert')
     this.record('chats', input.chatId, 'upsert')
     return toMessageDto(row)
+  }
+
+  // --- 가져오기(다른 앱의 대화) ------------------------------------------------
+
+  /**
+   * 다른 앱에서 가져온 대화를 원래 시각 그대로 만든다 — 대화의 만든·고친 시각은 첫·마지막 말 시각이라
+   * 목록에서 실제 날짜 자리에 선다. 말은 시각순으로 와야 한다(같은 시각은 넣은 순서로 선다)
+   */
+  importChat(title: string, messages: ImportMessageInput[], now: number = Date.now()): ChatDto {
+    const first = messages[0]?.createdAt ?? now
+    const last = messages[messages.length - 1]?.createdAt ?? now
+    const row = this.d
+      .insert(chats)
+      .values({ title, workspaceId: this.scopeId, createdAt: first, updatedAt: last })
+      .returning()
+      .all()[0]
+    this.insertImported(row.id, messages)
+    this.record('chats', row.id, 'upsert')
+    this.db.scheduleSave()
+    return toChatDto(row)
+  }
+
+  /**
+   * 이미 있는 대화에 가져온 말을 원래 시각으로 덧붙인다. 대화의 고친 시각은 더 늦을 때만 올린다.
+   * 넣은 줄 수(대화가 없으면 0)
+   */
+  importMessages(chatId: number, messages: ImportMessageInput[]): number {
+    const chat = this.findVisible(chatId)
+    if (!chat || messages.length === 0) return 0
+    this.insertImported(chatId, messages)
+    const last = messages[messages.length - 1].createdAt
+    if (last > chat.updatedAt)
+      this.d.update(chats).set({ updatedAt: last }).where(eq(chats.id, chatId)).run()
+    this.record('chats', chatId, 'upsert')
+    this.db.scheduleSave()
+    return messages.length
+  }
+
+  private insertImported(chatId: number, messages: ImportMessageInput[]): void {
+    for (const m of messages) {
+      if (!isChatRole(m.role)) throw new Error('알 수 없는 메시지 역할입니다')
+      const row = this.d
+        .insert(chatMessages)
+        .values({
+          chatId,
+          role: m.role,
+          content: m.content,
+          steps: null,
+          createdAt: m.createdAt,
+          updatedAt: m.createdAt
+        })
+        .returning({ id: chatMessages.id })
+        .all()[0]
+      this.record('chat_messages', row.id, 'upsert')
+    }
   }
 
   // --- 내부 -----------------------------------------------------------------

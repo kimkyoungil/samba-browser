@@ -52,6 +52,7 @@ import { VaultService, type PutItemInput, type UpsertAccountInput } from '../vau
 import { exportVault, writeOwnerOnlyFile, type ExportRequest } from '../vault/export'
 import { ImportService, type ImportDialogs } from '../import/service'
 import { ChatRepo } from '../chat/repo'
+import { AsideImporter, AsideImportLedger, findAsideExport } from '../chat/aside-import'
 import { PlaybookStore } from '../playbooks/store'
 import { parseAgentImages } from '../../shared/agent-image'
 import { parseAgentFiles } from '../../shared/agent-file'
@@ -66,7 +67,11 @@ import { SiteScriptStore } from '../agent/site-scripts-store'
 import { SiteMemoryService } from '../agent/site-memory'
 import { ActivityRecorder } from '../activity/recorder'
 import { RecommendService } from '../activity/recommend'
-import { RECENT_CHAT_LIMIT, type AppendMessageInput } from '../../shared/chat'
+import {
+  RECENT_CHAT_LIMIT,
+  type AppendMessageInput,
+  type ChatImportPreview
+} from '../../shared/chat'
 import { VaultCaptureGate } from './vault-capture'
 import { watchLoginOutcome } from './login-watch'
 import { machineFilledRecently } from '../browser/human-activity'
@@ -687,6 +692,34 @@ export function registerIpc(
     const removed = chats.truncateFrom(rawChatId, rawMessageId)
     agent.forgetChatSession(rawChatId)
     return removed
+  })
+  // Aside 대화 가져오기 — 메인이 찾았거나 사용자가 고른 파일만 옮긴다(화면이 아무 경로나 읽히지 못하게)
+  const asideImporter = new AsideImporter(
+    chats,
+    new AsideImportLedger(join(app.getPath('userData'), 'aside-imports.json')),
+    generatedImagesDir
+  )
+  const importablePaths = new Set<string>()
+  const previewImport = async (path: string): Promise<ChatImportPreview> => {
+    const preview = await asideImporter.preview(path)
+    importablePaths.add(path)
+    return preview
+  }
+  handleFromRenderer(IPC.chatImportFind, async () => {
+    const path = await findAsideExport(os.homedir())
+    return path ? previewImport(path) : null
+  })
+  handleFromRenderer(IPC.chatImportPick, async () => {
+    const picked = await dialog.showOpenDialog(dialogWin(), {
+      filters: [{ name: 'Aside', extensions: ['txt', 'md'] }],
+      properties: ['openFile']
+    })
+    if (picked.canceled || picked.filePaths.length === 0) return null
+    return previewImport(picked.filePaths[0])
+  })
+  handleFromRenderer(IPC.chatImportRun, (path: unknown) => {
+    if (typeof path !== 'string' || !importablePaths.has(path)) throw new Error('bad import path')
+    return asideImporter.run(path)
   })
   handleFromRenderer(IPC.agentStop, () => agent.stop())
 

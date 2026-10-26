@@ -38,6 +38,9 @@ export const IPC = {
   chatDelete: 'chat:delete',
   chatPin: 'chat:pin', // 대화를 사이드바 맨 위에 고정·풀기(이 PC 에만)
   chatTruncate: 'chat:truncate', // 한 메시지부터 끝까지 지우기(고쳐 다시 보내기·답 다시 받기)
+  chatImportFind: 'chat:importFind', // Aside 대화 내보내기를 찾아 미리 보기
+  chatImportPick: 'chat:importPick', // 내보내기 파일을 직접 골라 미리 보기
+  chatImportRun: 'chat:importRun', // 찾거나 고른 파일을 대화방으로 옮기기
   settingsGet: 'settings:get',
   settingsSet: 'settings:set',
   bridgeRegenerateToken: 'bridge:regenerateToken', // 하네스 브릿지 토큰 새로 만들기(설정에 저장)
@@ -481,7 +484,9 @@ export type {
   ChatDto,
   ChatMessageDto,
   ChatDetailDto,
-  AppendMessageInput
+  AppendMessageInput,
+  ChatImportPreview,
+  ChatImportResult
 } from './chat'
 
 export type { NotifyChannel, NotifyEvent, NotifySendResult } from './notify'

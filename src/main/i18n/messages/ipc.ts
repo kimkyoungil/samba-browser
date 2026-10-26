@@ -22,7 +22,10 @@ export const ipcMessages = defineMessages({
     'ipc.extensionNotListed': '목록에 없는 확장이에요',
     'ipc.extensionDisabled': '꺼져 있는 확장이에요',
     'ipc.extensionSessionNotFound': '확장이 올라간 세션을 찾지 못했어요',
-    'ipc.chatTruncateBusy': '작업이 끝난 뒤에 고쳐 보내거나 다시 받을 수 있어요'
+    'ipc.chatTruncateBusy': '작업이 끝난 뒤에 고쳐 보내거나 다시 받을 수 있어요',
+    'ipc.chatImportNotAside':
+      'Aside 대화 내보내기 파일이 아니에요(대화방·말 머리줄을 찾지 못했어요)',
+    'ipc.chatImportBusy': '이미 가져오는 중이에요'
   },
   en: {
     'ipc.imagesInvalid':
@@ -44,6 +47,8 @@ export const ipcMessages = defineMessages({
     'ipc.extensionNotListed': 'This extension is not in the list',
     'ipc.extensionDisabled': 'This extension is turned off',
     'ipc.extensionSessionNotFound': 'Could not find the session the extension is loaded in',
-    'ipc.chatTruncateBusy': 'You can edit or regenerate after the current task finishes'
+    'ipc.chatTruncateBusy': 'You can edit or regenerate after the current task finishes',
+    'ipc.chatImportNotAside': 'This is not an Aside chat export (no chat or message headers found)',
+    'ipc.chatImportBusy': 'An import is already running'
   }
 })

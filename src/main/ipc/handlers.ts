@@ -26,7 +26,8 @@ import {
   type WebContents,
   type WebFrameMain
 } from 'electron'
-import { join } from 'node:path'
+import { extname, join } from 'node:path'
+import { copyFile } from 'node:fs/promises'
 import { mkdirSync, readdirSync, writeFileSync } from 'node:fs'
 import { profileNames } from '../../shared/profiles'
 import { PHONE_SYNC_KEYS, PhoneRegistrySync } from '../phone/registry-sync'
@@ -99,6 +100,8 @@ import {
 import type { AiProviderId, ApiKeyVendor, ChatEngine, TaskModelKey } from '../../shared/ai'
 import { ChatEngineStore } from '../agent/chat-engine'
 import { CodexThreadStore } from '../agent/codex-threads'
+import { readGeneratedImage } from '../agent/codex-images'
+import { isGeneratedImageName } from '../../shared/generated-image'
 import { ApiKeyStore } from '../ai/keys'
 import {
   defaultProbes,
@@ -623,6 +626,23 @@ export function registerIpc(
       return id === null ? { injected: false } : { injected: true, id }
     }
   )
+
+  // AI(Codex)가 그린 그림 — 앱 데이터 폴더에 옮겨 두고, 화면은 노든 이름 꼴 파일만 읽거나 저장한다
+  const generatedImagesDir = join(app.getPath('userData'), 'generated-images')
+  agent.setGeneratedImagesDir(generatedImagesDir)
+  handleFromRenderer(IPC.generatedImageRead, (name: unknown) =>
+    typeof name === 'string' ? readGeneratedImage(generatedImagesDir, name) : null
+  )
+  handleFromRenderer(IPC.generatedImageSave, async (name: unknown) => {
+    if (typeof name !== 'string' || !isGeneratedImageName(name)) throw new Error('bad image name')
+    const result = await dialog.showSaveDialog(dialogWin(), {
+      defaultPath: join(app.getPath('downloads'), `noden-${name.slice(0, 8)}${extname(name)}`),
+      filters: [{ name: 'Image', extensions: [extname(name).slice(1)] }]
+    })
+    if (result.canceled || !result.filePath) return false
+    await copyFile(join(generatedImagesDir, name), result.filePath)
+    return true
+  })
 
   // 채팅 말풍선 [복사]. 글자만 받는다(너무 긴 값은 자른다)
   handleFromRenderer(IPC.clipboardWriteText, (text: unknown) => {

@@ -234,6 +234,11 @@ const api = {
   clipboard: {
     writeText: (text: string): Promise<IpcResult<void>> => invoke(IPC.clipboardWriteText, text)
   },
+  // AI 가 그린 그림 — 읽기(data URL, 없으면 null)·저장(사용자가 고른 곳, 취소면 false)
+  generatedImages: {
+    read: (name: string): Promise<IpcResult<string | null>> => invoke(IPC.generatedImageRead, name),
+    save: (name: string): Promise<IpcResult<boolean>> => invoke(IPC.generatedImageSave, name)
+  },
   // AI 채팅 기록 — 본문은 평문이지만 비밀값은 담기지 않는다(진행 로그는 라벨만)
   chats: {
     list: (limit?: number): Promise<IpcResult<ChatDto[]>> => invoke(IPC.chatList, limit),

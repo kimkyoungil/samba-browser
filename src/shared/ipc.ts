@@ -19,6 +19,8 @@ export const IPC = {
   tabUpdated: 'tab:updated', // main → renderer 이벤트
   layoutSet: 'layout:set',
   agentRun: 'agent:run',
+  generatedImageRead: 'generatedImage:read', // AI 가 그린 그림 읽기(앱 데이터 폴더의 노든 이름 꼴 파일만)
+  generatedImageSave: 'generatedImage:save', // AI 가 그린 그림을 사용자가 고른 곳에 저장
   clipboardWriteText: 'clipboard:writeText', // 채팅 말풍선 [복사] — 앱 화면은 클립보드 권한이 막혀 있어 메인이 쓴다
   agentChatEngine: 'agent:chatEngine', // 그 대화에서 고른 AI(Claude/Codex). 없으면 앱 기본 연결
   agentSetChatEngine: 'agent:setChatEngine',

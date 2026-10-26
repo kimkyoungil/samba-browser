@@ -53,6 +53,8 @@ import type { CodexInput } from './provider-codex'
 import { CODEX_TOOL_TOKEN_ENV, openCodexToolServer, type CodexToolServer } from './codex-tools'
 import type { CodexThreadStore } from './codex-threads'
 import { pdfTextBlock } from './pdf-text'
+import { collectGeneratedImages } from './codex-images'
+import { generatedImageMarkdown } from '../../shared/generated-image'
 import type { AgentAuth } from '../ai/auth-route'
 import type { ChatEngine } from '../../shared/ai'
 import { makeCounter } from './counter'
@@ -251,6 +253,8 @@ export class AgentRunner {
   private chatSessions: ChatSessionStore | null = null
   // 대화마다 이어받을 Codex 스레드(Claude 의 chatSessions 와 같은 자리)
   private codexThreads: CodexThreadStore | null = null
+  // Codex 가 그린 그림을 옮겨 두는 앱 데이터 폴더. 없으면 그림을 화면에 싣지 않는다
+  private generatedImagesDir: string | null = null
   // 세션을 못 이어받을 때 앞부분 요약을 만들 대화 읽기. 없으면 요약도 없다
   private historyReader: ((chatId: number) => HistoryMessage[]) | null = null
   // 대화마다 고른 AI(Claude/Codex). 없거나 null 을 돌려주면 앱 기본 연결로 돈다
@@ -321,6 +325,11 @@ export class AgentRunner {
    * 대화 ↔ SDK 세션 연결을 붙인다. 같은 대화의 다음 지시는 세션을 이어받아 앞선 지시·도구 결과를 기억한다.
    * reader 는 세션을 못 이어받을 때(세션 없음·상한 초과) 앞부분 요약을 만들 대화 메시지를 준다
    */
+  /** Codex 가 그린 그림을 옮겨 둘 폴더를 정한다(앱 데이터 폴더 안) */
+  setGeneratedImagesDir(dir: string | null): void {
+    this.generatedImagesDir = dir
+  }
+
   /** 대화별 Codex 스레드 저장소를 붙인다. 없으면 Codex 대화는 매번 앞부분 요약으로 새로 시작한다 */
   setCodexThreads(store: CodexThreadStore | null): void {
     this.codexThreads = store
@@ -1662,6 +1671,8 @@ export class AgentRunner {
     let lastError = ''
     let thinking = ''
     let threadId: string | null = null
+    // 이번 실행이 시작된 시각 — 이 뒤에 생긴 그림만 이번 실행이 그린 것이다
+    const startedAt = Date.now()
     // 화면에 무엇이라도 보냈는가 — 이어받기가 아무것도 못 하고 실패했을 때만 새 스레드로 다시 돈다
     let shown = false
     for await (const event of runCodexQuery(input)) {
@@ -1689,6 +1700,11 @@ export class AgentRunner {
           return { settled: false, threadId: null, retryFresh: true }
         const message = event.ok ? undefined : event.message || lastError
         const kind = message ? classifyCodexError(message) : null
+        // Codex 가 그린 그림은 파일로만 남는다 — 끝 상태보다 먼저 답 글에 싣는다(기록에도 남아 다시 열어도 보인다)
+        if (threadId && this.generatedImagesDir) {
+          const names = await collectGeneratedImages(threadId, startedAt, this.generatedImagesDir)
+          for (const name of names) emit({ type: 'text', text: generatedImageMarkdown(name) })
+        }
         emit({
           type: 'status',
           state: event.ok ? 'done' : 'failed',

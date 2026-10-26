@@ -323,6 +323,8 @@
     "editCancel": "취소",
     "editSend": "보내기",
     "regenerate": "다시 받기",
+    "imageSave": "저장",
+    "imageMissing": "(그림 파일이 이 PC 에 없어요)",
     "compacted": "대화를 압축했어요 — 다음 말부터 이 요약으로 이어갑니다",
     "compactShow": "요약 보기",
     "compactHide": "접기",

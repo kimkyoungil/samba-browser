@@ -323,6 +323,8 @@
     "editCancel": "Cancel",
     "editSend": "Send",
     "regenerate": "Regenerate",
+    "imageSave": "Save",
+    "imageMissing": "(The image file is not on this PC)",
     "compacted": "Conversation compacted — the next message continues from this summary",
     "compactShow": "Show summary",
     "compactHide": "Hide",

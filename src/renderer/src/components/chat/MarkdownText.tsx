@@ -2,15 +2,17 @@ import type React from 'react'
 import { useMemo } from 'react'
 import Markdown, { type Components } from 'react-markdown'
 import { useUiStore } from '@renderer/stores/uiStore'
-import { safeHref } from '@renderer/lib/safe-href'
+import { safeHref, safeMarkdownUrl } from '@renderer/lib/safe-href'
+import { generatedImageName } from '@shared/generated-image'
 import { MARKDOWN_PLUGINS } from '@renderer/lib/markdown-plugins'
 import { hastText } from '@renderer/lib/hast-text'
 import { CopyButton } from './CopyButton'
+import { GeneratedImage } from './GeneratedImage'
 
 // AI 답 글을 서식(굵게·표·목록·링크·코드)대로 그린다.
 // - 원시 HTML 은 그리지 않는다(react-markdown 기본) — 답에 섞인 태그가 앱 화면에서 실행되지 않는다
 // - 링크는 http(s) 만 살리고, 누르면 이 브라우저의 새 탭으로 연다(앱 화면 자체가 그 주소로 넘어가지 않게)
-// - 그림은 앱 화면에서 바깥 주소를 불러오지 않고 링크로만 보인다
+// - 그림은 앱 화면에서 바깥 주소를 불러오지 않고 링크로만 보인다. AI 가 그린 그림(noden-image://)만 그 자리에 그린다
 // - 한 줄 바꿈도 줄바꿈으로 보이고, 한글에 붙은 굵게도 굵게 보인다(플러그인은 lib/markdown-plugins.ts)
 
 export function MarkdownText({ text }: { text: string }): React.JSX.Element {
@@ -53,6 +55,9 @@ export function MarkdownText({ text }: { text: string }): React.JSX.Element {
         )
       },
       img({ src, alt }) {
+        // AI(Codex)가 그린 그림 — 메인이 앱 데이터 폴더에서 읽어 준다
+        const generated = typeof src === 'string' ? generatedImageName(src) : null
+        if (generated) return <GeneratedImage name={generated} alt={alt || ''} />
         const url = typeof src === 'string' ? safeHref(src) : ''
         const label = alt || url
         if (!url) return <span>{label}</span>
@@ -73,7 +78,11 @@ export function MarkdownText({ text }: { text: string }): React.JSX.Element {
   }, [setView])
   return (
     <div className="chat-md break-words">
-      <Markdown remarkPlugins={MARKDOWN_PLUGINS} components={components} urlTransform={safeHref}>
+      <Markdown
+        remarkPlugins={MARKDOWN_PLUGINS}
+        components={components}
+        urlTransform={safeMarkdownUrl}
+      >
         {text}
       </Markdown>
     </div>

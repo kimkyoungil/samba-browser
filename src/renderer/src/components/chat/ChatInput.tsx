@@ -22,6 +22,7 @@ import {
 import { PermissionMenu } from './PermissionMenu'
 import { ModelEffortMenu } from './ModelEffortMenu'
 import { EngineMenu } from './EngineMenu'
+import { UsageRing } from './UsageRing'
 
 // 입력칸이 글에 맞춰 늘어나는 최대 높이(px). 넘으면 칸 안에서 스크롤한다
 const INPUT_MAX_HEIGHT = 200
@@ -317,6 +318,8 @@ export function ChatInput(): React.JSX.Element {
           style={{ maxHeight: INPUT_MAX_HEIGHT }}
           className="min-w-0 flex-1 resize-none bg-transparent leading-relaxed outline-none"
         />
+        {/* 보내기 단추 왼쪽: 구독 사용량 링(마우스를 올리면 한도·초기화 시각). 아래 메뉴 줄은 좁아 넘친다 */}
+        <UsageRing />
         {running && (
           // 실행 중에는 중단 버튼 — 위쪽 진행 바가 안 보여도 여기서 멈출 수 있다
           <button

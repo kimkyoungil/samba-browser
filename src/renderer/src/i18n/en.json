@@ -323,6 +323,7 @@
     "editCancel": "Cancel",
     "editSend": "Send",
     "regenerate": "Regenerate",
+    "usageResets": "Resets {{when}}",
     "deleteConfirmTitle": "Delete this chat?",
     "deleteConfirmBody": "A deleted chat cannot be restored.",
     "deleteCancel": "Cancel",

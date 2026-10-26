@@ -323,6 +323,7 @@
     "editCancel": "취소",
     "editSend": "보내기",
     "regenerate": "다시 받기",
+    "usageResets": "{{when}}에 초기화",
     "deleteConfirmTitle": "이 대화를 지울까요?",
     "deleteConfirmBody": "지운 대화는 되살릴 수 없어요.",
     "deleteCancel": "취소",

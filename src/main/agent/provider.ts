@@ -420,6 +420,17 @@ export function classifyAuthError(message: string): 'missing' | 'limit' | null {
   return null
 }
 
+/**
+ * Codex 실패 문구 분류. 모델에 요청이 몰려 받은 429(재시도 소진, 'Too Many Requests')는 사용 한도와 따로
+ * 'busy' 로 알린다 — 실기 2026-10-26: 사용량 0% 인데 gpt-6.1-sol 만 429 로 막혀 '한도 도달'로 잘못 보였다
+ * (같은 계정의 gpt-6-sol 은 정상). 진짜 한도는 'usage limit' 문구로 온다
+ */
+export function classifyCodexError(message: string): 'missing' | 'limit' | 'busy' | null {
+  const m = message.toLowerCase()
+  if (m.includes('too many requests') && !m.includes('usage limit')) return 'busy'
+  return classifyAuthError(message)
+}
+
 // 재시도해도 회복되지 않는 인증/계정 오류. api_retry 관측 시 즉시 중단한다
 const FATAL_API_ERRORS = new Set([
   'authentication_failed',

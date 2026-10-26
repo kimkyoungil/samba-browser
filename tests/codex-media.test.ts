@@ -15,6 +15,7 @@ import {
 } from '../src/main/agent/provider-codex'
 import { CodexThreadStore } from '../src/main/agent/codex-threads'
 import { pdfText, pdfTextBlock } from '../src/main/agent/pdf-text'
+import { classifyCodexError } from '../src/main/agent/provider'
 
 // 실행마다 흉내 낼 Codex 사건들(앞에서부터 한 실행씩 꺼낸다)
 let codexRuns: CodexEvent[][] = []
@@ -131,6 +132,17 @@ describe('PDF 글자', () => {
   })
 })
 
+describe('Codex 실패 분류', () => {
+  it('모델이 붐벼 받은 429 는 사용 한도와 따로 busy, 진짜 한도는 limit', () => {
+    expect(classifyCodexError('exceeded retry limit, last status: 429 Too Many Requests')).toBe(
+      'busy'
+    )
+    expect(classifyCodexError("You've hit your usage limit. Try again later.")).toBe('limit')
+    expect(classifyCodexError('429 Too Many Requests: usage limit reached')).toBe('limit')
+    expect(classifyCodexError('그 밖의 오류')).toBeNull()
+  })
+})
+
 describe('러너 — Codex 대화', () => {
   let dir: string
   beforeEach(() => {
@@ -225,6 +237,23 @@ describe('러너 — Codex 대화', () => {
     expect(threads.get(7)).toBe('thread-0002')
     expect(events.filter((e) => e.type === 'status' && e.state !== 'running')).toEqual([
       { type: 'status', state: 'done', toolCalls: 0 }
+    ])
+  })
+
+  it('모델이 붐벼 실패하면 한도가 아니라 붐빔으로 알린다', async () => {
+    const { runner, events } = makeRunner('codex')
+    codexRuns = [
+      [
+        {
+          type: 'done',
+          ok: false,
+          message: 'exceeded retry limit, last status: 429 Too Many Requests'
+        }
+      ]
+    ]
+    await runner.run('안녕', 7)
+    expect(events.filter((e) => e.type === 'status' && e.state !== 'running')).toEqual([
+      { type: 'status', state: 'failed', toolCalls: 0, message: 'auth:busy' }
     ])
   })
 

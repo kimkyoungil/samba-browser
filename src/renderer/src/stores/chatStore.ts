@@ -100,7 +100,8 @@ interface ChatState {
   confirm: { requestId: string; action: string; kind: 'danger' | 'finish' } | null
   // 사이트가 사람의 추가 확인을 요구해 작업이 멈춰 있는 상태
   handoff: Handoff | null
-  authError: 'missing' | 'limit' | null
+  // 인증 막힘·사용 한도·모델 붐빔(Codex 429 — 한도와 별개)
+  authError: 'missing' | 'limit' | 'busy' | null
   // 이 대화의 AI(입력줄 'Claude / Codex'). 대화마다 메인이 기억한다. 새 대화는 마지막으로 고른 AI 를 이어 쓴다
   engine: ChatEngine
   // 사용자가 직접 고른 값인지(새 대화를 만들 때 그 대화에 남길지 정한다)
@@ -679,7 +680,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       // send() 가 실행을 시작할 때 status 를 먼저 running 으로 바꾸므로 정상 시작은 통과한다
       if (e.state === 'running' && get().status !== 'running') return
       const auth = e.message?.startsWith('auth:')
-        ? (e.message.slice(5) as 'missing' | 'limit')
+        ? (e.message.slice(5) as 'missing' | 'limit' | 'busy')
         : null
       const done = e.state === 'done' || e.state === 'failed' || e.state === 'stopped'
       // 작업이 끝나면 메인이 방금 기록을 남겼다 — 목록의 제목·순서를 다시 읽는다

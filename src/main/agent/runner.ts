@@ -41,6 +41,7 @@ import {
   type PromptChannel,
   type ProviderInput,
   classifyAuthError,
+  classifyCodexError,
   isFatalApiError,
   advanceSubscriptionFallback,
   subscriptionFallbackIndex,
@@ -1687,7 +1688,7 @@ export class AgentRunner {
         if (!event.ok && input.resume && !shown)
           return { settled: false, threadId: null, retryFresh: true }
         const message = event.ok ? undefined : event.message || lastError
-        const kind = message ? classifyAuthError(message) : null
+        const kind = message ? classifyCodexError(message) : null
         emit({
           type: 'status',
           state: event.ok ? 'done' : 'failed',

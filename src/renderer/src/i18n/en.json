@@ -410,6 +410,7 @@
   "auth": {
     "missing": "AI is not connected. Run claude auth login in a terminal or add an API key in Settings.",
     "limit": "You've reached the AI usage limit. Please try again later.",
+    "busy": "This AI model is busy and is not taking requests right now (this is not your usage limit). Try again shortly or pick another model under the input box.",
     "notConnected": "No AI connection. Connect a subscription or add an API key in Settings > AI"
   },
   "settings": {

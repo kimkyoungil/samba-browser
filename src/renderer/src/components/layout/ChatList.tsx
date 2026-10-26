@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
-import { Plus, Search, X } from 'lucide-react'
+import { Pin, PinOff, Plus, Search, X } from 'lucide-react'
 import { cn } from '@renderer/lib/utils'
 import { useChatStore } from '@renderer/stores/chatStore'
 import { useUiStore } from '@renderer/stores/uiStore'
@@ -16,6 +16,7 @@ export function ChatList(): React.JSX.Element {
   const openChat = useChatStore((s) => s.openChat)
   const newChat = useChatStore((s) => s.newChat)
   const removeChat = useChatStore((s) => s.removeChat)
+  const pinChat = useChatStore((s) => s.pinChat)
   const chatLimit = useChatStore((s) => s.chatLimit)
   const chatQuery = useChatStore((s) => s.chatQuery)
   const moreChats = useChatStore((s) => s.moreChats)
@@ -30,8 +31,6 @@ export function ChatList(): React.JSX.Element {
   const searching = chatQuery.trim() !== ''
   // 받아 온 개수가 상한만큼 꽉 찼으면 더 있을 수 있다
   const hasMore = chats.length >= chatLimit
-  // 실행 중에는 다른 대화로 옮기지 못한다(화면의 메시지가 돌고 있는 작업에 묶여 있다).
-  // 말없이 무반응이면 고장처럼 보이므로 흐리게 하고 이유를 알려 준다
   // 일하는 대화(그 줄에 도는 표시, 일하는 동안 지우기 막음). 다른 대화·새 대화는 일하는 중에도 연다
   const runningChatId = useChatStore((s) => (s.status === 'running' ? s.runChatId : null))
 
@@ -86,16 +85,21 @@ export function ChatList(): React.JSX.Element {
         </div>
       ) : (
         <ul className="flex min-h-0 flex-col overflow-auto">
-          {chats.map((chat) => (
+          {chats.map((chat, i) => (
             <ChatRow
               key={chat.id}
               chat={chat}
               active={chat.id === activeChatId}
               running={chat.id === runningChatId}
+              // 고정한 대화 묶음이 끝나는 자리에 가는 선을 긋는다
+              lastPinned={
+                chat.pinned === true && chats[i + 1]?.pinned !== true && i < chats.length - 1
+              }
               onOpen={() => {
                 void openChat(chat.id)
                 setView('browser')
               }}
+              onPin={() => void pinChat(chat.id, chat.pinned !== true)}
               onDelete={() => void removeChat(chat.id)}
             />
           ))}
@@ -121,28 +125,48 @@ function ChatRow({
   chat,
   active,
   running,
+  lastPinned,
   onOpen,
+  onPin,
   onDelete
 }: {
   chat: ChatDto
   active: boolean
   /** 지금 이 대화에서 AI 가 일하는 중(도는 표시를 달고, 지우기를 숨긴다) */
   running: boolean
+  /** 고정한 대화 묶음의 마지막 줄(아래에 가는 선) */
+  lastPinned: boolean
   onOpen: () => void
+  onPin: () => void
   onDelete: () => void
 }): React.JSX.Element {
   const { t } = useTranslation()
+  const pinned = chat.pinned === true
   return (
-    <li className="group relative flex items-center">
+    <li
+      className={cn(
+        'group relative flex items-center',
+        lastPinned && 'mb-1 border-b border-black/5 pb-1'
+      )}
+    >
       <button
         type="button"
         onClick={onOpen}
         title={running ? t('chat.runningHere') : chat.title || t('chat.untitled')}
         className={cn(
           'flex min-w-0 flex-1 items-center gap-1.5 rounded-[9px] px-2 py-1.5 text-left text-[12px] text-[var(--text2)] hover:bg-black/5',
+          // 마우스를 올리면 오른쪽 단추(고정·지우기) 자리만큼 제목을 먼저 줄인다 — 글자 위에 겹치지 않게
+          running ? 'group-hover:pr-7' : 'group-hover:pr-12',
           active && 'bg-black/5 font-medium text-[var(--text)]'
         )}
       >
+        {/* 고정한 대화는 핀 표시를 단다 */}
+        {pinned && (
+          <Pin
+            aria-label={t('chat.pinned')}
+            className="h-3 w-3 shrink-0 rotate-45 fill-current text-[var(--text3)]"
+          />
+        )}
         <span className="min-w-0 flex-1 truncate">{chat.title || t('chat.untitled')}</span>
         {running && (
           <span
@@ -150,6 +174,19 @@ function ChatRow({
             className="h-3 w-3 shrink-0 animate-spin rounded-full border-2 border-[var(--accent)]/20 border-t-[var(--accent)]"
           />
         )}
+      </button>
+      {/* 고정·풀기 — 마우스를 올리면 지우기 단추 왼쪽에 나온다 */}
+      <button
+        type="button"
+        aria-label={pinned ? t('chat.unpin') : t('chat.pin')}
+        title={pinned ? t('chat.unpin') : t('chat.pin')}
+        onClick={onPin}
+        className={cn(
+          'absolute hidden rounded-[7px] p-1 text-[var(--text3)] hover:bg-black/5 hover:text-[var(--text)] group-hover:block',
+          running ? 'right-1' : 'right-7'
+        )}
+      >
+        {pinned ? <PinOff className="h-3.5 w-3.5" /> : <Pin className="h-3.5 w-3.5" />}
       </button>
       {/* 탭의 X 처럼 확인 없이 바로 지운다(사용자 요청). 일하는 대화는 끝난 뒤에 지운다 */}
       {!running && (

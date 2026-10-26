@@ -129,6 +129,8 @@ interface ChatState {
   newChat: () => void
   // 대화를 지운다(삭제 표식). 화면에 열려 있었으면 새 대화로 돌아간다
   removeChat: (chatId: number) => Promise<void>
+  // 대화를 사이드바 맨 위에 고정하거나 푼다(목록을 다시 읽어 자리를 맞춘다)
+  pinChat: (chatId: number, pinned: boolean) => Promise<void>
   /** scheduleToken 은 예약이 보낸 실행임을 메인에 알리는 표식이다(사용자 입력에는 없다) */
   send: (
     text: string,
@@ -384,6 +386,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
       parked: parkCurrent(get()),
       ...(running ? {} : runState('idle'))
     })
+  },
+  pinChat: async (chatId, pinned) => {
+    const r = await window.samba.chats?.pin?.(chatId, pinned)
+    if (r?.ok) await get().loadChats()
   },
   removeChat: async (chatId) => {
     // 일하는 대화는 지우지 않는다(끝난 실행이 지운 대화에 기록을 남기려 한다)

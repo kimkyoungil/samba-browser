@@ -28,6 +28,8 @@ export interface ChatDto {
   title: string
   createdAt: number
   updatedAt: number
+  // 사이드바 맨 위에 고정했는가(이 PC 에만 남는다)
+  pinned?: boolean
 }
 
 /** 메시지 한 줄 */

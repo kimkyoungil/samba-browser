@@ -34,6 +34,7 @@ export const IPC = {
   chatAppend: 'chat:append',
   chatRename: 'chat:rename',
   chatDelete: 'chat:delete',
+  chatPin: 'chat:pin', // 대화를 사이드바 맨 위에 고정·풀기(이 PC 에만)
   chatTruncate: 'chat:truncate', // 한 메시지부터 끝까지 지우기(고쳐 다시 보내기·답 다시 받기)
   settingsGet: 'settings:get',
   settingsSet: 'settings:set',

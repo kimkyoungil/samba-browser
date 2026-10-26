@@ -247,6 +247,9 @@ const api = {
     rename: (chatId: number, title: string): Promise<IpcResult<ChatDto | null>> =>
       invoke(IPC.chatRename, chatId, title),
     remove: (chatId: number): Promise<IpcResult<boolean>> => invoke(IPC.chatDelete, chatId),
+    // 사이드바 맨 위에 고정·풀기(이 PC 에만)
+    pin: (chatId: number, pinned: boolean): Promise<IpcResult<ChatDto | null>> =>
+      invoke(IPC.chatPin, chatId, pinned),
     // 한 메시지부터 끝까지 지운다(지운 줄 수). 그 대화의 AI 세션도 새로 시작한다
     truncate: (chatId: number, messageId: number): Promise<IpcResult<number>> =>
       invoke(IPC.chatTruncate, chatId, messageId)

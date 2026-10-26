@@ -107,7 +107,9 @@ export const chats = sqliteTable('chats', {
   title: text('title').notNull(),
   createdAt: integer('created_at').notNull(),
   updatedAt: integer('updated_at').notNull(),
-  deletedAt: integer('deleted_at')
+  deletedAt: integer('deleted_at'),
+  // 사이드바 맨 위에 고정한 시각(없으면 고정 안 함). 이 PC 에만 남는다 — 동기화 칸이 아니다
+  pinnedAt: integer('pinned_at')
 })
 
 // AI 채팅 메시지. content 는 평문이다 — 채팅은 비밀값이 아니다(스펙).

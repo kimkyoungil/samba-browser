@@ -76,13 +76,13 @@ export class ChatRepo {
 
   // --- 대화 -----------------------------------------------------------------
 
-  /** 최근에 고친 순으로 대화 목록을 돌려준다 */
+  /** 대화 목록 — 고정한 대화를 먼저(최근에 고정한 순), 나머지는 최근에 고친 순 */
   list(limit: number = DEFAULT_LIST_LIMIT): ChatDto[] {
     return this.d
       .select()
       .from(chats)
       .where(this.visibleWhere())
-      .orderBy(desc(chats.updatedAt))
+      .orderBy(sql`${chats.pinnedAt} IS NULL`, desc(chats.pinnedAt), desc(chats.updatedAt))
       .limit(Math.max(1, limit))
       .all()
       .map(toChatDto)
@@ -155,6 +155,19 @@ export class ChatRepo {
     this.db.scheduleSave()
     this.record('chats', chatId, 'upsert')
     return { ...toChatDto(chat), title, updatedAt: now }
+  }
+
+  /**
+   * 대화를 사이드바 맨 위에 고정하거나 푼다. 대화의 수정 시각은 건드리지 않는다(풀면 원래 자리로 간다).
+   * 이 PC 에만 남는 칸이라 변경 로그를 남기지 않는다. 대화가 없으면 null
+   */
+  setPinned(chatId: number, pinned: boolean, now: number = Date.now()): ChatDto | null {
+    const chat = this.findVisible(chatId)
+    if (!chat) return null
+    const pinnedAt = pinned ? now : null
+    this.d.update(chats).set({ pinnedAt }).where(eq(chats.id, chatId)).run()
+    this.db.scheduleSave()
+    return toChatDto({ ...chat, pinnedAt })
   }
 
   /**
@@ -255,7 +268,8 @@ function toChatDto(row: typeof chats.$inferSelect): ChatDto {
     id: row.id,
     title: row.title,
     createdAt: row.createdAt,
-    updatedAt: row.updatedAt
+    updatedAt: row.updatedAt,
+    pinned: row.pinnedAt !== null
   }
 }
 

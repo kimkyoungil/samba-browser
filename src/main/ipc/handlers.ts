@@ -640,6 +640,11 @@ export function registerIpc(
   handleFromRenderer(IPC.chatGet, (chatId: number) => chats.get(chatId))
   handleFromRenderer(IPC.chatAppend, (input: AppendMessageInput) => chats.append(input))
   handleFromRenderer(IPC.chatRename, (chatId: number, title: string) => chats.rename(chatId, title))
+  handleFromRenderer(IPC.chatPin, (rawChatId: unknown, pinned: unknown) => {
+    if (typeof rawChatId !== 'number' || !Number.isInteger(rawChatId))
+      throw new Error('bad chat id')
+    return chats.setPinned(rawChatId, pinned === true)
+  })
   handleFromRenderer(IPC.chatDelete, (chatId: number) => {
     // 지운 대화의 AI 선택도 같이 지운다(같은 번호가 다시 쓰일 일은 없지만 파일이 쌓이지 않게)
     chatEngines.clear(chatId)

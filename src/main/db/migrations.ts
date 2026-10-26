@@ -157,5 +157,11 @@ export const migrations: Migration[] = [
       'CREATE UNIQUE INDEX IF NOT EXISTS `daangn_accounts_partition_unique` ON `daangn_accounts` (`partition`);',
       'CREATE TABLE IF NOT EXISTS `daangn_templates` (\n\t`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,\n\t`text` text NOT NULL,\n\t`sort_order` integer NOT NULL,\n\t`created_at` integer NOT NULL\n);'
     ]
+  },
+  {
+    // noden: 대화 고정(사이드바 맨 위). 원작자 번호(00NN_)와 겹치지 않게 noden_ 이름을 쓴다.
+    // 대화 목록을 읽을 때마다 이 칸을 고르므로 실패를 넘기지 않는다(optional 아님)
+    tag: 'noden_0001_chat_pinned',
+    sql: ['ALTER TABLE `chats` ADD `pinned_at` integer;']
   }
 ]

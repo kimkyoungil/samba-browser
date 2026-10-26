@@ -12,6 +12,7 @@
 //   자동 압축에 맡기지 않고 새 세션 + 앞부분 요약으로 갈아탄다(shouldStartFresh)
 // - 그래도 문맥 초과로 실패하면 실행기가 이 연결을 지운다 — 같은 막힌 세션을 계속 이어받지 않게
 
+import { COMPACT_MARK } from '../../shared/chat'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { dirname } from 'path'
 
@@ -138,6 +139,8 @@ export class ChatSessionStore {
 
 /** 요약에 담을 최근 턴 수(사용자·AI 한 쌍이 1턴) */
 export const HISTORY_NOTE_TURNS = 6
+/** 앞부분 요약에 싣는 /compact 압축 요약의 최대 글자 수 */
+export const COMPACT_SUMMARY_MAX = 8000
 /** 한 메시지에서 요약에 싣는 최대 글자 수 */
 const HISTORY_NOTE_CHARS = 400
 
@@ -158,12 +161,14 @@ export function buildHistoryNote(
 ): string {
   const turns = opts.turns ?? HISTORY_NOTE_TURNS
   const chars = opts.chars ?? HISTORY_NOTE_CHARS
-  const kept = messages
+  // /compact 로 압축했으면 그 요약이 앞 대화를 대신한다 — 요약을 싣고, 그 뒤의 말만 최근 턴으로 고른다
+  const { summary, after } = splitAtCompact(messages)
+  const kept = after
     .filter((m) => (m.role === 'user' || m.role === 'assistant') && m.content.trim() !== '')
     // 자동 학습 턴은 절차 저장용이라 대화 맥락이 아니다
     .filter((m) => !(m.role === 'user' && m.content.startsWith('[자동 학습]')))
     .slice(-turns * 2)
-  if (kept.length === 0) return ''
+  if (kept.length === 0 && summary === '') return ''
   const lines = kept.map((m) => {
     const body = m.content.replace(/\s+/g, ' ').trim()
     const cut = body.length > chars ? `${body.slice(0, chars)}…` : body
@@ -171,7 +176,65 @@ export function buildHistoryNote(
   })
   return [
     '[이 대화의 앞부분 요약 — 새 세션이라 도구 결과는 기억하지 못한다. 필요하면 화면을 다시 읽어라]',
+    ...(summary ? ['[사용자가 /compact 로 압축한 앞 대화 요약]', summary, '[그 뒤의 대화]'] : []),
     ...lines,
     ''
+  ].join('\n')
+}
+
+/** 마지막 /compact 압축 요약과 그 뒤의 말. 압축한 적이 없으면 요약은 빈 글, 말은 전부 */
+export function splitAtCompact(messages: readonly HistoryMessage[]): {
+  summary: string
+  after: readonly HistoryMessage[]
+} {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i]
+    if (m.role === 'assistant' && m.content.startsWith(COMPACT_MARK))
+      return {
+        summary: m.content.slice(COMPACT_MARK.length).trim().slice(0, COMPACT_SUMMARY_MAX),
+        after: messages.slice(i + 1)
+      }
+  }
+  return { summary: '', after: messages }
+}
+
+// 세션 없이 기록으로 압축할 때 싣는 한 말의 최대 글자 수와 전체 상한
+const COMPACT_SOURCE_MESSAGE_MAX = 4000
+const COMPACT_SOURCE_TOTAL_MAX = 60_000
+
+/**
+ * 이어받을 세션이 없을 때 /compact 가 요약할 원문 — 앞선 압축 요약 + 그 뒤의 대화 전부(최근 것을 우선해 상한까지).
+ * 쓸 말이 없으면 빈 글
+ */
+export function compactSourceText(messages: readonly HistoryMessage[]): string {
+  const { summary, after } = splitAtCompact(messages)
+  const lines: string[] = []
+  let total = 0
+  for (const m of [...after].reverse()) {
+    if ((m.role !== 'user' && m.role !== 'assistant') || m.content.trim() === '') continue
+    const body = m.content.trim().slice(0, COMPACT_SOURCE_MESSAGE_MAX)
+    const line = `- ${m.role === 'user' ? '사용자' : 'AI'}: ${body}`
+    if (total + line.length > COMPACT_SOURCE_TOTAL_MAX) break
+    lines.unshift(line)
+    total += line.length
+  }
+  if (lines.length === 0 && summary === '') return ''
+  return [
+    '[지금까지의 대화 기록]',
+    ...(summary ? ['[앞서 압축한 요약]', summary, '[그 뒤의 대화]'] : []),
+    ...lines
+  ].join('\n')
+}
+
+/** /compact 요약을 부탁하는 글. focus 는 사용자가 덧붙인 '무엇을 남길지' */
+export function compactPrompt(focus: string): string {
+  return [
+    'The user ran /compact. Summarize this whole conversation so the summary can replace the history in a fresh session.',
+    "Write it in the user's language (Korean) as concise bullet points under these headings: 목표·지시, 확인된 사실(이름·숫자·주소·계정 이름), 한 일과 결과, 남은 일, 지금 열린 탭·화면 상태(있으면).",
+    'Do not copy credentials: login passwords, payment card numbers, one-time verification codes or API keys.',
+    'Everything else the user told you or asked you to remember must be kept exactly — numbers, order numbers, prices, names, IDs and codes they gave (even if they call it secret).',
+    'Use only what was actually said or done in this conversation — not details from your own instructions or environment (account e-mails, file paths, tool lists).',
+    'Do not call any tools and do not continue the task — only write the summary.',
+    ...(focus ? [`Keep especially: ${focus}`] : [])
   ].join('\n')
 }

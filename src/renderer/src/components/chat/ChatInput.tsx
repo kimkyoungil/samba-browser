@@ -173,6 +173,8 @@ export function ChatInput(): React.JSX.Element {
     void attach(pasted)
   }
   const canSend = text.trim() !== '' || images.length > 0 || files.length > 0
+  // '/' 로 시작해 '/compact' 의 앞부분까지만 쳤을 때 명령 안내를 띄운다(다 친 뒤엔 숨긴다)
+  const slashHint = /^\/[a-z]*$/i.test(text) && '/compact'.startsWith(text.toLowerCase())
   return (
     <div className="border-t border-black/5 p-3">
       {/* 끼워 넣은 말 — AI 가 다음 단계 사이에 집어 들면 말풍선으로 바뀐다(되돌릴 수 없다) */}
@@ -275,6 +277,21 @@ export function ChatInput(): React.JSX.Element {
         </div>
       )}
       {note && <p className="mb-1.5 text-[11px] text-[#b91c1c]">{note}</p>}
+      {/* '/' 로 시작하면 명령 안내 — 누르거나 Tab 으로 채운다(Claude 앱의 슬래시 명령처럼) */}
+      {slashHint && (
+        <button
+          type="button"
+          onClick={() => {
+            setText('/compact ')
+            box.current?.focus()
+          }}
+          className="mb-1.5 flex w-full items-center gap-2 rounded-lg bg-black/[.04] px-2.5 py-1.5 text-left text-[12px] text-[var(--text2)] hover:bg-black/[.07]"
+        >
+          <span className="shrink-0 font-mono font-semibold text-[var(--text)]">/compact</span>
+          <span className="min-w-0 flex-1 truncate">{t('chat.compactHint')}</span>
+          <span className="shrink-0 text-[10.5px] text-[var(--text3)]">Tab</span>
+        </button>
+      )}
       <div className="flex items-end gap-2 rounded-xl border border-[var(--line)] bg-[var(--bg)] px-3 py-2">
         <textarea
           ref={box}
@@ -288,6 +305,12 @@ export function ChatInput(): React.JSX.Element {
           onPaste={onPaste}
           onKeyDown={(e) => {
             if (e.nativeEvent.isComposing) return
+            // 명령 안내가 떠 있으면 Tab 으로 채운다
+            if (e.key === 'Tab' && slashHint) {
+              e.preventDefault()
+              setText('/compact ')
+              return
+            }
             // Enter 는 보내기, Shift+Enter 는 줄바꿈(클로드 웹과 같다)
             if (e.key === 'Enter' && !e.shiftKey) {
               e.preventDefault()

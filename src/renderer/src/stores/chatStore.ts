@@ -8,7 +8,7 @@ import type {
   HandoffKind,
   IpcResult
 } from '@shared/ipc'
-import { RECENT_CHAT_LIMIT, titleFromMessage } from '@shared/chat'
+import { parseCompactCommand, RECENT_CHAT_LIMIT, titleFromMessage } from '@shared/chat'
 import { agentImageDataUrl, type AgentImage } from '@shared/agent-image'
 import type { AgentFile } from '@shared/agent-file'
 import { DEFAULT_SETTINGS, type AgentEffort } from '@shared/settings'
@@ -472,9 +472,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
   unqueue: (index) => set((s) => ({ queue: s.queue.filter((_, i) => i !== index) })),
   injecting: [],
   sendWhileRunning: async (text, images, files) => {
-    // 이미 대기열에 말이 있으면 순서가 뒤바뀌지 않게 이것도 대기열 뒤에 둔다
+    // 이미 대기열에 말이 있으면 순서가 뒤바뀌지 않게 이것도 대기열 뒤에 둔다.
+    // /compact 는 하던 일 도중에 끼워 넣지 않는다 — 끝난 뒤 그 대화 전체를 요약해야 한다
     const inject = window.samba.agent.inject
-    if (get().queue.length > 0 || !inject) return get().enqueue(text, images, files)
+    if (get().queue.length > 0 || !inject || parseCompactCommand(text) !== null)
+      return get().enqueue(text, images, files)
     const chatId = get().activeChatId
     const r = await inject(text, chatId ?? undefined, images, files)
     const id = r.ok && r.data.injected ? r.data.id : undefined

@@ -86,3 +86,15 @@ export function titleFromMessage(text: string): string {
   const line = text.trim().split('\n')[0]?.trim() ?? ''
   return line.length > CHAT_TITLE_MAX ? `${line.slice(0, CHAT_TITLE_MAX)}…` : line
 }
+
+/**
+ * /compact 로 남긴 압축 요약 답 글의 머리 표시. 이 표시로 시작하는 AI 답은 화면에서 '대화를 압축했어요'로 그리고,
+ * 다음 세션의 앞부분 요약은 여기서부터 시작한다(그 앞 대화는 이 요약이 대신한다)
+ */
+export const COMPACT_MARK = '[대화 압축 요약]'
+
+/** '/compact' 명령이면 덧붙인 지시(없으면 빈 글), 아니면 null. '/compactx' 같은 글은 명령이 아니다 */
+export function parseCompactCommand(text: string): string | null {
+  const m = /^\/compact(?:\s+([\s\S]*))?$/.exec(text.trim())
+  return m ? (m[1] ?? '').trim() : null
+}

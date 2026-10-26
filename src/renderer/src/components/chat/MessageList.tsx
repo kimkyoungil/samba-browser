@@ -9,6 +9,8 @@ import { CopyButton } from './CopyButton'
 import { ThinkingBlock } from './ThinkingBlock'
 import { TodoChecklist } from './TodoChecklist'
 import { UserMessage } from './UserMessage'
+import { CompactNote } from './CompactNote'
+import { COMPACT_MARK } from '@shared/chat'
 
 // 맨 아래에서 이만큼(px) 안쪽이면 '따라 내려가는 중'으로 본다
 const STICK_GAP = 40
@@ -107,7 +109,13 @@ const MessageRow = memo(function MessageRow({
       {/* 답 글이 흘러오기 시작하면 '생각하는 중' 표시를 멈춘다 */}
       {m.thinking && <ThinkingBlock text={m.thinking} live={running && !shown} />}
       {m.todos && m.todos.length > 0 && <TodoChecklist items={m.todos} running={running} />}
-      {shown && <MarkdownText text={shown} />}
+      {/* /compact 로 남긴 압축 요약은 '대화를 압축했어요' 한 줄(누르면 요약)로 그린다 */}
+      {shown &&
+        (shown.startsWith(COMPACT_MARK) ? (
+          <CompactNote text={shown} />
+        ) : (
+          <MarkdownText text={shown} />
+        ))}
       {/* 글자가 흘러오는 동안 끝에 깜빡이는 커서 */}
       {m.partial ? (
         <span className="inline-block h-[1em] w-[2px] animate-pulse bg-[var(--text)]" />

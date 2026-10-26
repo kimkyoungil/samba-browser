@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
-import { Pin, PinOff, Plus, Search, X } from 'lucide-react'
+import { Import, Pin, PinOff, Plus, Search, X } from 'lucide-react'
 import { cn } from '@renderer/lib/utils'
 import { useChatStore } from '@renderer/stores/chatStore'
 import { useUiStore } from '@renderer/stores/uiStore'
@@ -16,6 +16,7 @@ import {
   DialogTitle
 } from '@renderer/components/ui/dialog'
 import type { ChatDto } from '@shared/ipc'
+import { ChatImportDialog } from './ChatImportDialog'
 
 export function ChatList(): React.JSX.Element {
   const { t } = useTranslation()
@@ -45,12 +46,14 @@ export function ChatList(): React.JSX.Element {
   const runningChatId = useChatStore((s) => (s.status === 'running' ? s.runChatId : null))
   // 지우기 확인 창에 올린 대화(✕ 한 번으로 바로 지워지지 않게 — 사장님 요청)
   const [deleting, setDeleting] = useState<ChatDto | null>(null)
+  // Aside 대화 가져오기 창
+  const [importing, setImporting] = useState(false)
   // 확인 창이 떠 있는 동안 웹 화면을 접는다 — 앱 화면 위에 따로 얹힌 웹 화면이 창을 가리지 않게
   const setWebviewHidden = useOverlayStore((s) => s.setWebviewHidden)
   useEffect(() => {
-    setWebviewHidden(deleting !== null)
+    setWebviewHidden(deleting !== null || importing)
     return () => setWebviewHidden(false)
-  }, [deleting, setWebviewHidden])
+  }, [deleting, importing, setWebviewHidden])
 
   // 앱이 뜨면 최근 대화를 한 번 읽어 온다
   useEffect(() => {
@@ -61,17 +64,29 @@ export function ChatList(): React.JSX.Element {
   // 창 밖으로 밀려 창 전체가 스크롤되지 않게(새 대화·검색칸 + 한두 줄은 늘 보인다)
   return (
     <div className="flex min-h-[88px] flex-col">
-      <button
-        type="button"
-        onClick={() => {
-          newChat()
-          setView('browser')
-        }}
-        className="flex items-center gap-1.5 rounded-[9px] px-2 py-1.5 text-left text-[12px] text-[var(--text2)] hover:bg-black/5"
-      >
-        <Plus className="h-3.5 w-3.5" />
-        {t('chat.new')}
-      </button>
+      <div className="flex items-center">
+        <button
+          type="button"
+          onClick={() => {
+            newChat()
+            setView('browser')
+          }}
+          className="flex flex-1 items-center gap-1.5 rounded-[9px] px-2 py-1.5 text-left text-[12px] text-[var(--text2)] hover:bg-black/5"
+        >
+          <Plus className="h-3.5 w-3.5" />
+          {t('chat.new')}
+        </button>
+        {/* 다른 앱(Aside)의 대화를 대화방으로 가져오기 */}
+        <button
+          type="button"
+          aria-label={t('chat.importAside')}
+          title={t('chat.importAside')}
+          onClick={() => setImporting(true)}
+          className="mr-1 rounded-[7px] p-1 text-[var(--text3)] hover:bg-black/5 hover:text-[var(--text)]"
+        >
+          <Import className="h-3.5 w-3.5" />
+        </button>
+      </div>
       {/* 지난 대화 찾기 — 제목과 대화 내용에서 찾는다 */}
       <label className="mx-1 my-0.5 flex items-center gap-1.5 rounded-[8px] border border-[var(--line)] bg-white px-2 py-1 text-[12px] text-[var(--text2)] focus-within:border-[var(--text2)]">
         <Search className="h-3.5 w-3.5 shrink-0 text-[var(--text3)]" />
@@ -160,6 +175,7 @@ export function ChatList(): React.JSX.Element {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      {importing && <ChatImportDialog onClose={() => setImporting(false)} />}
     </div>
   )
 }

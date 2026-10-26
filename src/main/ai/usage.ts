@@ -50,6 +50,15 @@ export function parseClaudeUsage(raw: unknown): AiUsageLimit[] | null {
   return out
 }
 
+/** 응답의 칸 이름만(두 단계까지) — 값은 빼고 형식 진단용으로 남긴다 */
+export function shapeOf(v: unknown, depth = 0): string {
+  if (v === null || typeof v !== 'object') return v === null ? 'null' : typeof v
+  if (Array.isArray(v)) return depth >= 1 ? '[…]' : `[${v.length ? shapeOf(v[0], depth + 1) : ''}]`
+  const keys = Object.keys(v).slice(0, 20)
+  if (depth >= 1) return `{${keys.join(',')}}`
+  return `{${keys.map((k) => `${k}:${shapeOf((v as Record<string, unknown>)[k], depth + 1)}`).join(',')}}`
+}
+
 /** 자격 파일에서 액세스 토큰만 꺼낸다. 없거나 깨졌으면 null(값은 로그에 남기지 않는다) */
 export function readClaudeAccessToken(
   readFile: (path: string) => string = (p) => readFileSync(p, 'utf8')
@@ -83,9 +92,17 @@ export async function fetchClaudeUsage(deps: ClaudeUsageDeps = {}): Promise<AiUs
       headers: { Authorization: `Bearer ${token}`, 'anthropic-beta': 'oauth-2025-04-20' },
       signal: abort.signal
     })
-    if (!res.ok) return null
-    const limits = parseClaudeUsage(await res.json())
-    if (!limits) return null
+    // 실패하면 응답 상태 번호와 응답의 칸 이름만 남긴다(토큰·값은 남기지 않는다) — 형식이 바뀌었는지 가린다
+    if (!res.ok) {
+      console.warn('Claude 사용량 조회 실패: HTTP', res.status)
+      return null
+    }
+    const body: unknown = await res.json()
+    const limits = parseClaudeUsage(body)
+    if (!limits) {
+      console.warn('Claude 사용량 응답 형식 다름: 칸', shapeOf(body))
+      return null
+    }
     return { limits, fetchedAt: (deps.now ?? Date.now)() }
   } catch {
     // 오프라인·시간 초과. 사유에 토큰이 섞일 수 있어 아무것도 남기지 않는다

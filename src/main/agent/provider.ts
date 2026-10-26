@@ -420,14 +420,19 @@ export function classifyAuthError(message: string): 'missing' | 'limit' | null {
   return null
 }
 
+// 모델에 요청이 몰려 막혔다는 Codex 문구. 같은 429 라도 응답 본문은 'Codex is at capacity'·
+// code 'turn_rate_limit_exceeded'(openai/codex #57073), 다른 길은 'Selected model is at capacity'(#57084)로 온다.
+// turn_rate_limit_exceeded 는 'rate_limit' 을 품어 한도 판정보다 먼저 봐야 한다
+const BUSY_PATTERNS = ['too many requests', 'at capacity', 'turn_rate_limit_exceeded']
+
 /**
- * Codex 실패 문구 분류. 모델에 요청이 몰려 받은 429(재시도 소진, 'Too Many Requests')는 사용 한도와 따로
+ * Codex 실패 문구 분류. 모델에 요청이 몰려 받은 429(재시도 소진·용량 부족)는 사용 한도와 따로
  * 'busy' 로 알린다 — 실기 2026-10-26: 사용량 0% 인데 gpt-6.1-sol 만 429 로 막혀 '한도 도달'로 잘못 보였다
- * (같은 계정의 gpt-6-sol 은 정상). 진짜 한도는 'usage limit' 문구로 온다
+ * (같은 계정의 gpt-6-sol 은 정상, 같은 날 전 세계 신고 다수). 진짜 한도는 'usage limit' 문구로 온다
  */
 export function classifyCodexError(message: string): 'missing' | 'limit' | 'busy' | null {
   const m = message.toLowerCase()
-  if (m.includes('too many requests') && !m.includes('usage limit')) return 'busy'
+  if (BUSY_PATTERNS.some((p) => m.includes(p)) && !m.includes('usage limit')) return 'busy'
   return classifyAuthError(message)
 }
 

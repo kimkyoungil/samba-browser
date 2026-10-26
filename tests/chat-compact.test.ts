@@ -229,6 +229,39 @@ describe('러너 — /compact', () => {
     expect(threads.clear).toHaveBeenCalledWith(5)
     expect(events).toContainEqual({ type: 'text', text: `${COMPACT_MARK}\n${SUMMARY}` })
   })
+
+  it('Codex: 모델이 붐벼(429·용량 부족) 요약을 못 받으면 한도가 아니라 붐빔으로 알리고, 길마다 한 번씩만 해 본다', async () => {
+    const { runner, events, threads } = makeRunner('codex', { thread: 'T-1' })
+    const busy: CodexEvent[] = [
+      { type: 'error', message: 'exceeded retry limit, last status: 429 Too Many Requests' },
+      { type: 'done', ok: false }
+    ]
+    const capacity: CodexEvent[] = [
+      {
+        type: 'done',
+        ok: false,
+        message: 'Selected model is at capacity. Please try a different model.'
+      }
+    ]
+    codexRuns = [busy, capacity]
+    await runner.run('/compact', 5)
+    // 이어받기 한 번 + 기록 원문 한 번
+    expect(codexInputs).toHaveLength(2)
+    expect(ends(events)[0]).toMatchObject({ type: 'status', state: 'failed', message: 'auth:busy' })
+    expect(threads.clear).not.toHaveBeenCalled()
+  })
+
+  it('Codex: 진짜 사용 한도면 한도로 알린다', async () => {
+    const { runner, events } = makeRunner('codex')
+    codexRuns = [[{ type: 'done', ok: false, message: "You've hit your usage limit." }]]
+    await runner.run('/compact', 5)
+    expect(codexInputs).toHaveLength(1)
+    expect(ends(events)[0]).toMatchObject({
+      type: 'status',
+      state: 'failed',
+      message: 'auth:limit'
+    })
+  })
 })
 
 describe('화면 — /compact', () => {

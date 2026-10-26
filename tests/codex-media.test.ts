@@ -137,7 +137,17 @@ describe('Codex 실패 분류', () => {
     expect(classifyCodexError('exceeded retry limit, last status: 429 Too Many Requests')).toBe(
       'busy'
     )
+    // 같은 붐빔의 다른 꼴 — 응답 본문(#57073)과 용량 부족 안내(#57084). rate_limit 이 들어 있어도 한도가 아니다
+    expect(
+      classifyCodexError(
+        '{"error":{"type":"rate_limit_error","code":"turn_rate_limit_exceeded","message":"Codex is at capacity, please try again later"}}'
+      )
+    ).toBe('busy')
+    expect(classifyCodexError('Selected model is at capacity. Please try a different model.')).toBe(
+      'busy'
+    )
     expect(classifyCodexError("You've hit your usage limit. Try again later.")).toBe('limit')
+    expect(classifyCodexError('rate_limit_error: usage limit reached for this plan')).toBe('limit')
     expect(classifyCodexError('429 Too Many Requests: usage limit reached')).toBe('limit')
     expect(classifyCodexError('그 밖의 오류')).toBeNull()
   })

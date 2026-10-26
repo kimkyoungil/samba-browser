@@ -698,18 +698,23 @@ export class AgentRunner {
             abort,
             auth: o.runAuth
           })
-    let summary: string | null = null
+    // 한 번씩만 해 본다(이어받기 → 기록 원문). 실패 문구는 마지막 것을 남겨 붐빔·한도를 가른다
     let failure = ''
-    try {
-      summary = await viaSession()
-      if (!summary && !abort.signal.aborted) summary = await viaTranscript()
-    } catch (e) {
-      failure = e instanceof Error ? e.message : String(e)
-      if (!abort.signal.aborted) summary = await viaTranscript().catch(() => null)
+    const attempt = async (f: () => Promise<string | null>): Promise<string | null> => {
+      try {
+        return await f()
+      } catch (e) {
+        failure = e instanceof Error ? e.message : String(e)
+        return null
+      }
     }
+    let summary = await attempt(viaSession)
+    if (!summary && !abort.signal.aborted) summary = await attempt(viaTranscript)
     if (abort.signal.aborted) return
     if (!summary) {
-      const kind = failure ? classifyAuthError(failure) : null
+      // Codex 로 요약하다 막힌 것도 붐빔(429·용량 부족)과 한도를 가른다
+      const classify = o.backend === 'codex' ? classifyCodexError : classifyAuthError
+      const kind = failure ? classify(failure) : null
       emit({
         type: 'status',
         state: 'failed',
@@ -741,13 +746,22 @@ export class AgentRunner {
     return text.trim() || null
   }
 
-  /** Codex 로 요약 글 한 덩어리를 받는다. 실패하면 null */
+  /**
+   * Codex 로 요약 글 한 덩어리를 받는다. 답 없이 끝나면 null, 실패하면 그 문구로 던진다
+   * (부른 쪽이 붐빔·한도를 가려 알리게 — 문구를 버리면 '요약하지 못했어요'만 남는다)
+   */
   private async codexSummary(input: CodexInput): Promise<string | null> {
     let text = ''
+    let lastError = ''
     for await (const event of runCodexQuery(input)) {
       if (input.abort.signal.aborted) return null
       if (event.type === 'text') text = text ? `${text}\n${event.text}` : event.text
-      if (event.type === 'done' && !event.ok) return null
+      if (event.type === 'error') lastError = event.message
+      if (event.type === 'done' && !event.ok) {
+        const message = event.message || lastError
+        if (message) throw new Error(message)
+        return null
+      }
     }
     return text.trim() || null
   }

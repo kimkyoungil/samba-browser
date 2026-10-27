@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type React from 'react'
 import { DEFAULT_SETTINGS } from '@shared/settings'
 import { useTranslation } from 'react-i18next'
@@ -27,6 +27,8 @@ import { useVaultStore } from '@renderer/stores/vaultStore'
 import { useAuthStore } from '@renderer/stores/authStore'
 import { useDaangnStore } from '@renderer/stores/daangnStore'
 import { LoginGate } from '@renderer/components/layout/LoginGate'
+import { narrowPane, useNarrow } from '@renderer/lib/narrow-layout'
+import { cn } from '@renderer/lib/utils'
 
 export default function App(): React.JSX.Element {
   // 진행 띠에 보여 줄 도구 호출 상한(설정값). 읽기 전까지는 기본값
@@ -115,6 +117,49 @@ export default function App(): React.JSX.Element {
         viewportHeight: window.innerHeight
       })
   }, [view])
+  // 좁은 창(폰으로 본컴을 볼 때)은 한 번에 한 칸만 — 사이드바·AI 창·브라우저 중 하나가 폭을 다 쓴다.
+  // 좁아지면 사이드바를 접어 두고 넓어지면 원래대로 되돌린다(저장된 설정은 건드리지 않는다 — PC 화면 그대로)
+  const narrow = useNarrow()
+  const beforeNarrow = useRef<{ sidebar: boolean; panel: boolean } | null>(null)
+  useEffect(() => {
+    const ui = useUiStore.getState()
+    if (narrow && beforeNarrow.current === null) {
+      beforeNarrow.current = { sidebar: ui.sidebarCollapsed, panel: ui.panelCollapsed }
+      ui.setSidebarCollapsed(true)
+    } else if (!narrow && beforeNarrow.current !== null) {
+      ui.setSidebarCollapsed(beforeNarrow.current.sidebar)
+      ui.setPanelCollapsed(beforeNarrow.current.panel)
+      beforeNarrow.current = null
+    }
+  }, [narrow])
+  // 좁은 창에서 사이드바로 고르면 사이드바를 접고 고른 것을 보여 준다 — 대화는 AI 창으로, 작업·로그·설정 같은
+  // 화면은 AI 창을 접어 그 화면으로(앱을 처음 켤 때는 건드리지 않는다)
+  const activeChatId = chat.activeChatId
+  const firstChat = useRef(true)
+  useEffect(() => {
+    if (firstChat.current) {
+      firstChat.current = false
+      return
+    }
+    if (!narrow) return
+    const ui = useUiStore.getState()
+    ui.setSidebarCollapsed(true)
+    ui.setPanelCollapsed(false)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 고른 대화가 바뀔 때만
+  }, [activeChatId])
+  const firstView = useRef(true)
+  useEffect(() => {
+    if (firstView.current) {
+      firstView.current = false
+      return
+    }
+    if (!narrow) return
+    const ui = useUiStore.getState()
+    ui.setSidebarCollapsed(true)
+    if (view !== 'browser') ui.setPanelCollapsed(true)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 고른 화면이 바뀔 때만
+  }, [view])
+  const pane = narrow ? narrowPane(sidebarCollapsed, panelCollapsed) : null
   // 인증 상태를 아직 못 읽었으면 빈 화면(잠깐) — 로그인 전 화면이 스쳐 보이지 않게
   if (authState === null) return <div className="h-full bg-[var(--bg)]" />
   if (authState.account?.configured && !authState.account.signedIn) return <LoginGate />
@@ -122,9 +167,14 @@ export default function App(): React.JSX.Element {
     // 무엇이 넘쳐도 앱 화면 전체는 밀리지 않는다 — clip 은 스크롤 상자가 아니라 휠·초점·scrollIntoView 어느 길로도
     // 움직이지 않는다(hidden 은 초점·scrollIntoView 로는 밀린다). 넘친 칸은 각자 안에서 스크롤한다
     <div className="flex h-full overflow-clip bg-[var(--bg)]">
-      <Sidebar width={sidebarWidthOf(sidebarCollapsed, sidebarWidth)} />
-      {/* 접힌 사이드바는 폭이 고정이라 손잡이를 숨긴다 */}
-      {canResizeSidebar(sidebarCollapsed) && (
+      {/* 좁은 창: 사이드바는 펼쳤을 때만 폭을 다 쓰고, 접혀 있으면 아예 숨는다(AI 창 머리줄 ☰ 로 연다) */}
+      {pane === null ? (
+        <Sidebar width={sidebarWidthOf(sidebarCollapsed, sidebarWidth)} />
+      ) : (
+        pane === 'sidebar' && <Sidebar fill />
+      )}
+      {/* 접힌 사이드바는 폭이 고정이라 손잡이를 숨긴다(좁은 창에도 없다) */}
+      {pane === null && canResizeSidebar(sidebarCollapsed) && (
         <ResizeHandle
           side="right"
           getWidth={() => useUiStore.getState().sidebarWidth}
@@ -134,7 +184,14 @@ export default function App(): React.JSX.Element {
           }
         />
       )}
-      <main className="flex min-h-0 min-w-0 flex-1 flex-col pt-2.5 pr-2.5">
+      {/* 좁은 창에서 다른 칸을 볼 때는 숨긴다 — 웹 영역 자리가 0 이 되어 웹페이지(네이티브 화면)도 접힌다 */}
+      <main
+        className={cn(
+          'flex min-h-0 min-w-0 flex-1 flex-col pt-2.5 pr-2.5',
+          pane !== null && 'pl-2.5',
+          pane !== null && pane !== 'main' && 'hidden'
+        )}
+      >
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-t-2xl border border-[var(--line)] bg-white shadow-[0_1px_2px_rgba(0,0,0,.04),0_8px_24px_rgba(0,0,0,.06)]">
           {view === 'browser' ? (
             <>
@@ -177,7 +234,7 @@ export default function App(): React.JSX.Element {
           )}
         </div>
       </main>
-      {!panelCollapsed && (
+      {pane === null && !panelCollapsed && (
         <ResizeHandle
           side="left"
           getWidth={() => useUiStore.getState().panelWidth}
@@ -187,7 +244,11 @@ export default function App(): React.JSX.Element {
           }
         />
       )}
-      {panelCollapsed ? <CollapsedPanelStrip /> : <RightPanel width={panelWidth} />}
+      {panelCollapsed
+        ? pane !== 'sidebar' && <CollapsedPanelStrip />
+        : (pane === null || pane === 'panel') && (
+            <RightPanel width={panelWidth} fill={pane === 'panel'} />
+          )}
     </div>
   )
 }

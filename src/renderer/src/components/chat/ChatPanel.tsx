@@ -9,8 +9,9 @@ import { ChatInput } from './ChatInput'
 import { ConfirmCard } from './ConfirmCard'
 import { HandoffCard } from './HandoffCard'
 import { AuthBanner } from './AuthBanner'
-import { PanelRightClose } from 'lucide-react'
+import { Menu, PanelRightClose } from 'lucide-react'
 import { useUiStore } from '@renderer/stores/uiStore'
+import { useNarrow } from '@renderer/lib/narrow-layout'
 
 // 배지에 쓸 제공자 이름 키
 const PROVIDER_LABEL_KEYS: Record<AiProviderId, string> = {
@@ -41,6 +42,8 @@ export function ChatPanel(): React.JSX.Element {
   )
   const openChat = useChatStore((s) => s.openChat)
   const togglePanel = useUiStore((s) => s.togglePanel)
+  // 좁은 창(폰으로 볼 때) — 대화 목록 단추를 달고, 접기·펼치기는 저장하지 않는다
+  const narrow = useNarrow()
   const openSettings = useUiStore((s) => s.openSettings)
   useEffect(() => window.samba.agent.onEvent(handleEvent), [handleEvent])
   // 상단 배지는 지금 고른 경로와 **실제 연결 상태**를 그대로 비춘다
@@ -127,7 +130,21 @@ export function ChatPanel(): React.JSX.Element {
       )}
       {/* AI 창 머리줄도 창을 끄는 자리다(단추는 그대로 눌린다) */}
       <div className="flex items-center justify-between border-b border-black/5 px-3.5 py-3 font-semibold [-webkit-app-region:drag]">
-        {t('chat.title')}
+        <span className="flex items-center gap-1.5">
+          {/* 좁은 창에서는 사이드바가 숨어 있다 — 여기서 대화 목록(사이드바)을 연다 */}
+          {narrow && (
+            <button
+              type="button"
+              title={t('sidebar.expand')}
+              aria-label={t('sidebar.expand')}
+              onClick={() => useUiStore.getState().setSidebarCollapsed(false)}
+              className="flex h-7 w-7 items-center justify-center rounded-[8px] text-[var(--text2)] hover:bg-black/5 hover:text-[var(--text)] [-webkit-app-region:no-drag]"
+            >
+              <Menu className="h-4 w-4" />
+            </button>
+          )}
+          {t('chat.title')}
+        </span>
         <span className="flex items-center gap-1.5 text-[12px] font-normal text-[var(--text2)]">
           <span
             className={
@@ -151,7 +168,7 @@ export function ChatPanel(): React.JSX.Element {
           <button
             type="button"
             title={t('chat.collapsePanel')}
-            onClick={() => togglePanel()}
+            onClick={() => togglePanel(!narrow)}
             className="ml-1 flex h-7 w-7 items-center justify-center rounded-[8px] text-[var(--text3)] hover:bg-black/5 hover:text-[var(--text)] [-webkit-app-region:no-drag]"
           >
             <PanelRightClose className="h-4 w-4" />

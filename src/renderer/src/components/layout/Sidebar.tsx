@@ -11,6 +11,7 @@ import { OpenTabs } from './OpenTabs'
 import { SectionHeader } from './SectionHeader'
 import { SIDEBAR_ITEMS, showSectionBody } from './sidebar-view'
 import { WorkspaceSwitcher } from '@renderer/components/workspace/WorkspaceSwitcher'
+import { useNarrow } from '@renderer/lib/narrow-layout'
 
 // 사이드바 위쪽 이동 항목. 목록 자체는 sidebar-view 에 있고(테스트가 지킨다) 여기서는
 // 아이콘만 붙인다. 자동화·키마스터·폰은 설정 안으로 옮겼다(설정 → 자동화 / 키마스터 / 폰)
@@ -25,18 +26,28 @@ const ITEMS: readonly { key: string; icon: typeof Globe; view: MainView }[] = SI
   (item) => ({ key: item.key, icon: ICONS[item.key], view: item.view })
 )
 
-export function Sidebar({ width }: { width: number }): React.JSX.Element {
+export function Sidebar({
+  width,
+  fill = false
+}: {
+  width?: number
+  /** 좁은 창 — 펼친 사이드바가 폭을 다 쓴다 */
+  fill?: boolean
+}): React.JSX.Element {
   const { t } = useTranslation()
   const view = useUiStore((s) => s.view)
   const setView = useUiStore((s) => s.setView)
   const collapsed = useUiStore((s) => s.sidebarCollapsed)
   const sections = useUiStore((s) => s.sidebarSections)
   const toggleSidebar = useUiStore((s) => s.toggleSidebar)
+  // 좁은 창에서는 접기·펼치기를 저장하지 않는다(PC 화면의 설정은 그대로)
+  const narrow = useNarrow()
   return (
     <aside
-      style={{ width }}
+      style={fill ? undefined : { width }}
       className={cn(
-        'flex min-h-0 shrink-0 flex-col border-r border-[var(--line)] bg-[#f6f6f8]/90 pt-10 backdrop-blur',
+        'flex min-h-0 flex-col border-r border-[var(--line)] bg-[#f6f6f8]/90 pt-10 backdrop-blur',
+        fill ? 'min-w-0 flex-1' : 'shrink-0',
         collapsed ? 'items-center p-1.5' : 'p-2.5'
       )}
     >
@@ -51,7 +62,10 @@ export function Sidebar({ width }: { width: number }): React.JSX.Element {
           type="button"
           aria-label={t(collapsed ? 'sidebar.expand' : 'sidebar.collapse')}
           title={t(collapsed ? 'sidebar.expand' : 'sidebar.collapse')}
-          onClick={() => void window.samba.settings.set({ sidebarCollapsed: toggleSidebar() })}
+          onClick={() => {
+            const next = toggleSidebar()
+            if (!narrow) void window.samba.settings.set({ sidebarCollapsed: next })
+          }}
           className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[9px] text-[var(--text2)] hover:bg-black/5 hover:text-[var(--text)] [-webkit-app-region:no-drag]"
         >
           <PanelLeft className="h-4 w-4" />

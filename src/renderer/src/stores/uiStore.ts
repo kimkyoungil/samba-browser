@@ -32,7 +32,8 @@ interface UiState {
   // 오른쪽 AI 패널 접힘
   panelCollapsed: boolean
   setPanelCollapsed: (v: boolean) => void
-  togglePanel: () => boolean
+  // persist=false 면 설정에 남기지 않는다(좁은 창 — PC 화면 설정은 그대로)
+  togglePanel: (persist?: boolean) => boolean
   // 사이드바 안 섹션(열린 탭·채팅·북마크)의 펼침 상태(설정에 영속)
   sidebarSections: SidebarSections
   panelWidth: number
@@ -80,10 +81,10 @@ export const useUiStore = create<UiState>((set, get) => ({
     set({ sidebarWidth: Math.max(MIN_SIDEBAR_WIDTH, Math.min(MAX_SIDEBAR_WIDTH, w)) }),
   setSidebarCollapsed: (v) => set({ sidebarCollapsed: v }),
   setPanelCollapsed: (v) => set({ panelCollapsed: v }),
-  togglePanel: () => {
+  togglePanel: (persist = true) => {
     const next = !get().panelCollapsed
     set({ panelCollapsed: next })
-    void window.samba.settings.set({ panelCollapsed: next })
+    if (persist) void window.samba.settings.set({ panelCollapsed: next })
     return next
   },
   toggleSidebar: () => {

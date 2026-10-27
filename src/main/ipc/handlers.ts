@@ -420,6 +420,7 @@ export function registerIpc(
   // 대화마다 고른 코드 작업 폴더. 폴더가 있는 대화는 코드 작업 모드로 돈다. 이 PC 에만 남는다
   const codeFolders = new CodeFolderStore(join(app.getPath('userData'), 'chat-code-folders.json'))
   agent.setCodeFolders((chatId) => codeFolders.get(chatId))
+  agent.setPcLocks((chatId) => codeFolders.isLocked(chatId))
   // 고르기 창에서 고른 폴더만 대화에 붙일 수 있다 — 화면이 아무 경로나 넘겨 AI 에게 열어 주지 못하게
   const pickedCodeFolders = new Set<string>()
   const isChatId = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v)
@@ -451,7 +452,19 @@ export function registerIpc(
     if (rawFolder === null) return codeFolders.clear(rawChatId)
     if (typeof rawFolder !== 'string' || !pickedCodeFolders.has(rawFolder))
       throw new Error('bad folder')
+    // 폴더를 붙이면 PC 잠금은 풀린다(둘은 함께 켜지지 않는다)
+    codeFolders.setLocked(rawChatId, false)
     codeFolders.set(rawChatId, rawFolder)
+  })
+  handleFromRenderer(IPC.agentPcLock, (rawChatId: unknown) =>
+    isChatId(rawChatId) ? codeFolders.isLocked(rawChatId) : false
+  )
+  handleFromRenderer(IPC.agentSetPcLock, (rawChatId: unknown, rawLocked: unknown) => {
+    if (!isChatId(rawChatId)) throw new Error('bad chat id')
+    const locked = rawLocked === true
+    // 잠그면 코드 폴더를 뗀다 — 이 PC 의 파일을 하나도 못 보는 대화다
+    if (locked) codeFolders.clear(rawChatId)
+    codeFolders.setLocked(rawChatId, locked)
   })
   // 예약 실행. 실행 기록은 이 PC 의 파일에만 남는다(동기화 대상이 아니다)
   const scheduleRuns = new ScheduleRunStore(join(app.getPath('userData'), 'schedule-runs.json'))
@@ -713,7 +726,7 @@ export function registerIpc(
   handleFromRenderer(IPC.chatDelete, (chatId: number) => {
     // 지운 대화의 AI 선택도 같이 지운다(같은 번호가 다시 쓰일 일은 없지만 파일이 쌓이지 않게)
     chatEngines.clear(chatId)
-    codeFolders.clear(chatId)
+    codeFolders.forget(chatId)
     // 이어받던 Claude 세션·Codex 스레드 연결도 버린다
     agent.forgetChatSession(chatId)
     return chats.remove(chatId)

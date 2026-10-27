@@ -50,10 +50,11 @@ export interface CodexInput {
   /** 스레드를 남겨 다음 말이 이어받게 한다(대화 실행). 끄면 `--ephemeral` — 번역 같은 한 번짜리 호출 */
   keepThread?: boolean
   /**
-   * Codex 자기 셸(shell_tool·unified_exec)을 끈다 — 코드 작업 모드. 명령은 노든 code_run(확인 카드)으로만 돈다.
-   * 끄면 Codex 는 명령을 돌릴 도구가 아예 없다고 답한다(실기 codex-cli 0.160.1)
+   * Codex 가 이 PC 를 직접 보는 내장 도구를 전부 끈다(CODEX_NO_LOCAL_ACCESS) — 코드 작업 모드·PC 잠금.
+   * 셸은 읽기 전용이어도 디스크 전체를 읽고, 그림 보기(view_image)는 경로만 주면 PC 의 그림을 연다.
+   * 끄면 파일·그림 경로를 못 연다고 답하고(실기 codex-cli 0.160.1), 사용자가 붙인 사진(--image)은 그대로 본다
    */
-  noShell?: boolean
+  noLocalAccess?: boolean
   /**
    * 개발자 지시(`-c developer_instructions=…`) — 사용자 말 앞머리에 붙인 지시문보다 무겁게 받는다(이어받기에도 매번 실린다).
    * 명령줄로 넘어가므로 짧은 글만 싣는다(긴 기본 지시문은 지금처럼 말 앞머리에 붙인다)
@@ -95,6 +96,22 @@ export type CodexSpawn = (
 export const CODEX_BIN = 'codex'
 
 /**
+ * PC 를 직접 보는 Codex 내장 기능(codex features list 이름). 셸 두 갈래·그림 보기·앱 연결 도구(그림 올리기 포함)·
+ * 컴퓨터/브라우저 조작. 끄면 도구 목록에서 빠진다(실측).
+ * ⛔코드 실행 호스트(code_mode_host)는 끄지 않는다 — 이 판 Codex 는 모든 도구(노든 samba 도구 포함)를 exec 안에서
+ * 부르므로 끄면 노든 도구까지 못 쓴다(실기 10/27). 그 실행 환경에는 Node·Deno·fetch 가 없어 파일을 못 읽는다(실측).
+ * 패치 도구(apply_patch)는 끄는 설정이 없다 — 읽기 전용이라 못 쓰고 내용도 못 읽지만, 경로가 있는지는 알 수 있다
+ */
+export const CODEX_NO_LOCAL_ACCESS = [
+  'shell_tool',
+  'unified_exec',
+  'view_image',
+  'apps',
+  'computer_use',
+  'browser_use'
+]
+
+/**
  * `codex exec` 인자. 승인·샌드박스는 가장 좁게 잡는다 —
  * 브라우저 조작은 samba 도구가 하고, codex 쪽 셸 실행은 읽기 전용으로 묶어 둔다
  */
@@ -108,7 +125,7 @@ export function buildCodexArgs(
     | 'imagePaths'
     | 'resume'
     | 'keepThread'
-    | 'noShell'
+    | 'noLocalAccess'
     | 'developerInstructions'
   >
 ): string[] {
@@ -125,9 +142,9 @@ export function buildCodexArgs(
   // 이어받기 명령에는 --sandbox 가 없다 — 같은 읽기 전용 제한을 설정 값으로 건다(실기 codex-cli 0.160.1)
   if (input.resume) args.push('-c', 'sandbox_mode="read-only"')
   else args.push('--sandbox', 'read-only')
-  // 코드 작업 모드 — Codex 셸을 끈다(이어받기에도 같은 설정 값으로)
-  if (input.noShell === true)
-    args.push('-c', 'features.shell_tool=false', '-c', 'features.unified_exec=false')
+  // 코드 작업 모드·PC 잠금 — Codex 가 PC 를 직접 보는 도구를 끈다(이어받기에도 같은 설정 값으로)
+  if (input.noLocalAccess === true)
+    for (const feature of CODEX_NO_LOCAL_ACCESS) args.push('-c', `features.${feature}=false`)
   // TOML 기본 문자열로 싣는다(JSON 꼴 이스케이프는 TOML 기본 문자열로도 맞다 — 추론 강도와 같은 방식)
   if (input.developerInstructions?.trim())
     args.push('-c', `developer_instructions=${JSON.stringify(input.developerInstructions.trim())}`)

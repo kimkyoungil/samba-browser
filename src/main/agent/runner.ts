@@ -27,6 +27,7 @@ import type { PhoneRunContext } from '../phone/wiring'
 import { createTabPagePort } from '../phone/tab-port'
 import {
   appendCodeMode,
+  appendPcLock,
   appendSiteMemory,
   appendUserInstructions,
   buildSystemPrompt
@@ -168,6 +169,13 @@ export const CODEX_TOOLS_NOTE = [
   '- When the task is finished, call done(summary) and then give the user the same short answer.'
 ].join('\n')
 
+/** PC 잠금 대화에서 Codex 에 개발자 지시로 싣는 안내 */
+export const CODEX_PC_LOCK_NOTE = [
+  'PC lock is on for this chat: you have no access to files on this computer (your shell, image viewing and app tools are turned off).',
+  'Work only with web pages through the samba browser tools and with what the user pastes or attaches.',
+  'Do not ask for file paths; if a task needs a local file, ask the user to attach it.'
+].join(' ')
+
 /** 코드 작업 모드에서 Codex 에 개발자 지시로 싣는 짧은 안내(이어받는 말에도 매번 실린다) */
 export function codexCodeDeveloperNote(root: string): string {
   return [
@@ -287,6 +295,8 @@ export class AgentRunner {
   private historyReader: ((chatId: number) => HistoryMessage[]) | null = null
   // 대화마다 고른 코드 작업 폴더. 있으면 그 대화는 코드 작업 모드로 돈다(tools-code.ts)
   private codeFolderOf: ((chatId: number) => string | null) | null = null
+  // 대화별 PC 잠금. 켠 대화는 AI 가 이 PC 의 파일을 하나도 못 본다(코드 폴더도 무시한다)
+  private pcLockOf: ((chatId: number) => boolean) | null = null
   // 대화마다 고른 AI(Claude/Codex). 없거나 null 을 돌려주면 앱 기본 연결로 돈다
   private engineRouting: ((chatId: number | undefined) => EngineRoute | null) | null = null
   // 실행이 구독 로그인 만료로 막혔는지·통했는지 받는 곳. 설정의 연결 카드가 '로그인 만료'를 띄운다
@@ -376,6 +386,11 @@ export class AgentRunner {
   /** 대화별 코드 작업 폴더를 읽는 곳. 주입하지 않으면 코드 작업 모드가 없다 */
   setCodeFolders(fn: ((chatId: number) => string | null) | null): void {
     this.codeFolderOf = fn
+  }
+
+  /** 대화별 PC 잠금을 읽는 곳. 주입하지 않으면 잠금이 없다 */
+  setPcLocks(fn: ((chatId: number) => boolean) | null): void {
+    this.pcLockOf = fn
   }
 
   /** 대화마다 고른 AI 로 인증 경로·모델을 바꾼다. 주입하지 않으면 모든 대화가 앱 기본 연결로 돈다 */
@@ -888,7 +903,10 @@ export class AgentRunner {
         : (route?.model ?? resolveModel(s.taskModels, 'standard', s.aiProvider))
     // 이 대화의 코드 작업 폴더 — 있으면 코드 작업 모드(코드 도구를 붙이고 비밀번호·결제·폰 도구는 뺀다).
     // 골라 둔 폴더가 없어졌으면 코드 도구 없이 돌고 그렇다고 알린다
-    const savedCodeFolder = chatId === undefined ? null : (this.codeFolderOf?.(chatId) ?? null)
+    // PC 잠금이면 코드 폴더도 쓰지 않는다 — 이 PC 의 파일을 하나도 못 보는 대화
+    const pcLocked = chatId !== undefined && (this.pcLockOf?.(chatId) ?? false)
+    const savedCodeFolder =
+      chatId === undefined || pcLocked ? null : (this.codeFolderOf?.(chatId) ?? null)
     const codeRoot = savedCodeFolder === null ? null : liveCodeFolder(savedCodeFolder)
     const abort = new AbortController()
     this.abort = abort
@@ -1015,7 +1033,8 @@ export class AgentRunner {
       this.phones !== undefined &&
       hasConnectedPhone(this.phones)
     // 코드 작업 모드 안내는 사용자 지침 앞에 붙인다
-    const withCodeMode = (p: string): string => (codeRoot ? appendCodeMode(p, codeRoot) : p)
+    const withCodeMode = (p: string): string =>
+      codeRoot ? appendCodeMode(p, codeRoot) : pcLocked ? appendPcLock(p) : p
     const systemPrompt = (
       mode: 'read_only' | 'guard' | 'full',
       effort?: typeof s.agentEffort
@@ -1098,6 +1117,7 @@ export class AgentRunner {
         waitSms,
         runPay,
         prompt,
+        pcLocked,
         code: codeRoot
           ? {
               root: codeRoot,
@@ -1187,7 +1207,11 @@ export class AgentRunner {
         if (chatId !== undefined) this.chatSessions?.clear(chatId)
         // 코드 작업 모드면 쓰기 가능하다는 것을 개발자 지시로 싣는다 — Codex 는 자기 환경의 read-only 를 말 앞머리
         // 안내보다 더 믿어 '읽기 전용이라 못 고친다'를 되풀이했다(실기 10/27)
-        const devNote = codeRoot ? codexCodeDeveloperNote(codeRoot) : ''
+        const devNote = codeRoot
+          ? codexCodeDeveloperNote(codeRoot)
+          : pcLocked
+            ? CODEX_PC_LOCK_NOTE
+            : ''
         // 이어받을 스레드가 있으면 앞 대화(붙인 사진 포함)를 Codex 가 기억한다 — 없을 때만 앞부분 대화를 싣는다.
         // 개발자 지시는 스레드를 처음 열 때만 실리므로(이어받기에는 안 실림, 실측) 지시가 바뀐 스레드는 새로 연다
         const stored = chatId === undefined ? null : (this.codexThreads?.get(chatId) ?? null)
@@ -1226,7 +1250,9 @@ export class AgentRunner {
             // Codex 의 읽기 전용 셸이 앱 폴더를 뒤지지 않게 임시 폴더에서 돈다
             cwd: tmpdir(),
             // 코드 작업 모드면 Codex 셸을 끄고 개발자 지시를 싣는다(새로 여는 스레드에서만 실제로 닿는다)
-            ...(codeRoot ? { noShell: true, developerInstructions: devNote } : {}),
+            ...(codeRoot || pcLocked
+              ? { noLocalAccess: true, developerInstructions: devNote }
+              : {}),
             abort,
             ...(shots ? { imagePaths: shots.paths } : {}),
             ...(tools
@@ -1584,14 +1610,17 @@ export class AgentRunner {
     prompt: string
     // 코드 작업 모드 — 있으면 금고·폰·결제를 넣지 않는다(비밀번호·결제 도구가 아예 없다)
     code?: CodeToolContext
+    // PC 잠금 — 로컬 파일 도구를 빼게 도구 문맥에 표시한다
+    pcLocked?: boolean
   }): ToolContext {
-    const { s, jobId, tick, emit, scripts, phoneCtx, waitSms, runPay, prompt, code } = o
+    const { s, jobId, tick, emit, scripts, phoneCtx, waitSms, runPay, prompt, code, pcLocked } = o
     const phones = code ? null : this.phones
     void phoneCtx
     return {
       tabs: this.tabs,
       vault: code ? undefined : this.vault,
       code,
+      pcLocked: pcLocked === true,
       jobId,
       dangerWords: s.dangerWords,
       mode: s.permissionMode,

@@ -9,6 +9,8 @@ import { dirname, isAbsolute, parse, relative, sep } from 'node:path'
 
 export class CodeFolderStore {
   private chats: Record<string, string> = {}
+  // PC 잠금을 켠 대화 — AI 가 이 PC 의 파일을 하나도 못 보는 대화(코드 폴더와 함께 켜지지 않는다)
+  private locked = new Set<string>()
 
   constructor(private readonly file: string) {
     this.load()
@@ -19,19 +21,26 @@ export class CodeFolderStore {
       if (!existsSync(this.file)) return
       const parsed: unknown = JSON.parse(readFileSync(this.file, 'utf8'))
       const raw = (parsed as { chats?: unknown } | null)?.chats
-      if (!raw || typeof raw !== 'object') return
-      for (const [k, v] of Object.entries(raw as Record<string, unknown>))
-        if (/^[0-9]+$/.test(k) && typeof v === 'string' && isAbsolute(v)) this.chats[k] = v
+      if (raw && typeof raw === 'object')
+        for (const [k, v] of Object.entries(raw as Record<string, unknown>))
+          if (/^[0-9]+$/.test(k) && typeof v === 'string' && isAbsolute(v)) this.chats[k] = v
+      const locked = (parsed as { locked?: unknown } | null)?.locked
+      if (Array.isArray(locked))
+        for (const k of locked) if (typeof k === 'string' && /^[0-9]+$/.test(k)) this.locked.add(k)
     } catch {
-      // 깨진 파일은 없는 것으로 본다 — 대화는 코드 모드 없이 돈다
+      // 깨진 파일은 없는 것으로 본다 — 대화는 코드 모드·잠금 없이 돈다
       this.chats = {}
+      this.locked = new Set()
     }
   }
 
   private save(): void {
     try {
       mkdirSync(dirname(this.file), { recursive: true })
-      writeFileSync(this.file, JSON.stringify({ chats: this.chats }, null, 1))
+      writeFileSync(
+        this.file,
+        JSON.stringify({ chats: this.chats, locked: [...this.locked] }, null, 1)
+      )
     } catch (e: unknown) {
       console.error('코드 작업 폴더 저장 실패', e instanceof Error ? e.message : String(e))
     }
@@ -52,6 +61,27 @@ export class CodeFolderStore {
     if (!(String(chatId) in this.chats)) return
     delete this.chats[String(chatId)]
     this.save()
+  }
+
+  /** 그 대화가 PC 잠금인가 */
+  isLocked(chatId: number): boolean {
+    return this.locked.has(String(chatId))
+  }
+
+  setLocked(chatId: number, locked: boolean): void {
+    const id = String(chatId)
+    if (this.locked.has(id) === locked) return
+    if (locked) this.locked.add(id)
+    else this.locked.delete(id)
+    this.save()
+  }
+
+  /** 대화를 지울 때 — 폴더와 잠금 둘 다 */
+  forget(chatId: number): void {
+    const had = String(chatId) in this.chats || this.locked.has(String(chatId))
+    delete this.chats[String(chatId)]
+    this.locked.delete(String(chatId))
+    if (had) this.save()
   }
 }
 

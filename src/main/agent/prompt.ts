@@ -68,6 +68,19 @@ CODE MODE (this chat has a work folder: ${root})
 - When you finish, answer briefly: what you changed and how you checked it.`
 }
 
+/**
+ * PC 잠금 안내 — 이 대화는 AI 가 이 PC 의 파일을 하나도 못 본다(파일 올리기·받은 목록·다운로드 폴더 도구와
+ * Codex 의 셸·그림 보기가 꺼져 있다). 사용자가 붙인 사진·파일과 웹페이지로만 일한다
+ */
+export function appendPcLock(prompt: string): string {
+  return `${prompt}
+
+PC LOCK (the user turned this on for this chat)
+- You have no access to files on this computer: tools that read, list or upload local files are turned off.
+- Work only with web pages (samba browser tools) and what the user pastes or attaches in the chat.
+- Do not ask for file paths and do not try to open, upload or list local files. If a task needs a local file, ask the user to attach it.`
+}
+
 export function buildSystemPrompt(
   language: 'ko' | 'en',
   mode: 'read_only' | 'guard' | 'full' = 'guard',

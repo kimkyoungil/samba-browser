@@ -563,6 +563,9 @@ export interface ToolContext {
   // 코드 작업 모드(대화에 작업 폴더가 있을 때). 있으면 코드 도구를 붙이고 계정·비밀번호 도구(list_accounts·
   // fill_secret·login)는 내보내지 않는다 — 폰·결제는 실행기가 아예 주입하지 않는다
   code?: CodeToolContext
+  // PC 잠금(대화별) — 이 PC 의 파일을 읽거나 올리거나 목록을 보는 도구(upload_file·list_downloads·set_download_dir)를
+  // 내보내지 않는다. 코드 도구는 실행기가 아예 주입하지 않는다
+  pcLocked?: boolean
   // 키패드 자동 입력을 이미 한 결제창(창 id|호스트) — 도구 세션을 넘어 공유한다. 브릿지는 요청마다 새
   // 세션을 열어 세션 안의 1회 제한이 하네스의 반복 호출을 막지 못했다(실기 2026-09-27). 주입되지 않으면 세션 안만 본다
   keypadEntered?: Set<string>
@@ -2771,9 +2774,8 @@ ${submittedNote}`
     scroll,
     dismissOverlay,
     runJs,
-    uploadFile,
-    setDownloadDir,
-    listDownloads,
+    // PC 잠금이면 로컬 파일을 건드리는 도구를 뺀다
+    ...(ctx.pcLocked ? [] : [uploadFile, setDownloadDir, listDownloads]),
     fetchUrl,
     wait,
     newTab,

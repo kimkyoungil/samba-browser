@@ -11,9 +11,9 @@ import type { ProviderInput } from '../src/main/agent/provider'
 import type { CodexEvent, CodexInput } from '../src/main/agent/provider-codex'
 import type { ToolContext } from '../src/main/agent/tools'
 import { CodeFolderStore, codeFolderRefusal } from '../src/main/agent/code-folders'
-import { buildCodexArgs } from '../src/main/agent/provider-codex'
+import { buildCodexArgs, CODEX_NO_LOCAL_ACCESS } from '../src/main/agent/provider-codex'
 import { CodexThreadStore, developerNoteKey } from '../src/main/agent/codex-threads'
-import { codexCodeDeveloperNote } from '../src/main/agent/runner'
+import { CODEX_PC_LOCK_NOTE, codexCodeDeveloperNote } from '../src/main/agent/runner'
 
 let codexRuns: CodexEvent[][] = []
 const claudeInputs: ProviderInput[] = []
@@ -171,9 +171,13 @@ describe('Codex 스레드 장부 — 스레드를 연 개발자 지시 지문', 
 
 describe('buildCodexArgs — 코드 모드는 Codex 셸을 끈다', () => {
   it('새 스레드·이어받기 모두 shell_tool·unified_exec 를 끈다', () => {
-    const fresh = buildCodexArgs({ model: 'gpt-6.1-sol', noShell: true }).join(' ')
+    const fresh = buildCodexArgs({ model: 'gpt-6.1-sol', noLocalAccess: true }).join(' ')
     expect(fresh).toContain('-c features.shell_tool=false -c features.unified_exec=false')
-    const resumed = buildCodexArgs({ model: 'gpt-6.1-sol', noShell: true, resume: 'T-1' }).join(' ')
+    const resumed = buildCodexArgs({
+      model: 'gpt-6.1-sol',
+      noLocalAccess: true,
+      resume: 'T-1'
+    }).join(' ')
     expect(resumed).toContain('features.shell_tool=false')
     expect(buildCodexArgs({ model: 'gpt-6.1-sol' }).join(' ')).not.toContain('shell_tool')
     // 개발자 지시는 TOML 문자열로 — 윈도우 경로의 역슬래시·따옴표가 이스케이프된다
@@ -309,10 +313,29 @@ describe('실행기 — 대화에 작업 폴더가 있으면 코드 모드', () 
     expect(codexInputs[0].resume).toBe('T-OLD-THREAD')
   })
 
+  it('PC 잠금: 폴더가 붙어 있어도 코드 도구 없이 돌고, 파일 도구를 빼며, 지시문에 PC LOCK 을 알린다', async () => {
+    const { runner } = makeRunner('claude', base)
+    runner.setPcLocks(() => true)
+    await runner.run('이 사이트 정리해줘', 5)
+    expect(toolCtx?.code).toBeUndefined()
+    expect(toolCtx?.pcLocked).toBe(true)
+    expect(claudeInputs[0].systemPrompt).toContain('PC LOCK')
+    expect(claudeInputs[0].systemPrompt).not.toContain('CODE MODE')
+  })
+
+  it('PC 잠금: Codex 는 PC 를 보는 도구를 끄고 잠금 지시를 개발자 지시로 싣는다', async () => {
+    const { runner } = makeRunner('codex', null)
+    runner.setPcLocks(() => true)
+    await runner.run('안녕', 5)
+    expect(codexInputs[0].noLocalAccess).toBe(true)
+    expect(codexInputs[0].developerInstructions).toBe(CODEX_PC_LOCK_NOTE)
+    expect(codexInputs[0].prompt).not.toContain('Code mode')
+  })
+
   it('Codex: 셸을 끄고, 지시문·말 앞에 코드 모드를 알린다', async () => {
     const { runner } = makeRunner('codex', base)
     await runner.run('빌드 돌려 봐', 5)
-    expect(codexInputs[0].noShell).toBe(true)
+    expect(codexInputs[0].noLocalAccess).toBe(true)
     // 쓰기 가능하다는 것은 개발자 지시로도 싣는다(이어받는 말에도)
     expect(codexInputs[0].developerInstructions).toContain(`Work folder: ${base}.`)
     expect(codexInputs[0].developerInstructions).toContain(
@@ -332,8 +355,57 @@ describe('실행기 — 대화에 작업 폴더가 있으면 코드 모드', () 
   it('Codex: 폴더 없는 대화는 셸을 끄지 않는다', async () => {
     const { runner } = makeRunner('codex', null)
     await runner.run('안녕', 5)
-    expect(codexInputs[0].noShell).toBeUndefined()
+    expect(codexInputs[0].noLocalAccess).toBeUndefined()
     expect(codexInputs[0].developerInstructions).toBeUndefined()
     expect(codexInputs[0].prompt).not.toContain('Code mode')
+  })
+})
+
+describe('PC 잠금 — 이 대화에서 AI 가 이 PC 의 파일을 하나도 못 본다', () => {
+  it('장부: 잠금을 남기고, 대화를 지우면 폴더·잠금을 함께 지운다', () => {
+    const file = join(base, 'chat-code-folders.json')
+    const store = new CodeFolderStore(file)
+    store.setLocked(9, true)
+    store.set(10, 'D:/work')
+    expect(new CodeFolderStore(file).isLocked(9)).toBe(true)
+    expect(new CodeFolderStore(file).isLocked(10)).toBe(false)
+    store.forget(9)
+    store.forget(10)
+    const again = new CodeFolderStore(file)
+    expect(again.isLocked(9)).toBe(false)
+    expect(again.get(10)).toBeNull()
+  })
+
+  it('도구: 잠금이면 PC 파일을 올리거나 목록을 보는 도구를 내보내지 않는다', async () => {
+    const actual =
+      await vi.importActual<typeof import('../src/main/agent/tools')>('../src/main/agent/tools')
+    const ctx = {
+      tabs: { active: () => null, list: () => [] } as unknown as TabManager,
+      dangerWords: [],
+      mode: 'guard' as const,
+      finalConfirm: false,
+      confirm: async () => true,
+      tick: () => null,
+      onStep: () => {}
+    }
+    const names = (c: ToolContext): string[] =>
+      (actual.createSambaTools(c) as unknown as { tools: { name: string }[] }).tools.map(
+        (t) => t.name
+      )
+    const FILE_TOOLS = ['upload_file', 'list_downloads', 'set_download_dir']
+    expect(names(ctx)).toEqual(expect.arrayContaining(FILE_TOOLS))
+    const locked = names({ ...ctx, pcLocked: true })
+    for (const n of FILE_TOOLS) expect(locked).not.toContain(n)
+    expect(locked).toEqual(expect.arrayContaining(['get_page', 'navigate', 'login']))
+  })
+
+  it('Codex 인자: 셸·그림 보기·앱·컴퓨터/브라우저 조작을 모두 끈다', () => {
+    const args = buildCodexArgs({ model: 'gpt-6.1-sol', noLocalAccess: true }).join(' ')
+    for (const f of CODEX_NO_LOCAL_ACCESS) expect(args).toContain(`-c features.${f}=false`)
+    expect(CODEX_NO_LOCAL_ACCESS).toEqual(
+      expect.arrayContaining(['shell_tool', 'unified_exec', 'view_image', 'apps'])
+    )
+    // 코드 실행 호스트는 끄지 않는다 — 끄면 노든 도구까지 못 부른다
+    expect(CODEX_NO_LOCAL_ACCESS).not.toContain('code_mode_host')
   })
 })

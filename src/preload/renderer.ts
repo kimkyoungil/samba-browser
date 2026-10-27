@@ -229,6 +229,10 @@ const api = {
     pickCodeFolder: (): Promise<IpcResult<string | null>> => invoke(IPC.agentPickCodeFolder),
     setCodeFolder: (chatId: number, folder: string | null): Promise<IpcResult<void>> =>
       invoke(IPC.agentSetCodeFolder, chatId, folder),
+    // PC 잠금 — 켜면 그 대화에서 AI 가 이 PC 의 파일을 하나도 못 본다(코드 폴더는 떨어진다)
+    pcLock: (chatId: number): Promise<IpcResult<boolean>> => invoke(IPC.agentPcLock, chatId),
+    setPcLock: (chatId: number, locked: boolean): Promise<IpcResult<void>> =>
+      invoke(IPC.agentSetPcLock, chatId, locked),
     confirmReply: (requestId: string, approved: boolean): void => {
       ipcRenderer.send(IPC.agentConfirmReply, requestId, approved)
     },

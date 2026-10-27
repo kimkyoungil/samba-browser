@@ -1565,13 +1565,17 @@
     }
   },
   "codeMode": {
-    "title": "Code work folder",
-    "off": "Folder",
-    "offDesc": "Pick a folder to turn this chat into code mode. The AI reads and edits files only inside that folder and asks on a card before every command. Password and payment tools are off in this chat.",
-    "onDesc": "Reads and edits only inside this folder. Every command asks on a card first. Password, login, payment and phone tools are off.",
+    "title": "PC access for this chat",
+    "off": "PC access",
+    "lockLabel": "PC locked",
+    "modeDefault": "Default",
+    "modeDefaultDesc": "Browser work only. Codex can still read files on this PC (it cannot change them).",
+    "modeFolder": "Code work folder",
+    "modeFolderDesc": "Reads and edits only inside the chosen folder. Every command asks on a card first. Password and payment tools are off.",
+    "modeLock": "PC lock",
+    "modeLockDesc": "The AI cannot read any file on this PC. It sees only web pages and what you attach.",
     "pick": "Pick folder",
     "change": "Change folder",
-    "turnOff": "Turn off code mode",
     "busy": "You can change it after the current task"
   }
 }

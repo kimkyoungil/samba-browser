@@ -9,6 +9,8 @@ const pickCodeFolder = vi.fn(async (): Promise<IpcResult<string | null>> => ({
   data: 'C:\\work\\shop'
 }))
 const setCodeFolder = vi.fn(async (..._a: unknown[]) => ({ ok: true, data: undefined }))
+const setPcLock = vi.fn(async (..._a: unknown[]) => ({ ok: true, data: undefined }))
+const pcLock = vi.fn(async (): Promise<IpcResult<boolean>> => ({ ok: true, data: false }))
 const codeFolder = vi.fn(async (): Promise<IpcResult<string | null>> => ({ ok: true, data: null }))
 const create = vi.fn(async () => ({
   ok: true,
@@ -24,7 +26,9 @@ Object.assign(globalThis, {
         onEvent: vi.fn(),
         pickCodeFolder,
         setCodeFolder,
-        codeFolder
+        codeFolder,
+        setPcLock,
+        pcLock
       },
       chats: { list: vi.fn(async () => ({ ok: true, data: [] })), create }
     }
@@ -42,7 +46,8 @@ beforeEach(() => {
     messages: [],
     queue: [],
     codeFolder: null,
-    codeFolderError: null
+    codeFolderError: null,
+    pcLocked: false
   })
 })
 
@@ -85,5 +90,32 @@ describe('코드 작업 폴더', () => {
     useChatStore.setState({ activeChatId: 7, codeFolder: 'C:\\work\\shop' })
     useChatStore.getState().newChat()
     expect(useChatStore.getState().codeFolder).toBeNull()
+  })
+
+  it('PC 잠금: 켜면 대화에 남기고 코드 폴더는 떨어지며, 폴더를 고르면 잠금이 풀린다', async () => {
+    useChatStore.setState({ activeChatId: 7, codeFolder: 'D:/work/shop' })
+    await useChatStore.getState().setPcLock(true)
+    expect(setPcLock).toHaveBeenCalledWith(7, true)
+    expect(useChatStore.getState()).toMatchObject({ pcLocked: true, codeFolder: null })
+    await useChatStore.getState().pickCodeFolder()
+    expect(useChatStore.getState()).toMatchObject({
+      pcLocked: false,
+      codeFolder: (await pickCodeFolder()).data
+    })
+  })
+
+  it('PC 잠금: 새 대화에서 켜 두면 첫 말을 보낼 때 만든 대화에 실행 전에 붙인다', async () => {
+    await useChatStore.getState().setPcLock(true)
+    expect(setPcLock).not.toHaveBeenCalled()
+    await useChatStore.getState().send('이 페이지 요약해줘')
+    expect(setPcLock).toHaveBeenCalledWith(42, true)
+    expect(setPcLock.mock.invocationCallOrder[0]).toBeLessThan(run.mock.invocationCallOrder[0])
+  })
+
+  it('대화를 열면 그 대화의 잠금 상태를 읽어 온다', async () => {
+    pcLock.mockResolvedValueOnce({ ok: true, data: true })
+    useChatStore.setState({ activeChatId: 8 })
+    await useChatStore.getState().loadCodeFolder()
+    expect(useChatStore.getState().pcLocked).toBe(true)
   })
 })

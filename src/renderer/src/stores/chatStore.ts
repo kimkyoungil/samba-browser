@@ -116,6 +116,9 @@ interface ChatState {
   loadCodeFolder: () => Promise<void>
   pickCodeFolder: () => Promise<void>
   clearCodeFolder: () => Promise<void>
+  // PC 잠금 — 켜면 이 대화에서 AI 가 이 PC 의 파일을 하나도 못 본다(코드 폴더와 함께 켜지지 않는다)
+  pcLocked: boolean
+  setPcLock: (locked: boolean) => Promise<void>
   // 입력줄 아래 "모델 · 강도" 선택. 모델은 이 대화 AI 의 모델이다(메인이 AI 별로 기억한다)
   model: string
   modelChoices: string[]
@@ -312,12 +315,39 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
   codeFolder: null,
   codeFolderError: null,
+  pcLocked: false,
   loadCodeFolder: async () => {
     // 새 대화는 화면에서 골라 둔 값을 그대로 둔다(대화가 만들어질 때 붙인다)
     const chatId = get().activeChatId
     if (chatId === null) return
-    const r = await window.samba.agent.codeFolder?.(chatId)
-    if (r?.ok && get().activeChatId === chatId) set({ codeFolder: r.data, codeFolderError: null })
+    const [folder, lock] = await Promise.all([
+      window.samba.agent.codeFolder?.(chatId),
+      window.samba.agent.pcLock?.(chatId)
+    ])
+    if (get().activeChatId !== chatId) return
+    set({
+      ...(folder?.ok ? { codeFolder: folder.data } : {}),
+      ...(lock?.ok ? { pcLocked: lock.data } : {}),
+      codeFolderError: null
+    })
+  },
+  setPcLock: async (locked) => {
+    // 일하는 대화는 끝난 뒤에 바꾼다
+    if (get().status === 'running' && get().activeChatId === get().runChatId) return
+    const chatId = get().activeChatId
+    if (chatId !== null) {
+      const r = await window.samba.agent.setPcLock?.(chatId, locked)
+      if (r && !r.ok) {
+        set({ codeFolderError: r.error })
+        return
+      }
+    }
+    // 잠그면 코드 폴더는 떨어진다(메인도 같이 뗀다)
+    set((s) => ({
+      pcLocked: locked,
+      codeFolder: locked ? null : s.codeFolder,
+      codeFolderError: null
+    }))
   },
   pickCodeFolder: async () => {
     // 일하는 대화의 폴더는 바꾸지 않는다(다음 말부터 적용되면 하던 일과 섞인다)
@@ -337,7 +367,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         return
       }
     }
-    set({ codeFolder: r.data, codeFolderError: null })
+    // 폴더를 붙이면 PC 잠금은 풀린다(메인도 같이 푼다)
+    set({ codeFolder: r.data, codeFolderError: null, pcLocked: false })
   },
   clearCodeFolder: async () => {
     if (get().status === 'running' && get().activeChatId === get().runChatId) return
@@ -417,6 +448,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       parked,
       codeFolder: null,
       codeFolderError: null,
+      pcLocked: false,
       ...(running ? {} : runState('idle'))
     })
     // 이 대화에서 고른 AI 와 그 모델로 입력줄을 맞춘다
@@ -435,9 +467,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
       activeChatId: null,
       messages: [],
       parked: parkCurrent(get()),
-      // 새 대화는 코드 작업 폴더 없이 시작한다(앞 대화의 폴더를 몰래 이어 쓰지 않게)
+      // 새 대화는 코드 작업 폴더·PC 잠금 없이 시작한다(앞 대화 설정을 몰래 이어 쓰지 않게)
       codeFolder: null,
       codeFolderError: null,
+      pcLocked: false,
       ...(running ? {} : runState('idle'))
     })
   },
@@ -474,6 +507,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const engine = get().engine
     const engineChosen = get().engineChosen
     const codeFolder = get().codeFolder
+    const pcLocked = get().pcLocked
     set((s) => ({
       messages: [...s.messages, ...turnPair(text, images, files)],
       runSeq: seq,
@@ -498,6 +532,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           if (engineChosen) await window.samba.agent.setChatEngine?.(chatId, engine)
           // 새 대화에서 골라 둔 코드 작업 폴더도 실행 전에 붙인다(메인이 이 값으로 코드 모드를 켠다)
           if (codeFolder) await window.samba.agent.setCodeFolder?.(chatId, codeFolder)
+          if (pcLocked) await window.samba.agent.setPcLock?.(chatId, true)
           set((s) => ({
             activeChatId: created.data.id,
             runChatId: created.data.id,
@@ -843,12 +878,13 @@ async function queueInThisChat(
   if (chatId === null) {
     const doneCreating = beginCreatingChat()
     try {
-      const { engine, engineChosen, codeFolder } = store.getState()
+      const { engine, engineChosen, codeFolder, pcLocked } = store.getState()
       const created = await window.samba.chats?.create(titleFromMessage(text) || text.slice(0, 40))
       if (!created?.ok) return
       chatId = created.data.id
       if (engineChosen) await window.samba.agent.setChatEngine?.(chatId, engine)
       if (codeFolder) await window.samba.agent.setCodeFolder?.(chatId, codeFolder)
+      if (pcLocked) await window.samba.agent.setPcLock?.(chatId, true)
       // 그사이 다른 대화를 열지 않았으면 이 새 대화가 화면의 대화다
       if (store.getState().activeChatId === null)
         store.setState((s) => ({

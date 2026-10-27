@@ -58,7 +58,7 @@ import {
 import { resolveModel } from '../ai/models'
 import type { CodexInput } from './provider-codex'
 import { CODEX_TOOL_TOKEN_ENV, openCodexToolServer, type CodexToolServer } from './codex-tools'
-import type { CodexThreadStore } from './codex-threads'
+import { developerNoteKey, type CodexThreadStore } from './codex-threads'
 import { pdfTextBlock } from './pdf-text'
 import { collectGeneratedImages } from './codex-images'
 import { generatedImageMarkdown } from '../../shared/generated-image'
@@ -167,6 +167,16 @@ export const CODEX_TOOLS_NOTE = [
   "- Never use your shell, file reads or web search to look at websites: only the samba tools see the user's browser, its tabs and signed-in sessions. Your shell is read-only and is not the browser.",
   '- When the task is finished, call done(summary) and then give the user the same short answer.'
 ].join('\n')
+
+/** 코드 작업 모드에서 Codex 에 개발자 지시로 싣는 짧은 안내(이어받는 말에도 매번 실린다) */
+export function codexCodeDeveloperNote(root: string): string {
+  return [
+    `Code mode is on for this chat. Work folder: ${root}.`,
+    'You CAN create, edit and delete files inside the work folder with the MCP server "samba" tools code_write and code_edit, and run commands (including deleting or moving files) with code_run - the user approves every code_run on a card.',
+    'The read-only sandbox shown in your environment applies only to your own shell and patch tools, which are turned off here. It does not limit the samba tools.',
+    'Never tell the user that this session is read-only or that they must change Codex permissions or sandbox settings. If earlier messages in this chat said so, that was a mistake - say so briefly and do the work with the samba tools.'
+  ].join(' ')
+}
 
 // 코드 작업 모드의 Codex 안내 — 셸이 꺼져 있고 파일·명령은 samba 의 code_* 도구로만 다룬다
 export const CODEX_CODE_TOOLS_NOTE = [
@@ -1175,8 +1185,18 @@ export class AgentRunner {
       if (backend === 'codex') {
         // 이 대화가 Codex 로 돈다 — Claude 세션에는 이 말이 남지 않으니 버린다(다시 Claude 로 오면 기록 요약으로 새로 연다)
         if (chatId !== undefined) this.chatSessions?.clear(chatId)
-        // 이어받을 스레드가 있으면 앞 대화(붙인 사진 포함)를 Codex 가 기억한다 — 없을 때만 앞부분 대화를 싣는다
-        const thread = chatId === undefined ? null : (this.codexThreads?.get(chatId) ?? null)
+        // 코드 작업 모드면 쓰기 가능하다는 것을 개발자 지시로 싣는다 — Codex 는 자기 환경의 read-only 를 말 앞머리
+        // 안내보다 더 믿어 '읽기 전용이라 못 고친다'를 되풀이했다(실기 10/27)
+        const devNote = codeRoot ? codexCodeDeveloperNote(codeRoot) : ''
+        // 이어받을 스레드가 있으면 앞 대화(붙인 사진 포함)를 Codex 가 기억한다 — 없을 때만 앞부분 대화를 싣는다.
+        // 개발자 지시는 스레드를 처음 열 때만 실리므로(이어받기에는 안 실림, 실측) 지시가 바뀐 스레드는 새로 연다
+        const stored = chatId === undefined ? null : (this.codexThreads?.get(chatId) ?? null)
+        const thread =
+          stored !== null &&
+          chatId !== undefined &&
+          (this.codexThreads?.noteOf?.(chatId) ?? '') === developerNoteKey(devNote)
+            ? stored
+            : null
         const codexHistory = (): string =>
           chatId !== undefined && this.historyReader
             ? buildHistoryNote(this.historyReader(chatId), CODEX_HISTORY)
@@ -1205,8 +1225,8 @@ export class AgentRunner {
             keepThread: true,
             // Codex 의 읽기 전용 셸이 앱 폴더를 뒤지지 않게 임시 폴더에서 돈다
             cwd: tmpdir(),
-            // 코드 작업 모드면 Codex 셸을 끈다 — 명령은 code_run(확인 카드)으로만
-            ...(codeRoot ? { noShell: true } : {}),
+            // 코드 작업 모드면 Codex 셸을 끄고 개발자 지시를 싣는다(새로 여는 스레드에서만 실제로 닿는다)
+            ...(codeRoot ? { noShell: true, developerInstructions: devNote } : {}),
             abort,
             ...(shots ? { imagePaths: shots.paths } : {}),
             ...(tools
@@ -1245,8 +1265,9 @@ export class AgentRunner {
               counter.count
             )
           settled = outcome.settled
+          // 스레드를 연 개발자 지시의 지문도 남긴다 — 다음 말은 지시가 같을 때만 이 스레드를 이어받는다
           if (outcome.threadId && chatId !== undefined)
-            this.codexThreads?.set(chatId, outcome.threadId)
+            this.codexThreads?.set(chatId, outcome.threadId, developerNoteKey(devNote))
         } finally {
           await tools?.close()
           if (shots) await rm(shots.dir, { recursive: true, force: true }).catch(() => undefined)

@@ -54,6 +54,11 @@ export interface CodexInput {
    * 끄면 Codex 는 명령을 돌릴 도구가 아예 없다고 답한다(실기 codex-cli 0.160.1)
    */
   noShell?: boolean
+  /**
+   * 개발자 지시(`-c developer_instructions=…`) — 사용자 말 앞머리에 붙인 지시문보다 무겁게 받는다(이어받기에도 매번 실린다).
+   * 명령줄로 넘어가므로 짧은 글만 싣는다(긴 기본 지시문은 지금처럼 말 앞머리에 붙인다)
+   */
+  developerInstructions?: string
   abort: AbortController
   cwd?: string
 }
@@ -104,6 +109,7 @@ export function buildCodexArgs(
     | 'resume'
     | 'keepThread'
     | 'noShell'
+    | 'developerInstructions'
   >
 ): string[] {
   const args = [
@@ -122,6 +128,9 @@ export function buildCodexArgs(
   // 코드 작업 모드 — Codex 셸을 끈다(이어받기에도 같은 설정 값으로)
   if (input.noShell === true)
     args.push('-c', 'features.shell_tool=false', '-c', 'features.unified_exec=false')
+  // TOML 기본 문자열로 싣는다(JSON 꼴 이스케이프는 TOML 기본 문자열로도 맞다 — 추론 강도와 같은 방식)
+  if (input.developerInstructions?.trim())
+    args.push('-c', `developer_instructions=${JSON.stringify(input.developerInstructions.trim())}`)
   if (input.model.trim()) args.push('-m', input.model.trim())
   if (input.effort) args.push('-c', `model_reasoning_effort=${JSON.stringify(input.effort)}`)
   // 생각 요약을 켠다 — 끄면(기본) reasoning 항목이 아예 오지 않는다(실기 2026-10-24 확인)

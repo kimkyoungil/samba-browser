@@ -12,6 +12,8 @@ import type { CodexEvent, CodexInput } from '../src/main/agent/provider-codex'
 import type { ToolContext } from '../src/main/agent/tools'
 import { CodeFolderStore, codeFolderRefusal } from '../src/main/agent/code-folders'
 import { buildCodexArgs } from '../src/main/agent/provider-codex'
+import { CodexThreadStore, developerNoteKey } from '../src/main/agent/codex-threads'
+import { codexCodeDeveloperNote } from '../src/main/agent/runner'
 
 let codexRuns: CodexEvent[][] = []
 const claudeInputs: ProviderInput[] = []
@@ -151,6 +153,22 @@ describe('도구 목록', () => {
   })
 })
 
+describe('Codex 스레드 장부 — 스레드를 연 개발자 지시 지문', () => {
+  it('지문을 파일에 남기고, 옛 꼴(지문 없음) 파일도 읽는다', () => {
+    const file = join(base, 'codex-threads.json')
+    const a = new CodexThreadStore(file)
+    a.set(64, '01a17c28-edbb-7492-9082-cd16c3cc2a3e', developerNoteKey('note A'))
+    a.set(7, '01a17c28-edbb-7492-9082-cd16c3cc2a3f')
+    const b = new CodexThreadStore(file)
+    expect(b.get(64)).toBe('01a17c28-edbb-7492-9082-cd16c3cc2a3e')
+    expect(b.noteOf(64)).toBe(developerNoteKey('note A'))
+    expect(b.noteOf(7)).toBe('')
+    b.clear(64)
+    expect(new CodexThreadStore(file).noteOf(64)).toBe('')
+    expect(developerNoteKey('')).toBe('')
+  })
+})
+
 describe('buildCodexArgs — 코드 모드는 Codex 셸을 끈다', () => {
   it('새 스레드·이어받기 모두 shell_tool·unified_exec 를 끈다', () => {
     const fresh = buildCodexArgs({ model: 'gpt-6.1-sol', noShell: true }).join(' ')
@@ -158,6 +176,14 @@ describe('buildCodexArgs — 코드 모드는 Codex 셸을 끈다', () => {
     const resumed = buildCodexArgs({ model: 'gpt-6.1-sol', noShell: true, resume: 'T-1' }).join(' ')
     expect(resumed).toContain('features.shell_tool=false')
     expect(buildCodexArgs({ model: 'gpt-6.1-sol' }).join(' ')).not.toContain('shell_tool')
+    // 개발자 지시는 TOML 문자열로 — 윈도우 경로의 역슬래시·따옴표가 이스케이프된다
+    const sep = String.fromCharCode(92)
+    const note = `Work folder: C:${sep}work${sep}shop. Say "yes".`
+    const dev = buildCodexArgs({ model: 'gpt-6.1-sol', resume: 'T-1', developerInstructions: note })
+    const arg = dev.find((a) => a.startsWith('developer_instructions='))
+    expect(arg).toBe(`developer_instructions=${JSON.stringify(note)}`)
+    expect(arg).toContain(`C:${sep}${sep}work`)
+    expect(arg).toContain(`${sep}"yes${sep}"`)
   })
 })
 
@@ -246,10 +272,52 @@ describe('실행기 — 대화에 작업 폴더가 있으면 코드 모드', () 
     expect(web.events).toContainEqual({ type: 'text', text: '(답 없이 멈춰 자동으로 이어갑니다)' })
   })
 
+  it('Codex: 개발자 지시 없이 열린 옛 스레드는 코드 모드에서 이어받지 않고 새로 연다(지시는 첫 말에만 실린다)', async () => {
+    const saved: unknown[][] = []
+    const threads = (note: string): Record<string, (...a: unknown[]) => unknown> => ({
+      get: () => 'T-OLD-THREAD',
+      noteOf: () => note,
+      set: (...a: unknown[]) => saved.push(a),
+      clear: () => {}
+    })
+    codexRuns = [
+      [
+        { type: 'thread', id: 'T-NEW-THREAD' },
+        { type: 'done', ok: true }
+      ]
+    ]
+    const old = makeRunner('codex', base)
+    old.runner.setCodexThreads(threads('') as unknown as CodexThreadStore)
+    await old.runner.run('지금은 고칠 수 있어?', 5)
+    expect(codexInputs[0].resume).toBeUndefined()
+    expect(saved[0]).toEqual([5, 'T-NEW-THREAD', developerNoteKey(codexCodeDeveloperNote(base))])
+
+    // 같은 지시로 연 스레드는 그대로 이어받는다
+    codexInputs.length = 0
+    const same = makeRunner('codex', base)
+    same.runner.setCodexThreads(
+      threads(developerNoteKey(codexCodeDeveloperNote(base))) as unknown as CodexThreadStore
+    )
+    await same.runner.run('계속해', 5)
+    expect(codexInputs[0].resume).toBe('T-OLD-THREAD')
+
+    // 폴더 없는 보통 대화는 지시가 없던 옛 스레드를 지금처럼 이어받는다
+    codexInputs.length = 0
+    const plain = makeRunner('codex', null)
+    plain.runner.setCodexThreads(threads('') as unknown as CodexThreadStore)
+    await plain.runner.run('안녕', 5)
+    expect(codexInputs[0].resume).toBe('T-OLD-THREAD')
+  })
+
   it('Codex: 셸을 끄고, 지시문·말 앞에 코드 모드를 알린다', async () => {
     const { runner } = makeRunner('codex', base)
     await runner.run('빌드 돌려 봐', 5)
     expect(codexInputs[0].noShell).toBe(true)
+    // 쓰기 가능하다는 것은 개발자 지시로도 싣는다(이어받는 말에도)
+    expect(codexInputs[0].developerInstructions).toContain(`Work folder: ${base}.`)
+    expect(codexInputs[0].developerInstructions).toContain(
+      'Never tell the user that this session is read-only'
+    )
     expect(codexInputs[0].prompt).toContain(`[Code mode is on: work folder ${base}.`)
     expect(codexInputs[0].systemPrompt).toContain('Your own shell is turned off in code mode')
     // Codex 가 자기 샌드박스(읽기 전용) 안내만 보고 '못 고친다'고 하지 않게 — 코드 도구로는 쓰고 지울 수 있다고 알린다
@@ -265,6 +333,7 @@ describe('실행기 — 대화에 작업 폴더가 있으면 코드 모드', () 
     const { runner } = makeRunner('codex', null)
     await runner.run('안녕', 5)
     expect(codexInputs[0].noShell).toBeUndefined()
+    expect(codexInputs[0].developerInstructions).toBeUndefined()
     expect(codexInputs[0].prompt).not.toContain('Code mode')
   })
 })

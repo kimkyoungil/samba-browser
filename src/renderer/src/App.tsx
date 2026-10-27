@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type React from 'react'
-import { DEFAULT_SETTINGS } from '@shared/settings'
+import { DEFAULT_SETTINGS, toolCallCap } from '@shared/settings'
 import { useTranslation } from 'react-i18next'
 import { Sidebar } from '@renderer/components/layout/Sidebar'
 import { RightPanel, CollapsedPanelStrip } from '@renderer/components/layout/RightPanel'
@@ -205,7 +205,8 @@ export default function App(): React.JSX.Element {
                     : chat.currentLabel || t('chat.thinking')
                 }
                 toolCalls={chat.toolCalls}
-                max={toolCap}
+                // 코드 작업 모드 대화는 실행기와 같이 1000회(PC 잠금이면 코드 폴더를 쓰지 않는다)
+                max={toolCallCap(toolCap, chat.codeFolder !== null && !chat.pcLocked)}
                 progress={chat.taskProgress}
                 onStop={() => void chat.stop()}
               />

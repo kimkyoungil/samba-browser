@@ -34,6 +34,8 @@ export interface ProviderInput {
    * 이 통로가 SDK 의 입력이 되고, 호출부가 닫을 때까지 SDK 가 다음 말을 기다린다
    */
   channel?: PromptChannel
+  /** 이번 실행의 도구 호출 상한(러너 counter 와 같은 값). 턴 상한을 이보다 넉넉히 잡는 데 쓴다 */
+  maxToolCalls?: number
 }
 
 // 사용자가 설정에 넣어 둔 내 API 키를 읽는 함수. 메인 프로세스가 주입한다.
@@ -146,8 +148,8 @@ export function buildQueryOptions(
     permissionMode: 'default',
     // 실제 상한은 도구 호출 수(설정 maxToolCalls, 러너의 counter)다. 턴 상한이 그보다 먼저 걸리면
     // 도구를 95회밖에 안 썼는데 "maximum number of turns (60)" 로 죽는다(실기: 결제 키패드 앞에서 중단).
-    // 도구 상한 최대값보다 넉넉히 잡아, 멈추는 기준을 한 곳으로 모은다
-    maxTurns: MAX_TOOL_CALLS + 50,
+    // 도구 상한 최대값보다 넉넉히 잡아, 멈추는 기준을 한 곳으로 모은다(코드 작업 모드는 상한이 1000회라 그만큼 늘린다)
+    maxTurns: Math.max(MAX_TOOL_CALLS, input.maxToolCalls ?? 0) + 50,
     abortController: input.abort,
     // 같은 대화의 앞선 실행을 이어받는다 — 앞선 지시·도구 결과를 기억한 채로 돈다
     ...(input.resume === undefined ? {} : { resume: input.resume }),

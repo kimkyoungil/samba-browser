@@ -14,6 +14,8 @@ import { CodeFolderStore, codeFolderRefusal } from '../src/main/agent/code-folde
 import { buildCodexArgs, CODEX_NO_LOCAL_ACCESS } from '../src/main/agent/provider-codex'
 import { CodexThreadStore, developerNoteKey } from '../src/main/agent/codex-threads'
 import { CODEX_PC_LOCK_NOTE, codexCodeDeveloperNote } from '../src/main/agent/runner'
+import { buildQueryOptions } from '../src/main/agent/provider'
+import { CODE_MODE_MAX_TOOL_CALLS, MAX_TOOL_CALLS, toolCallCap } from '../src/shared/settings'
 
 let codexRuns: CodexEvent[][] = []
 const claudeInputs: ProviderInput[] = []
@@ -250,6 +252,38 @@ describe('실행기 — 대화에 작업 폴더가 있으면 코드 모드', () 
     const guard = makeRunner('claude', base, 'guard')
     await guard.runner.run('테스트 돌려', 5)
     expect(toolCtx?.code?.autoRun).toBe(false)
+  })
+
+  it('코드 작업 모드 대화는 도구 호출 상한이 1000회, 브라우저 작업은 설정값 그대로', async () => {
+    const code = makeRunner('claude', base)
+    await code.runner.run('조사 정리해', 5)
+    const codeTick = toolCtx?.tick
+    for (let i = 0; i < 1000; i++) expect(codeTick?.()).toBeNull()
+    expect(codeTick?.()).toContain('tool call limit (1000)')
+    // SDK 턴 상한도 1000회보다 넉넉해야 도구 상한보다 먼저 죽지 않는다
+    expect(claudeInputs[0].maxToolCalls).toBe(1000)
+    expect(buildQueryOptions(claudeInputs[0], undefined).maxTurns).toBe(1050)
+
+    const browser = makeRunner('claude', null)
+    await browser.runner.run('주문서 열어', 5)
+    const browserTick = toolCtx?.tick
+    for (let i = 0; i < 40; i++) expect(browserTick?.()).toBeNull()
+    expect(browserTick?.()).toContain('tool call limit (40)')
+    expect(claudeInputs[1].maxToolCalls).toBe(40)
+    expect(buildQueryOptions(claudeInputs[1], undefined).maxTurns).toBe(MAX_TOOL_CALLS + 50)
+  })
+
+  it('PC 잠금 대화는 코드 폴더가 있어도 설정값 상한', async () => {
+    const { runner } = makeRunner('claude', base)
+    runner.setPcLocks((chatId) => chatId === 5)
+    await runner.run('요약해', 5)
+    expect(claudeInputs[0].maxToolCalls).toBe(40)
+  })
+
+  it('toolCallCap — 설정이 1000보다 크면 코드 모드도 설정값', () => {
+    expect(toolCallCap(200, true)).toBe(CODE_MODE_MAX_TOOL_CALLS)
+    expect(toolCallCap(200, false)).toBe(200)
+    expect(toolCallCap(1200, true)).toBe(1200)
   })
 
   it('읽기 전용 권한이면 코드 도구도 읽기만', async () => {

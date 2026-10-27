@@ -16,7 +16,7 @@ import { join } from 'path'
 import type { TabManager } from '../browser/tab-manager'
 import type { SettingsStore } from '../settings/store'
 import type { AgentEvent, HandoffKind } from '../../shared/ipc'
-import type { Settings } from '../../shared/settings'
+import { toolCallCap, type Settings } from '../../shared/settings'
 import type { VaultService } from '../vault/service'
 import { createSambaTools, SAMBA_TOOL_NAMES } from './tools'
 import type { ToolContext, SambaMcpTool } from './tools'
@@ -1056,7 +1056,9 @@ export class AgentRunner {
         // 설정의 'AI 지침' — 모든 대화에 늘 붙는다
         s.agentInstructions ?? ''
       )
-    const counter = makeCounter(s.maxToolCalls)
+    // 코드 작업 모드 대화는 1000회, 브라우저 작업은 설정값(기본 200회)
+    const toolCap = toolCallCap(s.maxToolCalls, codeRoot !== null)
+    const counter = makeCounter(toolCap)
     const deduper = createTextDeduper()
     // api_retry 로 관측한 마지막 API 오류(결과 메시지에 문구가 없을 때 사용)
     let apiError = ''
@@ -1355,7 +1357,8 @@ export class AgentRunner {
         allowedTools: SAMBA_TOOL_NAMES,
         abort,
         partial: true,
-        auth: runAuth
+        auth: runAuth,
+        maxToolCalls: toolCap
       })
       for await (const msg of stream) {
         // 중단됐으면 남은 메시지는 읽지 않는다(스트림이 늦게 끝나도 UI 는 즉시 정리됨)

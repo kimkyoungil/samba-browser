@@ -30,6 +30,14 @@ import { RECOMMEND_MAX, type DismissedRecommendation } from './activity-patterns
 export const MIN_TOOL_CALLS = 1
 // 계정 두 개로 주문서를 각각 만들어 원가를 비교하면 한 건에 200회를 넘긴다
 export const MAX_TOOL_CALLS = 400
+// 코드 작업 모드 대화의 도구 호출 상한. 파일 조사·정리는 읽기·명령만으로 한 번에 수백 번을 쓴다
+// (실기 10/27: 워크룸 조사 173단계 — 코드 읽기 65·실행 41 — 가 200회에 끊김). 브라우저 작업은 설정값 그대로
+export const CODE_MODE_MAX_TOOL_CALLS = 1000
+
+/** 이번 실행의 도구 호출 상한 — 코드 작업 모드면 1000회(설정이 더 크면 설정), 아니면 설정값 */
+export function toolCallCap(maxToolCalls: number, codeMode: boolean): number {
+  return codeMode ? Math.max(maxToolCalls, CODE_MODE_MAX_TOOL_CALLS) : maxToolCalls
+}
 
 // 오른쪽 패널 폭 허용 범위
 // 패널 폭 한계(렌더러 uiStore 와 공유)

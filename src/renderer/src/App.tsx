@@ -119,7 +119,9 @@ export default function App(): React.JSX.Element {
   if (authState === null) return <div className="h-full bg-[var(--bg)]" />
   if (authState.account?.configured && !authState.account.signedIn) return <LoginGate />
   return (
-    <div className="flex h-full bg-[var(--bg)]">
+    // 무엇이 넘쳐도 앱 화면 전체는 밀리지 않는다 — clip 은 스크롤 상자가 아니라 휠·초점·scrollIntoView 어느 길로도
+    // 움직이지 않는다(hidden 은 초점·scrollIntoView 로는 밀린다). 넘친 칸은 각자 안에서 스크롤한다
+    <div className="flex h-full overflow-clip bg-[var(--bg)]">
       <Sidebar width={sidebarWidthOf(sidebarCollapsed, sidebarWidth)} />
       {/* 접힌 사이드바는 폭이 고정이라 손잡이를 숨긴다 */}
       {canResizeSidebar(sidebarCollapsed) && (

@@ -22,8 +22,10 @@ export function OpenTabs(): React.JSX.Element {
   if (tabs.length === 0)
     return <div className="px-2 py-1 text-[11px] text-[var(--text3)]">{t('tab.empty')}</div>
 
+  // 탭이 많으면 이 목록만 안에서 스크롤된다 — 내용 높이대로 늘면 사이드바가 창보다 길어져 앱 화면 전체가
+  // 위로 밀렸다(실기 10/27: 카페 검색 탭 수십 개). 자리가 모자라도 두 줄은 남긴다
   return (
-    <ul className="flex flex-col">
+    <ul className="flex min-h-[64px] flex-col overflow-y-auto">
       {tabs.map((tab) => {
         const label = tabRowLabel(tab, t('tab.untitled'))
         const host = tabFaviconHost(tab.url)

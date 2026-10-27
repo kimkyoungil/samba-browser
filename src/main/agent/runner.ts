@@ -25,7 +25,14 @@ import type { PayToolRequest, PhoneToolContext, SmsCodeOutcome } from './tools-p
 import type { PayResult } from '../phone/pay'
 import type { PhoneRunContext } from '../phone/wiring'
 import { createTabPagePort } from '../phone/tab-port'
-import { appendSiteMemory, appendUserInstructions, buildSystemPrompt } from './prompt'
+import {
+  appendCodeMode,
+  appendSiteMemory,
+  appendUserInstructions,
+  buildSystemPrompt
+} from './prompt'
+import { liveCodeFolder } from './code-folders'
+import { RUN_MAX_SEC, type CodeToolContext } from './tools-code'
 import { appendPlaybooks, matchPlaybooks, type PlaybookDto } from '../../shared/playbook'
 import type { AgentToolCall } from '../../shared/site-memory'
 import type { SiteMemoryBlock, SiteMemoryService } from './site-memory'
@@ -150,7 +157,8 @@ const CODEX_HISTORY = { turns: 12, chars: 1500 }
 /** Codex 에 붙는 도구 서버 이름. codex 의 도구 흔적 라벨이 `samba.<도구>` 로 온다 */
 const CODEX_TOOL_SERVER = 'samba'
 /** 도구 1건 제한 시간(초) — 확인 카드 응답 대기(30분)보다 길게 잡아 codex 가 먼저 끊지 않게 한다 */
-export const CODEX_TOOL_TIMEOUT_SEC = Math.ceil(CONFIRM_TIMEOUT_MS / 1000) + 60
+// 명령 실행(code_run)은 확인 카드를 기다린 뒤 최대 RUN_MAX_SEC 동안 돈다
+export const CODEX_TOOL_TIMEOUT_SEC = Math.ceil(CONFIRM_TIMEOUT_MS / 1000) + RUN_MAX_SEC + 60
 // 도구가 붙은 Codex 대화에서 Claude 와 같은 시스템 프롬프트 뒤에 붙이는 안내.
 // codex 는 자기 셸·웹 검색도 갖고 있어, 이 말이 없으면 사이트를 브라우저 대신 셸로 읽으려 든다
 export const CODEX_TOOLS_NOTE = [
@@ -158,6 +166,15 @@ export const CODEX_TOOLS_NOTE = [
   '- You run through Codex. The browser tools named above (get_page, navigate, click, new_tab, ...) are the tools of the MCP server "samba" - call them for anything on web pages and tabs.',
   "- Never use your shell, file reads or web search to look at websites: only the samba tools see the user's browser, its tabs and signed-in sessions. Your shell is read-only and is not the browser.",
   '- When the task is finished, call done(summary) and then give the user the same short answer.'
+].join('\n')
+
+// 코드 작업 모드의 Codex 안내 — 셸이 꺼져 있고 파일·명령은 samba 의 code_* 도구로만 다룬다
+export const CODEX_CODE_TOOLS_NOTE = [
+  'CODEX NOTE',
+  '- You run through Codex. The tools named above (code_list, code_read, code_edit, code_run, get_page, navigate, ...) are the tools of the MCP server "samba".',
+  '- Your own shell is turned off in code mode. Look at files with code_list/code_read/code_search, change them with code_edit/code_write, and run commands with code_run (the user approves each one).',
+  "- Use the samba browser tools, not web search, for the user's browser and tabs.",
+  '- When you finish, answer briefly: what you changed and how you checked it.'
 ].join('\n')
 
 /** 결과가 답한 사용자 말 uuid 들(user_message_uuids, 없으면 user_message_uuid). 옛 CLI 는 빈 배열 */
@@ -257,6 +274,8 @@ export class AgentRunner {
   private generatedImagesDir: string | null = null
   // 세션을 못 이어받을 때 앞부분 요약을 만들 대화 읽기. 없으면 요약도 없다
   private historyReader: ((chatId: number) => HistoryMessage[]) | null = null
+  // 대화마다 고른 코드 작업 폴더. 있으면 그 대화는 코드 작업 모드로 돈다(tools-code.ts)
+  private codeFolderOf: ((chatId: number) => string | null) | null = null
   // 대화마다 고른 AI(Claude/Codex). 없거나 null 을 돌려주면 앱 기본 연결로 돈다
   private engineRouting: ((chatId: number | undefined) => EngineRoute | null) | null = null
   // 실행이 구독 로그인 만료로 막혔는지·통했는지 받는 곳. 설정의 연결 카드가 '로그인 만료'를 띄운다
@@ -341,6 +360,11 @@ export class AgentRunner {
   ): void {
     this.chatSessions = store
     this.historyReader = reader
+  }
+
+  /** 대화별 코드 작업 폴더를 읽는 곳. 주입하지 않으면 코드 작업 모드가 없다 */
+  setCodeFolders(fn: ((chatId: number) => string | null) | null): void {
+    this.codeFolderOf = fn
   }
 
   /** 대화마다 고른 AI 로 인증 경로·모델을 바꾼다. 주입하지 않으면 모든 대화가 앱 기본 연결로 돈다 */
@@ -851,6 +875,10 @@ export class AgentRunner {
       overrideModel !== undefined && overrideModel !== ''
         ? overrideModel
         : (route?.model ?? resolveModel(s.taskModels, 'standard', s.aiProvider))
+    // 이 대화의 코드 작업 폴더 — 있으면 코드 작업 모드(코드 도구를 붙이고 비밀번호·결제·폰 도구는 뺀다).
+    // 골라 둔 폴더가 없어졌으면 코드 도구 없이 돌고 그렇다고 알린다
+    const savedCodeFolder = chatId === undefined ? null : (this.codeFolderOf?.(chatId) ?? null)
+    const codeRoot = savedCodeFolder === null ? null : liveCodeFolder(savedCodeFolder)
     const abort = new AbortController()
     this.abort = abort
     const gen = ++this.generation
@@ -971,22 +999,29 @@ export class AgentRunner {
     }
     // 폰이 안 붙어 있으면 폰 도구를 내보내지 않으므로(createSambaTools) 프롬프트의 폰 절도 한 줄로 줄인다
     const phoneAvailable =
-      this.phones !== null && this.phones !== undefined && hasConnectedPhone(this.phones)
+      codeRoot === null &&
+      this.phones !== null &&
+      this.phones !== undefined &&
+      hasConnectedPhone(this.phones)
+    // 코드 작업 모드 안내는 사용자 지침 앞에 붙인다
+    const withCodeMode = (p: string): string => (codeRoot ? appendCodeMode(p, codeRoot) : p)
     const systemPrompt = (
       mode: 'read_only' | 'guard' | 'full',
       effort?: typeof s.agentEffort
     ): string =>
       appendUserInstructions(
-        appendSiteMemory(
-          appendPlaybooks(
-            effort === undefined
-              ? buildSystemPrompt(s.language, mode, 'medium', phoneAvailable)
-              : buildSystemPrompt(s.language, mode, effort, phoneAvailable),
-            playbooks
-          ),
-          // 저장된 스크립트 목록은 실행마다 다시 읽는다(직전 실행에서 저장한 것이 바로 보이게).
-          // 사이트 기억을 끈 실행에서는 스크립트도 끈다 — 같은 "학습" 스위치다
-          [memory.text, scriptsBlock].filter((part) => part !== '').join('\n\n')
+        withCodeMode(
+          appendSiteMemory(
+            appendPlaybooks(
+              effort === undefined
+                ? buildSystemPrompt(s.language, mode, 'medium', phoneAvailable)
+                : buildSystemPrompt(s.language, mode, effort, phoneAvailable),
+              playbooks
+            ),
+            // 저장된 스크립트 목록은 실행마다 다시 읽는다(직전 실행에서 저장한 것이 바로 보이게).
+            // 사이트 기억을 끈 실행에서는 스크립트도 끈다 — 같은 "학습" 스위치다
+            [memory.text, scriptsBlock].filter((part) => part !== '').join('\n\n')
+          )
         ),
         // 설정의 'AI 지침' — 모든 대화에 늘 붙는다
         s.agentInstructions ?? ''
@@ -1051,11 +1086,26 @@ export class AgentRunner {
         phoneCtx,
         waitSms,
         runPay,
-        prompt
+        prompt,
+        code: codeRoot
+          ? {
+              root: codeRoot,
+              readOnly: s.permissionMode === 'read_only',
+              confirm: (action) => this.requestConfirm(action, 'danger', emit),
+              tick: counter.tick,
+              onStep: (label, ok) => emit({ type: 'step', label, ok }),
+              signal: abort.signal
+            }
+          : undefined
       })
     )
     emit({ type: 'status', state: 'running', toolCalls: 0 })
     emit({ type: 'turn', turnId })
+    if (savedCodeFolder !== null && codeRoot === null)
+      emit({
+        type: 'text',
+        text: `(작업 폴더를 찾지 못해 이번에는 코드 도구 없이 돕니다: ${savedCodeFolder})`
+      })
     // 어떤 플레이북이 적용됐는지 채팅에 한 줄로 알린다(절차 본문은 보내지 않는다)
     if (playbooks.length > 0) emit({ type: 'playbook', names: playbooks.map((p) => p.name) })
     // 실행이 도는 동안에는 금고 자동 잠금을 보류한다(몇 시간짜리 작업 중간에 잠기면
@@ -1132,7 +1182,11 @@ export class AgentRunner {
             : ''
         // 사진은 임시 파일로 써서 `--image` 로 붙이고, PDF 는 글자를 뽑아 싣는다(Codex 는 PDF 를 첨부로 못 받는다)
         const shots = images && images.length > 0 ? await writeCodexImages(images) : null
-        const codexPrompt = `${prompt}${filesText}${pdfs.length > 0 ? await pdfTextBlock(pdfs) : ''}`
+        const codexBody = `${prompt}${filesText}${pdfs.length > 0 ? await pdfTextBlock(pdfs) : ''}`
+        // 이어받은 스레드는 지시문을 다시 싣지 않는다 — 코드 모드면 말마다 짧게 알린다(도중에 폴더를 골라도 안다)
+        const codexPrompt = codeRoot
+          ? `[Code mode is on: work folder ${codeRoot}. Your own shell is off - use the samba code_* tools; every code_run needs the user's approval.]\n\n${codexBody}`
+          : codexBody
         // 도구 통로를 못 열면(포트·서버 오류) 도구 없는 대화로라도 답한다 — 그때는 도구가 없다고 아는 지시문을 쓴다
         let tools: CodexToolServer | null = null
         try {
@@ -1150,6 +1204,8 @@ export class AgentRunner {
             keepThread: true,
             // Codex 의 읽기 전용 셸이 앱 폴더를 뒤지지 않게 임시 폴더에서 돈다
             cwd: tmpdir(),
+            // 코드 작업 모드면 Codex 셸을 끈다 — 명령은 code_run(확인 카드)으로만
+            ...(codeRoot ? { noShell: true } : {}),
             abort,
             ...(shots ? { imagePaths: shots.paths } : {}),
             ...(tools
@@ -1180,7 +1236,7 @@ export class AgentRunner {
                 ...base,
                 prompt: `${codexHistory()}${codexPrompt}`,
                 systemPrompt: tools
-                  ? `${systemPrompt(s.permissionMode, s.agentEffort)}\n\n${CODEX_TOOLS_NOTE}`
+                  ? `${systemPrompt(s.permissionMode, s.agentEffort)}\n\n${codeRoot ? CODEX_CODE_TOOLS_NOTE : CODEX_TOOLS_NOTE}`
                   : appendUserInstructions(CODEX_CHAT_PROMPT, s.agentInstructions ?? '')
               },
               deduper,
@@ -1363,8 +1419,11 @@ export class AgentRunner {
           }
           // 도구를 여러 번 부르다가 done 없이 조용히 끝난 경우(실기: 로그인 뒤 빈 응답으로 종료) —
           // 사람이 "계속"을 치기 전에 한 번만 자동으로 이어 달라고 한다
+          // 코드 작업 모드는 답을 쓰고 끝내는 것이 끝이다(done 은 브라우저 작업의 끝 보고) — 이어 돌리지 않는다
+          // (실기 10/27: 고치고 테스트까지 통과한 답 뒤에 같은 보고가 한 번 더 붙었다)
           const silentStop =
             !failed &&
+            codeRoot === null &&
             counter.count() >= 3 &&
             !entry.steps.some(
               (st) => st.label.startsWith('완료:') || st.label.startsWith('계속 진행:')
@@ -1501,13 +1560,16 @@ export class AgentRunner {
     waitSms: (host?: string) => Promise<SmsCodeOutcome>
     runPay: (req: PayToolRequest) => Promise<PayResult>
     prompt: string
+    // 코드 작업 모드 — 있으면 금고·폰·결제를 넣지 않는다(비밀번호·결제 도구가 아예 없다)
+    code?: CodeToolContext
   }): ToolContext {
-    const { s, jobId, tick, emit, scripts, phoneCtx, waitSms, runPay, prompt } = o
-    const phones = this.phones
+    const { s, jobId, tick, emit, scripts, phoneCtx, waitSms, runPay, prompt, code } = o
+    const phones = code ? null : this.phones
     void phoneCtx
     return {
       tabs: this.tabs,
-      vault: this.vault,
+      vault: code ? undefined : this.vault,
+      code,
       jobId,
       dangerWords: s.dangerWords,
       mode: s.permissionMode,

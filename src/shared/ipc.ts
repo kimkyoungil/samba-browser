@@ -24,6 +24,9 @@ export const IPC = {
   clipboardWriteText: 'clipboard:writeText', // 채팅 말풍선 [복사] — 앱 화면은 클립보드 권한이 막혀 있어 메인이 쓴다
   agentChatEngine: 'agent:chatEngine', // 그 대화에서 고른 AI(Claude/Codex). 없으면 앱 기본 연결
   agentSetChatEngine: 'agent:setChatEngine',
+  agentCodeFolder: 'agent:codeFolder', // 그 대화의 코드 작업 폴더(없으면 null)
+  agentPickCodeFolder: 'agent:pickCodeFolder', // 폴더 고르기 창 — 고른 폴더만 대화에 붙일 수 있다
+  agentSetCodeFolder: 'agent:setCodeFolder', // 대화에 작업 폴더 붙이기·떼기(null)
   agentStop: 'agent:stop',
   agentEvent: 'agent:event', // main → renderer 이벤트
   agentConfirmReply: 'agent:confirmReply',

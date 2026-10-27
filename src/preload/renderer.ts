@@ -223,6 +223,12 @@ const api = {
       invoke(IPC.agentChatEngine, chatId),
     setChatEngine: (chatId: number, engine: ChatEngine): Promise<IpcResult<void>> =>
       invoke(IPC.agentSetChatEngine, chatId, engine),
+    // 코드 작업 폴더 — 고르기 창에서 고른 폴더만 대화에 붙일 수 있다(화면이 경로를 지어낼 수 없다)
+    codeFolder: (chatId: number): Promise<IpcResult<string | null>> =>
+      invoke(IPC.agentCodeFolder, chatId),
+    pickCodeFolder: (): Promise<IpcResult<string | null>> => invoke(IPC.agentPickCodeFolder),
+    setCodeFolder: (chatId: number, folder: string | null): Promise<IpcResult<void>> =>
+      invoke(IPC.agentSetCodeFolder, chatId, folder),
     confirmReply: (requestId: string, approved: boolean): void => {
       ipcRenderer.send(IPC.agentConfirmReply, requestId, approved)
     },

@@ -49,6 +49,11 @@ export interface CodexInput {
   resume?: string
   /** 스레드를 남겨 다음 말이 이어받게 한다(대화 실행). 끄면 `--ephemeral` — 번역 같은 한 번짜리 호출 */
   keepThread?: boolean
+  /**
+   * Codex 자기 셸(shell_tool·unified_exec)을 끈다 — 코드 작업 모드. 명령은 노든 code_run(확인 카드)으로만 돈다.
+   * 끄면 Codex 는 명령을 돌릴 도구가 아예 없다고 답한다(실기 codex-cli 0.160.1)
+   */
+  noShell?: boolean
   abort: AbortController
   cwd?: string
 }
@@ -91,7 +96,14 @@ export const CODEX_BIN = 'codex'
 export function buildCodexArgs(
   input: Pick<
     CodexInput,
-    'model' | 'mcpServer' | 'effort' | 'thinking' | 'imagePaths' | 'resume' | 'keepThread'
+    | 'model'
+    | 'mcpServer'
+    | 'effort'
+    | 'thinking'
+    | 'imagePaths'
+    | 'resume'
+    | 'keepThread'
+    | 'noShell'
   >
 ): string[] {
   const args = [
@@ -107,6 +119,9 @@ export function buildCodexArgs(
   // 이어받기 명령에는 --sandbox 가 없다 — 같은 읽기 전용 제한을 설정 값으로 건다(실기 codex-cli 0.160.1)
   if (input.resume) args.push('-c', 'sandbox_mode="read-only"')
   else args.push('--sandbox', 'read-only')
+  // 코드 작업 모드 — Codex 셸을 끈다(이어받기에도 같은 설정 값으로)
+  if (input.noShell === true)
+    args.push('-c', 'features.shell_tool=false', '-c', 'features.unified_exec=false')
   if (input.model.trim()) args.push('-m', input.model.trim())
   if (input.effort) args.push('-c', `model_reasoning_effort=${JSON.stringify(input.effort)}`)
   // 생각 요약을 켠다 — 끄면(기본) reasoning 항목이 아예 오지 않는다(실기 2026-10-24 확인)

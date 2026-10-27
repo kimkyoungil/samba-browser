@@ -104,6 +104,7 @@ import {
 } from '../../shared/ai'
 import type { AiProviderId, ApiKeyVendor, ChatEngine, TaskModelKey } from '../../shared/ai'
 import { ChatEngineStore } from '../agent/chat-engine'
+import { CodeFolderStore, codeFolderRefusal, liveCodeFolder } from '../agent/code-folders'
 import { CodexThreadStore } from '../agent/codex-threads'
 import { readGeneratedImage } from '../agent/codex-images'
 import { isGeneratedImageName } from '../../shared/generated-image'
@@ -416,6 +417,42 @@ export function registerIpc(
     if (!isChatEngine(rawEngine)) throw new Error('bad engine')
     chatEngines.set(rawChatId, rawEngine)
   })
+  // 대화마다 고른 코드 작업 폴더. 폴더가 있는 대화는 코드 작업 모드로 돈다. 이 PC 에만 남는다
+  const codeFolders = new CodeFolderStore(join(app.getPath('userData'), 'chat-code-folders.json'))
+  agent.setCodeFolders((chatId) => codeFolders.get(chatId))
+  // 고르기 창에서 고른 폴더만 대화에 붙일 수 있다 — 화면이 아무 경로나 넘겨 AI 에게 열어 주지 못하게
+  const pickedCodeFolders = new Set<string>()
+  const isChatId = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v)
+  handleFromRenderer(IPC.agentCodeFolder, (rawChatId: unknown) =>
+    isChatId(rawChatId) ? codeFolders.get(rawChatId) : null
+  )
+  handleFromRenderer(IPC.agentPickCodeFolder, async () => {
+    const picked = await dialog.showOpenDialog(dialogWin(), {
+      properties: ['openDirectory', 'createDirectory']
+    })
+    if (picked.canceled || picked.filePaths.length === 0) return null
+    const folder = liveCodeFolder(picked.filePaths[0]) ?? picked.filePaths[0]
+    const refusal = codeFolderRefusal(folder, {
+      home: os.homedir(),
+      userData: app.getPath('userData'),
+      windowsDir: process.env.SystemRoot ?? process.env.windir,
+      programDirs: [
+        process.env.ProgramFiles,
+        process.env['ProgramFiles(x86)'],
+        process.env.ProgramData
+      ].filter((d): d is string => typeof d === 'string' && d !== '')
+    })
+    if (refusal) throw new Error(refusal)
+    pickedCodeFolders.add(folder)
+    return folder
+  })
+  handleFromRenderer(IPC.agentSetCodeFolder, (rawChatId: unknown, rawFolder: unknown) => {
+    if (!isChatId(rawChatId)) throw new Error('bad chat id')
+    if (rawFolder === null) return codeFolders.clear(rawChatId)
+    if (typeof rawFolder !== 'string' || !pickedCodeFolders.has(rawFolder))
+      throw new Error('bad folder')
+    codeFolders.set(rawChatId, rawFolder)
+  })
   // 예약 실행. 실행 기록은 이 PC 의 파일에만 남는다(동기화 대상이 아니다)
   const scheduleRuns = new ScheduleRunStore(join(app.getPath('userData'), 'schedule-runs.json'))
   const scheduler = new PlaybookScheduler({
@@ -676,6 +713,7 @@ export function registerIpc(
   handleFromRenderer(IPC.chatDelete, (chatId: number) => {
     // 지운 대화의 AI 선택도 같이 지운다(같은 번호가 다시 쓰일 일은 없지만 파일이 쌓이지 않게)
     chatEngines.clear(chatId)
+    codeFolders.clear(chatId)
     // 이어받던 Claude 세션·Codex 스레드 연결도 버린다
     agent.forgetChatSession(chatId)
     return chats.remove(chatId)

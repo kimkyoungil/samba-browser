@@ -9,7 +9,7 @@ import { ChatInput } from './ChatInput'
 import { ConfirmCard } from './ConfirmCard'
 import { HandoffCard } from './HandoffCard'
 import { AuthBanner } from './AuthBanner'
-import { Menu, PanelRightClose } from 'lucide-react'
+import { Menu, PanelRightClose, Plus } from 'lucide-react'
 import { useUiStore } from '@renderer/stores/uiStore'
 import { useNarrow } from '@renderer/lib/narrow-layout'
 
@@ -44,6 +44,9 @@ export function ChatPanel(): React.JSX.Element {
   const togglePanel = useUiStore((s) => s.togglePanel)
   // 좁은 창(폰으로 볼 때) — 대화 목록 단추를 달고, 접기·펼치기는 저장하지 않는다
   const narrow = useNarrow()
+  // 좁은 창 머리줄에 띄울 지금 대화방 이름과 새 대화 단추
+  const roomTitle = useChatStore((s) => s.chats.find((c) => c.id === s.activeChatId)?.title ?? null)
+  const newChat = useChatStore((s) => s.newChat)
   const openSettings = useUiStore((s) => s.openSettings)
   useEffect(() => window.samba.agent.onEvent(handleEvent), [handleEvent])
   // 상단 배지는 지금 고른 경로와 **실제 연결 상태**를 그대로 비춘다
@@ -130,21 +133,24 @@ export function ChatPanel(): React.JSX.Element {
       )}
       {/* AI 창 머리줄도 창을 끄는 자리다(단추는 그대로 눌린다) */}
       <div className="flex items-center justify-between border-b border-black/5 px-3.5 py-3 font-semibold [-webkit-app-region:drag]">
-        <span className="flex items-center gap-1.5">
-          {/* 좁은 창에서는 사이드바가 숨어 있다 — 여기서 대화 목록(사이드바)을 연다 */}
-          {narrow && (
+        {narrow ? (
+          // 좁은 창(폰으로 볼 때) — 사이드바가 숨어 있으니 대화방 고르기를 글자 단추로 드러내고 지금 방 이름을 띄운다
+          <span className="flex min-w-0 flex-1 items-center gap-2">
             <button
               type="button"
-              title={t('sidebar.expand')}
-              aria-label={t('sidebar.expand')}
               onClick={() => useUiStore.getState().setSidebarCollapsed(false)}
-              className="flex h-7 w-7 items-center justify-center rounded-[8px] text-[var(--text2)] hover:bg-black/5 hover:text-[var(--text)] [-webkit-app-region:no-drag]"
+              className="flex shrink-0 items-center gap-1 rounded-full border border-[var(--line)] bg-white px-2.5 py-1 text-[12px] font-medium text-[var(--text)] hover:bg-black/[.03] [-webkit-app-region:no-drag]"
             >
-              <Menu className="h-4 w-4" />
+              <Menu className="h-3.5 w-3.5" />
+              {t('chat.rooms')}
             </button>
-          )}
-          {t('chat.title')}
-        </span>
+            <span className="min-w-0 truncate text-[12.5px] font-medium text-[var(--text2)]">
+              {roomTitle ?? t('chat.new')}
+            </span>
+          </span>
+        ) : (
+          t('chat.title')
+        )}
         <span className="flex items-center gap-1.5 text-[12px] font-normal text-[var(--text2)]">
           <span
             className={
@@ -153,7 +159,8 @@ export function ChatPanel(): React.JSX.Element {
                 : 'h-[7px] w-[7px] rounded-full bg-[var(--text2)]/40'
             }
           />
-          {t(PROVIDER_LABEL_KEYS[badgeProvider])}
+          {/* 좁은 창에서는 연결 이름을 빼고 점만(이름은 점에 올리면 보인다) */}
+          {!narrow && t(PROVIDER_LABEL_KEYS[badgeProvider])}
           {expired ? (
             <button
               type="button"
@@ -164,6 +171,17 @@ export function ChatPanel(): React.JSX.Element {
             </button>
           ) : (
             !usable && ` · ${t('settings.ai.notConnectedShort')}`
+          )}
+          {narrow && (
+            <button
+              type="button"
+              title={t('chat.new')}
+              aria-label={t('chat.new')}
+              onClick={() => newChat()}
+              className="flex h-7 w-7 items-center justify-center rounded-[8px] text-[var(--text2)] hover:bg-black/5 hover:text-[var(--text)] [-webkit-app-region:no-drag]"
+            >
+              <Plus className="h-4 w-4" />
+            </button>
           )}
           <button
             type="button"

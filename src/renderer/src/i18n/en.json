@@ -358,6 +358,7 @@
     "failed": "Failed",
     "toolCalls": "Tool calls {{n}} / {{max}}",
     "new": "New chat",
+    "rooms": "Chats",
     "importAside": "Import Aside chats",
     "importFinding": "Looking for an Aside export…",
     "importNone": "No Aside export (전체대화.txt) was found",

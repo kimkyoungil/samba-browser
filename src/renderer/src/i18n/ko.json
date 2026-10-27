@@ -358,6 +358,7 @@
     "failed": "실패",
     "toolCalls": "도구 호출 {{n}} / {{max}}",
     "new": "새 대화",
+    "rooms": "대화방",
     "importAside": "Aside 대화 가져오기",
     "importFinding": "Aside 내보내기 파일을 찾는 중…",
     "importNone": "Aside 내보내기 파일(전체대화.txt)을 찾지 못했어요",

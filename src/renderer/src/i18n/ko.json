@@ -1572,7 +1572,7 @@
     "modeDefault": "기본",
     "modeDefaultDesc": "브라우저 일만 해요. Codex 는 PC 파일을 읽을 수는 있어요(고치지는 못해요).",
     "modeFolder": "코드 작업 폴더",
-    "modeFolderDesc": "고른 폴더 안에서만 읽고 고쳐요. 명령은 매번 확인 카드로 물어요. 비밀번호·결제 도구는 꺼져요.",
+    "modeFolderDesc": "고른 폴더 안에서만 읽고 고쳐요. 명령은 '확인' 모드면 매번, '자동' 모드면 지우기·git push 같은 위험한 것만 물어요. 비밀번호·결제 도구는 꺼져요.",
     "modeLock": "PC 잠금",
     "modeLockDesc": "AI 가 이 PC 의 파일을 하나도 못 읽어요. 붙인 사진·파일과 웹페이지만 봐요.",
     "pick": "폴더 고르기",

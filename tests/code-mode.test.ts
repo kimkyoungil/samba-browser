@@ -243,6 +243,15 @@ describe('실행기 — 대화에 작업 폴더가 있으면 코드 모드', () 
     expect(claudeInputs[0].systemPrompt).not.toContain('CODE MODE')
   })
 
+  it("'자동' 권한이면 명령도 위험한 것만 묻고, '확인'이면 다 묻는다", async () => {
+    const auto = makeRunner('claude', base, 'full')
+    await auto.runner.run('테스트 돌려', 5)
+    expect(toolCtx?.code?.autoRun).toBe(true)
+    const guard = makeRunner('claude', base, 'guard')
+    await guard.runner.run('테스트 돌려', 5)
+    expect(toolCtx?.code?.autoRun).toBe(false)
+  })
+
   it('읽기 전용 권한이면 코드 도구도 읽기만', async () => {
     const { runner } = makeRunner('claude', base, 'read_only')
     await runner.run('보기만 해', 5)

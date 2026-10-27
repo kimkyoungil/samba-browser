@@ -23,6 +23,11 @@ export interface CodeToolContext {
   root: string
   /** 권한 모드가 읽기 전용이면 쓰기·고치기·명령을 거절한다 */
   readOnly: boolean
+  /**
+   * 권한 모드가 '자동'이면 명령을 묻지 않고 돌린다 — 되돌리기 어려운 명령(isRiskyCommand)만 확인 카드를 띄운다.
+   * 아니면('확인') 명령마다 묻는다
+   */
+  autoRun?: boolean
   /** 명령 실행 확인 카드. 승인이면 true */
   confirm: (action: string) => Promise<boolean>
   tick: () => string | null
@@ -98,6 +103,26 @@ const WRITE_MAX_BYTES = 2 * 1024 * 1024
 export const RUN_DEFAULT_SEC = 120
 export const RUN_MAX_SEC = 600
 const OUTPUT_KEEP_CHARS = 12_000
+
+// 되돌리기 어려운 명령 — '자동' 모드에서도 확인 카드를 띄운다. 지우기·git 기록 바꾸기/올리기·프로세스 끄기·
+// 시스템 설정·설치/삭제·받은 것을 바로 실행. PowerShell 별칭(ri·rd·del·erase·kill)도 같이 본다
+const RISKY_COMMAND_RES = [
+  /\b(Remove-Item|Clear-Content|Remove-ItemProperty|ri|rm|rmdir|rd|del|erase)\b/i,
+  /\bgit\s+(push|reset|clean|rebase|filter-branch|restore|checkout\s+--|branch\s+-D|stash\s+(drop|clear)|tag\s+-d)\b/i,
+  /\b(Stop-Process|taskkill|kill|Stop-Service|Restart-Service|shutdown|Restart-Computer|Stop-Computer)\b/i,
+  /\b(reg\s+(add|delete|import)|Set-ItemProperty|New-ItemProperty|schtasks|sc(\.exe)?\s+(delete|stop|config|create)|Set-ExecutionPolicy|bcdedit|diskpart|cipher|takeown|icacls)\b|\bformat(\.com)?\s+[a-z]:/i,
+  /\b(npm|pnpm|yarn)\s+(publish|unpublish)\b|\b(winget|choco|scoop)\s+(install|uninstall)\b|\bpip\s+uninstall\b|\b(npm|pnpm)\s+(i|install|add)\s+(-g|--global)\b/i,
+  /\b(Invoke-Expression|iex)\b|\b(curl|wget|iwr|irm|Invoke-WebRequest|Invoke-RestMethod)\b[^|]*\|\s*(iex|sh|bash|powershell|pwsh)\b/i,
+  // 스크립트 안에서 지우는 경우는 명령 글자에 Remove-Item 이 없다 — 이름·인자에 드러나는 말로 잡는다
+  // (실기 10/27: python reset_research_20261027.py --apply 가 DB·백업·엑셀을 지우는 스크립트였다).
+  // 밑줄·하이픈 옆도 낱말 경계로 본다(reset_research·--force)
+  /(^|[^a-z])(reset|delete|remove|drop|purge|wipe|truncate|cleanup|clean|clear|apply|force|prune|nuke)([^a-z]|$)/i
+]
+
+/** '자동' 모드에서도 묻는 명령인가(지우기·git 올리기/되돌리기·프로세스 끄기·시스템 설정·설치/삭제·받아서 실행) */
+export function isRiskyCommand(command: string): boolean {
+  return RISKY_COMMAND_RES.some((re) => re.test(command))
+}
 
 /** 이름 하나가 비밀 파일·폴더인가 */
 export function isSecretName(name: string, isDir: boolean): boolean {
@@ -519,7 +544,7 @@ export function createCodeTools(ctx: CodeToolContext): CodeTool[] {
 
   const codeRun = tool(
     'code_run',
-    'Run one PowerShell command line in the work folder (Windows). The user must approve every command on a confirmation card first, so say briefly why you run it. timeout_sec defaults to 120 (max 600). Output (stdout and stderr) and the exit code come back.',
+    'Run one PowerShell command line in the work folder (Windows). Depending on the permission mode the user may have to approve it on a confirmation card first (always for deleting files, git push/reset and other hard-to-undo commands), so say briefly why you run it. timeout_sec defaults to 120 (max 600). Output (stdout and stderr) and the exit code come back.',
     {
       command: z.string().min(1),
       timeout_sec: z.number().int().min(1).max(RUN_MAX_SEC).optional()
@@ -527,8 +552,11 @@ export function createCodeTools(ctx: CodeToolContext): CodeTool[] {
     ({ command, timeout_sec }) =>
       guard(`명령: ${command.slice(0, 80)}`, async () => {
         if (ctx.readOnly) return refuse(READ_ONLY)
-        const ok = await ctx.confirm(`명령 실행 · ${basename(ctx.root)}\n${command}`)
-        if (!ok) return refuse('declined: the user did not approve this command')
+        // '자동'이면 되돌리기 어려운 명령만 묻는다 — 읽기·빌드·테스트 같은 명령까지 물으면 '자동'의 뜻과 어긋났다(실기 10/27)
+        if (!ctx.autoRun || isRiskyCommand(command)) {
+          const ok = await ctx.confirm(`명령 실행 · ${basename(ctx.root)}\n${command}`)
+          if (!ok) return refuse('declined: the user did not approve this command')
+        }
         const r = await run({
           command,
           cwd: ctx.root,

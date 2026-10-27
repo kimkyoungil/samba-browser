@@ -190,7 +190,7 @@ export function codexCodeDeveloperNote(root: string): string {
 export const CODEX_CODE_TOOLS_NOTE = [
   'CODEX NOTE',
   '- You run through Codex. The tools named above (code_list, code_read, code_edit, code_run, get_page, navigate, ...) are the tools of the MCP server "samba".',
-  '- Your own shell is turned off in code mode. Look at files with code_list/code_read/code_search, change them with code_edit/code_write, and run commands with code_run (the user approves each one).',
+  '- Your own shell is turned off in code mode. Look at files with code_list/code_read/code_search, change them with code_edit/code_write, and run commands with code_run (some need the user approval on a card).',
   '- Codex reports a read-only sandbox: that only covers your own built-in tools, which are off here. The samba code_* tools CAN create, edit and delete files in the work folder and run commands there - use them, and never tell the user this session is read-only or that they must change Codex permissions.',
   "- Use the samba browser tools, not web search, for the user's browser and tabs.",
   '- When you finish, answer briefly: what you changed and how you checked it.'
@@ -1122,6 +1122,8 @@ export class AgentRunner {
           ? {
               root: codeRoot,
               readOnly: s.permissionMode === 'read_only',
+              // '자동'이면 명령을 묻지 않고 돌린다(되돌리기 어려운 명령만 묻는다)
+              autoRun: s.permissionMode === 'full',
               confirm: (action) => this.requestConfirm(action, 'danger', emit),
               tick: counter.tick,
               onStep: (label, ok) => emit({ type: 'step', label, ok }),
@@ -1230,7 +1232,7 @@ export class AgentRunner {
         const codexBody = `${prompt}${filesText}${pdfs.length > 0 ? await pdfTextBlock(pdfs) : ''}`
         // 이어받은 스레드는 지시문을 다시 싣지 않는다 — 코드 모드면 말마다 짧게 알린다(도중에 폴더를 골라도 안다)
         const codexPrompt = codeRoot
-          ? `[Code mode is on: work folder ${codeRoot}. Change files with the samba code_write/code_edit tools and delete, move or run things with code_run (the user approves each command). Codex's read-only sandbox does not apply to these tools. Your own shell is off.]\n\n${codexBody}`
+          ? `[Code mode is on: work folder ${codeRoot}. Change files with the samba code_write/code_edit tools and delete, move or run things with code_run (some commands need the user's approval). Codex's read-only sandbox does not apply to these tools. Your own shell is off.]\n\n${codexBody}`
           : codexBody
         // 도구 통로를 못 열면(포트·서버 오류) 도구 없는 대화로라도 답한다 — 그때는 도구가 없다고 아는 지시문을 쓴다
         let tools: CodexToolServer | null = null

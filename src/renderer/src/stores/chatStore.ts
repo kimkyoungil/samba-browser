@@ -109,6 +109,13 @@ interface ChatState {
   // 지금 대화의 AI 를 메인에서 다시 읽는다(대화를 열 때)
   loadEngine: () => Promise<void>
   setEngine: (engine: ChatEngine) => Promise<void>
+  // 이 대화의 코드 작업 폴더(있으면 코드 작업 모드). 새 대화는 보내기 전에 골라 두면 대화가 만들어질 때 붙는다
+  codeFolder: string | null
+  // 폴더를 고르지 못한 까닭(드라이브 맨 위·사용자 폴더 전체 등). 다시 고르거나 끄면 지운다
+  codeFolderError: string | null
+  loadCodeFolder: () => Promise<void>
+  pickCodeFolder: () => Promise<void>
+  clearCodeFolder: () => Promise<void>
   // 입력줄 아래 "모델 · 강도" 선택. 모델은 이 대화 AI 의 모델이다(메인이 AI 별로 기억한다)
   model: string
   modelChoices: string[]
@@ -303,6 +310,41 @@ export const useChatStore = create<ChatState>((set, get) => ({
     if (chatId !== null) await window.samba.agent.setChatEngine?.(chatId, engine)
     await get().loadModelMenu()
   },
+  codeFolder: null,
+  codeFolderError: null,
+  loadCodeFolder: async () => {
+    // 새 대화는 화면에서 골라 둔 값을 그대로 둔다(대화가 만들어질 때 붙인다)
+    const chatId = get().activeChatId
+    if (chatId === null) return
+    const r = await window.samba.agent.codeFolder?.(chatId)
+    if (r?.ok && get().activeChatId === chatId) set({ codeFolder: r.data, codeFolderError: null })
+  },
+  pickCodeFolder: async () => {
+    // 일하는 대화의 폴더는 바꾸지 않는다(다음 말부터 적용되면 하던 일과 섞인다)
+    if (get().status === 'running' && get().activeChatId === get().runChatId) return
+    const r = await window.samba.agent.pickCodeFolder?.()
+    if (!r) return
+    if (!r.ok) {
+      set({ codeFolderError: r.error })
+      return
+    }
+    if (r.data === null) return
+    const chatId = get().activeChatId
+    if (chatId !== null) {
+      const saved = await window.samba.agent.setCodeFolder?.(chatId, r.data)
+      if (saved && !saved.ok) {
+        set({ codeFolderError: saved.error })
+        return
+      }
+    }
+    set({ codeFolder: r.data, codeFolderError: null })
+  },
+  clearCodeFolder: async () => {
+    if (get().status === 'running' && get().activeChatId === get().runChatId) return
+    const chatId = get().activeChatId
+    if (chatId !== null) await window.samba.agent.setCodeFolder?.(chatId, null)
+    set({ codeFolder: null, codeFolderError: null })
+  },
   model: DEFAULT_SETTINGS.taskModels.standard,
   modelChoices: [],
   effort: DEFAULT_SETTINGS.agentEffort,
@@ -373,10 +415,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
       activeChatId: chatId,
       messages,
       parked,
+      codeFolder: null,
+      codeFolderError: null,
       ...(running ? {} : runState('idle'))
     })
     // 이 대화에서 고른 AI 와 그 모델로 입력줄을 맞춘다
     void get().loadEngine()
+    // 이 대화의 코드 작업 폴더도 다시 읽는다
+    void get().loadCodeFolder()
   },
   newChat: () => {
     if (creatingChat) {
@@ -389,6 +435,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
       activeChatId: null,
       messages: [],
       parked: parkCurrent(get()),
+      // 새 대화는 코드 작업 폴더 없이 시작한다(앞 대화의 폴더를 몰래 이어 쓰지 않게)
+      codeFolder: null,
+      codeFolderError: null,
       ...(running ? {} : runState('idle'))
     })
   },
@@ -424,6 +473,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     // 보낸 순간 입력줄에 보이던 AI — 새 대화를 만드는 동안 무엇이 바뀌어도 이 값으로 남긴다
     const engine = get().engine
     const engineChosen = get().engineChosen
+    const codeFolder = get().codeFolder
     set((s) => ({
       messages: [...s.messages, ...turnPair(text, images, files)],
       runSeq: seq,
@@ -446,6 +496,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
           // 새 대화에서 AI 를 직접 골랐으면 그 대화에 먼저 남긴다 — 화면이 이 대화로 넘어가 AI 를
           // 다시 읽기 전에, 그리고 실행 전에(메인이 이 값으로 경로를 고른다)
           if (engineChosen) await window.samba.agent.setChatEngine?.(chatId, engine)
+          // 새 대화에서 골라 둔 코드 작업 폴더도 실행 전에 붙인다(메인이 이 값으로 코드 모드를 켠다)
+          if (codeFolder) await window.samba.agent.setCodeFolder?.(chatId, codeFolder)
           set((s) => ({
             activeChatId: created.data.id,
             runChatId: created.data.id,
@@ -791,11 +843,12 @@ async function queueInThisChat(
   if (chatId === null) {
     const doneCreating = beginCreatingChat()
     try {
-      const { engine, engineChosen } = store.getState()
+      const { engine, engineChosen, codeFolder } = store.getState()
       const created = await window.samba.chats?.create(titleFromMessage(text) || text.slice(0, 40))
       if (!created?.ok) return
       chatId = created.data.id
       if (engineChosen) await window.samba.agent.setChatEngine?.(chatId, engine)
+      if (codeFolder) await window.samba.agent.setCodeFolder?.(chatId, codeFolder)
       // 그사이 다른 대화를 열지 않았으면 이 새 대화가 화면의 대화다
       if (store.getState().activeChatId === null)
         store.setState((s) => ({

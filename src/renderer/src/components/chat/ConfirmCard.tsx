@@ -31,7 +31,8 @@ export function ConfirmCard(): React.JSX.Element | null {
         </span>
         <div className="min-w-0 flex-1">
           <div className="text-[13px] font-semibold text-[var(--text)]">{title}</div>
-          <p className="mt-1 break-words text-[12.5px] leading-relaxed text-[var(--text2)]">
+          {/* 명령 실행·플레이북 수정처럼 여러 줄인 행동은 줄바꿈을 그대로 보여 준다(무엇을 승인하는지 또렷하게) */}
+          <p className="mt-1 whitespace-pre-wrap break-words text-[12.5px] leading-relaxed text-[var(--text2)]">
             {body}
           </p>
         </div>

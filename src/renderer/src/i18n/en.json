@@ -1559,5 +1559,15 @@
       "weekly": "Weekly {{weekday}} {{time}} · {{label}}",
       "frequent": "Frequent · {{label}}"
     }
+  },
+  "codeMode": {
+    "title": "Code work folder",
+    "off": "Folder",
+    "offDesc": "Pick a folder to turn this chat into code mode. The AI reads and edits files only inside that folder and asks on a card before every command. Password and payment tools are off in this chat.",
+    "onDesc": "Reads and edits only inside this folder. Every command asks on a card first. Password, login, payment and phone tools are off.",
+    "pick": "Pick folder",
+    "change": "Change folder",
+    "turnOff": "Turn off code mode",
+    "busy": "You can change it after the current task"
   }
 }

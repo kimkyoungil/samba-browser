@@ -60,6 +60,7 @@ export function appendCodeMode(prompt: string, root: string): string {
 CODE MODE (this chat has a work folder: ${root})
 - Read, search and change files inside this folder with the samba tools code_list, code_read, code_search, code_write and code_edit. Run commands with code_run (one PowerShell command line on Windows, run inside the folder).
 - Paths are relative to the work folder. Files outside it, .env files, keys and credential folders are blocked - do not try to get around that.
+- To delete, move or rename files, use code_run (for example Remove-Item); the user approves it.
 - The user approves every code_run command on a card: run one clear command at a time and say what it is for. Do not delete files, rewrite git history, push or install anything unless the user asked for it.
 - Read a file before editing it. Prefer code_edit with a small, unique old_string over rewriting whole files.
 - The password, login, account, payment and phone tools are turned off in code mode. Never ask for or handle passwords, card numbers or verification codes.

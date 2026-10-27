@@ -252,6 +252,12 @@ describe('실행기 — 대화에 작업 폴더가 있으면 코드 모드', () 
     expect(codexInputs[0].noShell).toBe(true)
     expect(codexInputs[0].prompt).toContain(`[Code mode is on: work folder ${base}.`)
     expect(codexInputs[0].systemPrompt).toContain('Your own shell is turned off in code mode')
+    // Codex 가 자기 샌드박스(읽기 전용) 안내만 보고 '못 고친다'고 하지 않게 — 코드 도구로는 쓰고 지울 수 있다고 알린다
+    expect(codexInputs[0].prompt).toContain(
+      "Codex's read-only sandbox does not apply to these tools"
+    )
+    expect(codexInputs[0].systemPrompt).toContain('never tell the user this session is read-only')
+    expect(codexInputs[0].systemPrompt).toContain('To delete, move or rename files, use code_run')
     expect(codexInputs[0].systemPrompt).toContain('CODE MODE')
   })
 

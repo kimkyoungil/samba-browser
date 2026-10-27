@@ -40,6 +40,7 @@ import { promises as fsp } from 'fs'
 import { dirname, isAbsolute, resolve as resolvePath } from 'path'
 import { ensureDebuggerAttached, keepDebuggerAttached } from '../browser/emulation'
 import { createOcrTool, ocrDigitInRegion, resolveKeypadDigits, type DigitRead } from './tools-ocr'
+import { CODE_TOOL_NAMES, createCodeTools, type CodeToolContext } from './tools-code'
 import {
   createPayTool,
   createPhoneTools,
@@ -185,7 +186,7 @@ export const SECRET_SCREEN_REFUSAL = 'refused: secret screen'
 const KEYPAD_CELLS_RETRIES = 8
 // 시험에서는 기다리지 않는다(VITEST)
 const KEYPAD_CELLS_WAIT_MS = process.env['VITEST'] ? 0 : 750
-export const KEYPAD_HANDOFF_MESSAGE ='결제 비밀번호는 직접 눌러 주세요'
+export const KEYPAD_HANDOFF_MESSAGE = '결제 비밀번호는 직접 눌러 주세요'
 // 사용자가 키패드 넘김을 건너뛴 뒤 모델이 할 일(같은 키패드에 다시 시도하지 않게)
 export const KEYPAD_SKIPPED_NEXT =
   'user skipped: they will enter the payment password themselves later. Do NOT call fill_secret, ' +
@@ -559,6 +560,9 @@ export interface ToolContext {
   phone?: PhoneToolContext
   // 결제 승인 문맥. 폰 도구와 따로 주입한다 — 결제만 금고를 보는 실행기를 갖는다
   pay?: PayToolContext
+  // 코드 작업 모드(대화에 작업 폴더가 있을 때). 있으면 코드 도구를 붙이고 계정·비밀번호 도구(list_accounts·
+  // fill_secret·login)는 내보내지 않는다 — 폰·결제는 실행기가 아예 주입하지 않는다
+  code?: CodeToolContext
   // 키패드 자동 입력을 이미 한 결제창(창 id|호스트) — 도구 세션을 넘어 공유한다. 브릿지는 요청마다 새
   // 세션을 열어 세션 안의 1회 제한이 하네스의 반복 호출을 막지 못했다(실기 2026-09-27). 주입되지 않으면 세션 안만 본다
   keypadEntered?: Set<string>
@@ -666,7 +670,11 @@ export async function findLoginFieldsWithFallback(
     }
     fields = await detect()
     // 통합 로그인은 다른 도메인을 거쳐 오느라 늦게 뜬다(실기: 29CM → member.one.musinsa.com) — 두 배로 기다린다
-    for (let attempt = 0; fields.stage === 'none' && attempt < LOGIN_FIELDS_POLL_MAX * 2; attempt += 1) {
+    for (
+      let attempt = 0;
+      fields.stage === 'none' && attempt < LOGIN_FIELDS_POLL_MAX * 2;
+      attempt += 1
+    ) {
       await new Promise((resolve) => setTimeout(resolve, LOGIN_FIELDS_POLL_MS))
       fields = await detect()
     }
@@ -1174,7 +1182,8 @@ ${raw}`
     const attemptKey = currentHost(tab)
     // 세션을 넘는 기록은 창(id)별이다 — 호스트만 보면 다음 주문의 새 결제창(같은 pay.naver.com)까지 막힌다
     const windowKey = `${tab.id}|${attemptKey}`
-    if (keypadAttempts.has(attemptKey) || ctx.keypadEntered?.has(windowKey)) return KEYPAD_ALREADY_TRIED
+    if (keypadAttempts.has(attemptKey) || ctx.keypadEntered?.has(windowKey))
+      return KEYPAD_ALREADY_TRIED
     // 글자·이름으로 읽히는 키패드가 먼저다. 못 읽으면(네이버페이처럼 숫자를 이미지로 그린 키패드)
     // 빈 버튼들을 OCR 로 읽어 배치를 만든다 — 둘 다 안 되면 사람에게 넘긴다
     const labelled = await pageBridge.keypadLayout(tab).catch(() => null)
@@ -1253,7 +1262,10 @@ ${raw}`
     }
     if (!cells) {
       const diag = await pageBridge.keypadDiag(tab).catch(() => '')
-      ctx.onStep(`키패드 배치(OCR): 글자 없는 버튼 10~14개를 못 찾음${diag ? ` (${diag})` : ''}`, false)
+      ctx.onStep(
+        `키패드 배치(OCR): 글자 없는 버튼 10~14개를 못 찾음${diag ? ` (${diag})` : ''}`,
+        false
+      )
       return null
     }
     // 못 읽은 사유만 모은다(어느 칸이 어느 숫자인지는 남기지 않는다)
@@ -1438,7 +1450,8 @@ ${handoffToolResult(result)}`
     withPopupNotice(async () => {
       if (ctx.mode === 'read_only') return READ_ONLY_REFUSAL
       // keys 경로는 Enter 를 누르지 않는다 — 조용히 무시하면 제출이 안 된 걸 모른 채 넘어가게 된다
-      if (keys && submit) return 'refused: keys=true 와 submit=true 는 같이 쓸 수 없다 — 입력만 하고 Enter 는 따로 누른다'
+      if (keys && submit)
+        return 'refused: keys=true 와 submit=true 는 같이 쓸 수 없다 — 입력만 하고 Enter 는 따로 누른다'
       const tab = activeOr(ctx)
       if (!tab) return 'no active tab'
       // 결제 비밀번호 키패드에서는 입력하지 않는다(숫자칸·키패드 모두)
@@ -1859,7 +1872,9 @@ overlays left: ${after.length}${kept}`
           // 라벨 글자로 체크박스 켜기(동의 칸). 결제 확정 버튼이 아니라 no_pay 에서도 허용한다
           const tab = activeOr(ctx)
           if (!tab) return 'no active tab'
-          return await pageBridge.checkByLabel(tab, asText(args[0])).catch((e: unknown) => `failed: ${e instanceof Error ? e.message : String(e)}`)
+          return await pageBridge
+            .checkByLabel(tab, asText(args[0]))
+            .catch((e: unknown) => `failed: ${e instanceof Error ? e.message : String(e)}`)
         }
         case 'page.url':
           return currentUrl()
@@ -1953,43 +1968,40 @@ overlays left: ${after.length}${kept}`
       'paths 는 절대 경로 목록. 파일을 고르는 대화상자는 열리지 않는다.',
     { selector: z.string().min(1), paths: z.array(z.string()).min(1) },
     ({ selector, paths }) =>
-      guard(
-        `파일 업로드: ${selector}`,
-        async () => {
-          if (ctx.mode === 'read_only') return READ_ONLY_REFUSAL
-          const tab = activeOr(ctx)
-          if (!tab) return 'no active tab'
-          // UNC(\서버\공유) 경로는 네트워크로 자격 증명이 새어 나갈 수 있어 막는다
-          // 슬래시·역슬래시가 섞인 형태(/\srv)도 윈도우에서는 UNC 가 되므로 원본과 정규화 결과를 모두 본다
-          const files = paths.map((p) => (isAbsolute(p) ? resolvePath(p) : p))
-          if (paths.some((p) => UNC.test(p)) || files.some((p) => UNC.test(p))) return 'UNC 경로 불가'
-          for (const p of files) {
-            const st = isAbsolute(p) ? await fsp.stat(p).catch(() => null) : null
-            if (!st || !st.isFile()) return `파일 없음: ${p}`
-          }
-          // 이 PC 의 파일을 웹사이트로 내보내는 도구라 권한 모드와 무관하게 항상 확인한다
-          const ok = await ctx.confirm(`파일 업로드: ${files.join(', ')} → ${selector}`, 'danger')
-          if (!ok) return 'denied by user'
-          const wc = tab.view.webContents
-          ensureDebuggerAttached(wc)
-          keepDebuggerAttached(wc)
-          const { root } = await wc.debugger.sendCommand('DOM.getDocument', { depth: 0 })
-          const { nodeId } = await wc.debugger.sendCommand('DOM.querySelector', {
-            nodeId: root.nodeId,
-            selector
-          })
-          if (!nodeId) return `셀렉터 없음: ${selector}`
-          try {
-            await wc.debugger.sendCommand('DOM.setFileInputFiles', { files, nodeId })
-          } catch (e) {
-            const message = e instanceof Error ? e.message : String(e)
-            // 입력 칸이 아닌 노드일 때만 그렇게 알리고, 나머지는 원인을 그대로 돌려준다
-            if (/input|file/i.test(message)) return `file input 아님: ${selector}`
-            return `업로드 실패: ${message}`
-          }
-          return JSON.stringify({ ok: true, files: files.length })
+      guard(`파일 업로드: ${selector}`, async () => {
+        if (ctx.mode === 'read_only') return READ_ONLY_REFUSAL
+        const tab = activeOr(ctx)
+        if (!tab) return 'no active tab'
+        // UNC(\서버\공유) 경로는 네트워크로 자격 증명이 새어 나갈 수 있어 막는다
+        // 슬래시·역슬래시가 섞인 형태(/\srv)도 윈도우에서는 UNC 가 되므로 원본과 정규화 결과를 모두 본다
+        const files = paths.map((p) => (isAbsolute(p) ? resolvePath(p) : p))
+        if (paths.some((p) => UNC.test(p)) || files.some((p) => UNC.test(p))) return 'UNC 경로 불가'
+        for (const p of files) {
+          const st = isAbsolute(p) ? await fsp.stat(p).catch(() => null) : null
+          if (!st || !st.isFile()) return `파일 없음: ${p}`
         }
-      )
+        // 이 PC 의 파일을 웹사이트로 내보내는 도구라 권한 모드와 무관하게 항상 확인한다
+        const ok = await ctx.confirm(`파일 업로드: ${files.join(', ')} → ${selector}`, 'danger')
+        if (!ok) return 'denied by user'
+        const wc = tab.view.webContents
+        ensureDebuggerAttached(wc)
+        keepDebuggerAttached(wc)
+        const { root } = await wc.debugger.sendCommand('DOM.getDocument', { depth: 0 })
+        const { nodeId } = await wc.debugger.sendCommand('DOM.querySelector', {
+          nodeId: root.nodeId,
+          selector
+        })
+        if (!nodeId) return `셀렉터 없음: ${selector}`
+        try {
+          await wc.debugger.sendCommand('DOM.setFileInputFiles', { files, nodeId })
+        } catch (e) {
+          const message = e instanceof Error ? e.message : String(e)
+          // 입력 칸이 아닌 노드일 때만 그렇게 알리고, 나머지는 원인을 그대로 돌려준다
+          if (/input|file/i.test(message)) return `file input 아님: ${selector}`
+          return `업로드 실패: ${message}`
+        }
+        return JSON.stringify({ ok: true, files: files.length })
+      })
   )
 
   const setDownloadDir = tool(
@@ -2160,7 +2172,9 @@ overlays left: ${after.length}${kept}`
         const ses = ctx.tabs.sessionForProfile(profile)
         const all = await ses.cookies.get({})
         const hit = all.filter((c) => {
-          const d = String(c.domain ?? '').replace(/^\./, '').toLowerCase()
+          const d = String(c.domain ?? '')
+            .replace(/^\./, '')
+            .toLowerCase()
           return d === site || d.endsWith(`.${site}`)
         })
         for (const c of hit) {
@@ -2767,9 +2781,8 @@ ${submittedNote}`
     switchTab,
     closeTab,
     clearSiteCookies,
-    listAccounts,
-    fillSecret,
-    login,
+    // 코드 작업 모드에서는 계정·비밀번호 도구를 빼고 코드 도구를 붙인다
+    ...(ctx.code ? createCodeTools(ctx.code) : [listAccounts, fillSecret, login]),
     progress,
     updateTodos,
     ...(ctx.siteMemory ? [rememberSite] : []),
@@ -2826,6 +2839,8 @@ export const SAMBA_TOOL_NAMES = [
   'list_playbooks',
   'update_playbook',
   'done',
+  // 코드 작업 모드에서만 등록된다
+  ...CODE_TOOL_NAMES,
   // 폰 도구가 주입되지 않은 실행에서도 이름은 허용 목록에 있어야 모델이 거부 문구를 받는다
   ...PHONE_TOOL_NAMES,
   PAY_TOOL_NAME

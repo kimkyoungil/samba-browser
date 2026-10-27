@@ -125,7 +125,8 @@ export function ChatPanel(): React.JSX.Element {
           {t('chat.dropHere')}
         </div>
       )}
-      <div className="flex items-center justify-between border-b border-black/5 px-3.5 py-3 font-semibold">
+      {/* AI 창 머리줄도 창을 끄는 자리다(단추는 그대로 눌린다) */}
+      <div className="flex items-center justify-between border-b border-black/5 px-3.5 py-3 font-semibold [-webkit-app-region:drag]">
         {t('chat.title')}
         <span className="flex items-center gap-1.5 text-[12px] font-normal text-[var(--text2)]">
           <span
@@ -140,7 +141,7 @@ export function ChatPanel(): React.JSX.Element {
             <button
               type="button"
               onClick={() => openSettings('ai')}
-              className="font-medium text-[#b45309] underline-offset-2 hover:underline"
+              className="font-medium text-[#b45309] underline-offset-2 hover:underline [-webkit-app-region:no-drag]"
             >
               · {t('settings.ai.expiredShort')}
             </button>
@@ -151,7 +152,7 @@ export function ChatPanel(): React.JSX.Element {
             type="button"
             title={t('chat.collapsePanel')}
             onClick={() => togglePanel()}
-            className="ml-1 flex h-7 w-7 items-center justify-center rounded-[8px] text-[var(--text3)] hover:bg-black/5 hover:text-[var(--text)]"
+            className="ml-1 flex h-7 w-7 items-center justify-center rounded-[8px] text-[var(--text3)] hover:bg-black/5 hover:text-[var(--text)] [-webkit-app-region:no-drag]"
           >
             <PanelRightClose className="h-4 w-4" />
           </button>

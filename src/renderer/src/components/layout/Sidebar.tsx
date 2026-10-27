@@ -40,14 +40,19 @@ export function Sidebar({ width }: { width: number }): React.JSX.Element {
         collapsed ? 'items-center p-1.5' : 'p-2.5'
       )}
     >
-      {/* 접기 토글 + 제품 이름. 접히면 아이콘만 남는다 */}
-      <div className={cn('flex items-center pb-3', collapsed ? 'justify-center' : 'gap-1.5 px-1')}>
+      {/* 접기 토글 + 제품 이름. 접히면 아이콘만 남는다. 이 줄은 창을 끄는 자리다(탭줄이 없는 화면에서도 창을 옮긴다) */}
+      <div
+        className={cn(
+          'flex items-center pb-3 [-webkit-app-region:drag]',
+          collapsed ? 'justify-center' : 'gap-1.5 px-1'
+        )}
+      >
         <button
           type="button"
           aria-label={t(collapsed ? 'sidebar.expand' : 'sidebar.collapse')}
           title={t(collapsed ? 'sidebar.expand' : 'sidebar.collapse')}
           onClick={() => void window.samba.settings.set({ sidebarCollapsed: toggleSidebar() })}
-          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[9px] text-[var(--text2)] hover:bg-black/5 hover:text-[var(--text)]"
+          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[9px] text-[var(--text2)] hover:bg-black/5 hover:text-[var(--text)] [-webkit-app-region:no-drag]"
         >
           <PanelLeft className="h-4 w-4" />
         </button>

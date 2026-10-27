@@ -53,87 +53,94 @@ export function TabBar(): React.JSX.Element {
       }}
       onDrop={(e) => dropAt(e, shown.length)}
     >
-      {/* 팝업 창(결제창·주소 검색창)은 탭 바에 넣지 않는다 — 사이드바 "열린 탭"에만 배지로 보인다 */}
-      {shown.map((tab, index) => {
-        // 계정별 세션(프로필) 탭은 이름마다 고정된 색 띠·배지로 구분한다 — 어느 계정으로 로그인된 탭인지 한눈에
-        const color = profileColor(tab.profile)
-        return (
-          <div
-            key={tab.id}
-            onClick={() => activateTab(tab.id)}
-            draggable
-            onDragStart={(e) => {
-              e.dataTransfer.effectAllowed = 'move'
-              e.dataTransfer.setData('text/plain', tab.id)
-              // 다른 창의 탭 바가 받을 수 있게 탭 id 를 전용 형식으로도 싣는다
-              e.dataTransfer.setData(TAB_DRAG_MIME, tab.id)
-              setDragId(tab.id)
-            }}
-            onDragOver={(e) => {
-              if (!allowDrop(e)) return
-              e.stopPropagation()
-              // 탭의 왼쪽 절반 위면 그 탭 앞, 오른쪽 절반 위면 그 탭 뒤
-              const box = e.currentTarget.getBoundingClientRect()
-              setDropIndex(e.clientX < box.left + box.width / 2 ? index : index + 1)
-            }}
-            onDrop={(e) => {
-              e.stopPropagation()
-              dropAt(e, dropIndex ?? index)
-            }}
-            onDragEnd={(e) => {
-              // 아무 데도 받지 않은 채(페이지 위·바탕화면) 탭 바 밖에서 놓았으면 크롬처럼 새 창으로 뗀다.
-              // 다른 창의 탭 바가 받았으면 dropEffect 가 move 라 여기서는 아무것도 하지 않는다
-              const rect = barRef.current?.getBoundingClientRect() ?? null
-              if (shouldDetach(e.dataTransfer.dropEffect, { x: e.clientX, y: e.clientY }, rect)) {
-                void window.samba.tabs.detach(tab.id)
-              }
-              endDrag()
-            }}
-            title={color ? t('tab.profileOf', { profile: tab.profile }) : undefined}
-            style={
-              {
-                WebkitAppRegion: 'no-drag',
-                ...(color ? { boxShadow: `inset 0 3px 0 0 ${color}` } : {}),
-                ...(dropIndex === index ? { borderLeft: '2px solid var(--text)' } : {}),
-                ...(dropIndex === index + 1 && index === shown.length - 1
-                  ? { borderRight: '2px solid var(--text)' }
-                  : {})
-              } as React.CSSProperties
-            }
-            className={cn(
-              'flex max-w-[200px] items-center gap-2 rounded-t-lg px-2.5 pb-2 pt-1.5 text-[12.5px] text-[var(--text2)] cursor-default',
-              tab.active && 'bg-[var(--bg)] font-medium text-[var(--text)]',
-              dragId === tab.id && 'opacity-50'
-            )}
-          >
-            <span className="truncate">{tab.title || tab.url}</span>
-            {color && (
-              <Badge
-                variant="secondary"
-                className="h-4 px-1.5 text-[10.5px]"
-                style={{ color, backgroundColor: profileTint(tab.profile) ?? undefined }}
-              >
-                {tab.profile}
-              </Badge>
-            )}
-            <X
-              className="h-3.5 w-3.5 shrink-0 text-[var(--text3)] hover:text-[var(--text)]"
-              onClick={(e) => {
-                e.stopPropagation()
-                void closeTab(tab.id)
+      {/* 탭 묶음 — 자리가 모자라면 이 묶음만 줄어든다(탭이 수십 개여도 뒤의 빈 칸이 남아 창을 끌 수 있다) */}
+      <div className="flex min-w-0 items-end gap-1 overflow-hidden">
+        {/* 팝업 창(결제창·주소 검색창)은 탭 바에 넣지 않는다 — 사이드바 "열린 탭"에만 배지로 보인다 */}
+        {shown.map((tab, index) => {
+          // 계정별 세션(프로필) 탭은 이름마다 고정된 색 띠·배지로 구분한다 — 어느 계정으로 로그인된 탭인지 한눈에
+          const color = profileColor(tab.profile)
+          return (
+            <div
+              key={tab.id}
+              onClick={() => activateTab(tab.id)}
+              draggable
+              onDragStart={(e) => {
+                e.dataTransfer.effectAllowed = 'move'
+                e.dataTransfer.setData('text/plain', tab.id)
+                // 다른 창의 탭 바가 받을 수 있게 탭 id 를 전용 형식으로도 싣는다
+                e.dataTransfer.setData(TAB_DRAG_MIME, tab.id)
+                setDragId(tab.id)
               }}
-            />
-          </div>
-        )
-      })}
-      <button
-        title={t('tab.new')}
-        onClick={() => createTab()}
-        style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
-        className="px-2 pb-2 pt-1.5 text-[var(--text3)]"
-      >
-        <Plus className="h-4 w-4" />
-      </button>
+              onDragOver={(e) => {
+                if (!allowDrop(e)) return
+                e.stopPropagation()
+                // 탭의 왼쪽 절반 위면 그 탭 앞, 오른쪽 절반 위면 그 탭 뒤
+                const box = e.currentTarget.getBoundingClientRect()
+                setDropIndex(e.clientX < box.left + box.width / 2 ? index : index + 1)
+              }}
+              onDrop={(e) => {
+                e.stopPropagation()
+                dropAt(e, dropIndex ?? index)
+              }}
+              onDragEnd={(e) => {
+                // 아무 데도 받지 않은 채(페이지 위·바탕화면) 탭 바 밖에서 놓았으면 크롬처럼 새 창으로 뗀다.
+                // 다른 창의 탭 바가 받았으면 dropEffect 가 move 라 여기서는 아무것도 하지 않는다
+                const rect = barRef.current?.getBoundingClientRect() ?? null
+                if (shouldDetach(e.dataTransfer.dropEffect, { x: e.clientX, y: e.clientY }, rect)) {
+                  void window.samba.tabs.detach(tab.id)
+                }
+                endDrag()
+              }}
+              title={color ? t('tab.profileOf', { profile: tab.profile }) : undefined}
+              style={
+                {
+                  WebkitAppRegion: 'no-drag',
+                  ...(color ? { boxShadow: `inset 0 3px 0 0 ${color}` } : {}),
+                  ...(dropIndex === index ? { borderLeft: '2px solid var(--text)' } : {}),
+                  ...(dropIndex === index + 1 && index === shown.length - 1
+                    ? { borderRight: '2px solid var(--text)' }
+                    : {})
+                } as React.CSSProperties
+              }
+              className={cn(
+                'flex max-w-[200px] items-center gap-2 rounded-t-lg px-2.5 pb-2 pt-1.5 text-[12.5px] text-[var(--text2)] cursor-default',
+                tab.active && 'bg-[var(--bg)] font-medium text-[var(--text)]',
+                dragId === tab.id && 'opacity-50'
+              )}
+            >
+              <span className="truncate">{tab.title || tab.url}</span>
+              {color && (
+                <Badge
+                  variant="secondary"
+                  className="h-4 px-1.5 text-[10.5px]"
+                  style={{ color, backgroundColor: profileTint(tab.profile) ?? undefined }}
+                >
+                  {tab.profile}
+                </Badge>
+              )}
+              <X
+                className="h-3.5 w-3.5 shrink-0 text-[var(--text3)] hover:text-[var(--text)]"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  void closeTab(tab.id)
+                }}
+              />
+            </div>
+          )
+        })}
+        <button
+          title={t('tab.new')}
+          onClick={() => createTab()}
+          style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+          className="px-2 pb-2 pt-1.5 text-[var(--text3)]"
+        >
+          <Plus className="h-4 w-4" />
+        </button>
+      </div>
+      {/* 창을 끄는 빈 칸 — 탭줄이 탭으로 꽉 차도 늘 남는다(실기 10/27: 카페 탭 수십 개로 창이 안 움직였다).
+          끌기를 직접 단다: 넘쳐 잘린 탭들의 끌기 제외 칸이 잘림과 상관없이 이 자리를 덮는데, 끌기 영역은 문서 순서로
+          더하고 빼므로 뒤에 오는 이 칸이 이긴다 */}
+      <div aria-hidden className="min-w-12 flex-1 self-stretch [-webkit-app-region:drag]" />
       <ProfileMenu />
     </div>
   )

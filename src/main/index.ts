@@ -18,7 +18,7 @@ import { registerFaviconIpc } from './ipc/favicon'
 import { openDatabase, type Db } from './db/client'
 import type { VaultService } from './vault/service'
 import type { SyncEngineHolder } from './sync/engine'
-import type { AgentRunner } from './agent/runner'
+import type { AgentRunnerPool } from './agent/runner-pool'
 import { runLoginHarness, writeVaultLocked } from './e2e/login-harness'
 import { chromeUserAgent } from './browser/webstore-ua'
 import { humanBusyInWindow } from './browser/human-activity'
@@ -94,7 +94,7 @@ let windows: WindowManager | undefined
 let db: Db | undefined
 let vault: VaultService | undefined
 let sync: SyncEngineHolder | undefined
-let agent: AgentRunner | undefined
+let agent: AgentRunnerPool | undefined
 
 // 종료 순서: vault.dispose()(lock 포함, DB 조회 발생) → db.close() 순으로 해야 한다.
 // 반대로 하면(예전 버그) db.close() 뒤에 창이 닫히며 vault.dispose() → lock() →

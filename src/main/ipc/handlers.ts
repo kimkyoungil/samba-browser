@@ -41,7 +41,8 @@ import { isNewWindowShortcut } from '../browser/window-manager'
 import { ClosedTabStack, newProfileName, runGesture, type GestureDeps } from '../browser/gestures'
 import { SettingsStore } from '../settings/store'
 import { setOcrEnabled } from '../agent/tools-ocr'
-import { AgentRunner, BRIDGE_BUSY_ERROR } from '../agent/runner'
+import { BRIDGE_BUSY_ERROR } from '../agent/runner'
+import { AgentRunnerPool } from '../agent/runner-pool'
 import { BridgeServer, BridgeWindowNotFound, type BridgeWindowInfo } from '../bridge/server'
 import { applyBridgeSettings, newBridgeToken } from '../bridge/wiring'
 import { createHarnessApi } from '../harness/wiring'
@@ -227,7 +228,7 @@ export function registerIpc(
   db: Db
 ): {
   settings: SettingsStore
-  agent: AgentRunner
+  agent: AgentRunnerPool
   db: Db
   vault: VaultService
   auth: AuthService
@@ -298,7 +299,8 @@ export function registerIpc(
     store: activityStore,
     enabled: () => settings.get().activityRecording
   })
-  const agent = new AgentRunner(
+  // 대화방마다 따로 도는 실행기 묶음. 이벤트에는 대화 번호(chatId)가 붙는다
+  const agent = new AgentRunnerPool(
     tabs,
     settings,
     (ev) => {
@@ -313,6 +315,8 @@ export function registerIpc(
   tabs.onVisit((host) => activity.noteVisit(host))
   // AI 채팅 기록. 러너가 작업 완료 시점에 이 저장소로 대화를 남긴다
   const chats = new ChatRepo(db)
+  // 브라우저 차례를 기다리는 대화에 '어느 대화가 쓰는 중'인지 보인다
+  agent.setChatTitles((chatId) => chats.title(chatId))
   agent.setTranscript((chatId, entry) => {
     const user = chats.append({ chatId, role: 'user', content: entry.prompt })
     chats.append({ chatId, role: 'assistant', content: entry.text, steps: entry.steps })
@@ -648,15 +652,19 @@ export function registerIpc(
       const files = parseAgentFiles(rawFiles)
       if (files === null) throw new Error(tr('ipc.filesInvalid'))
       // 알림 요약의 "작업:" 줄에 쓸 사용자 지시(비밀값 마스킹은 메시지 조립 때 한다)
-      notifier.setPrompt(prompt)
+      // 대화방마다 따로 돌므로 지시는 대화별로 기억한다
+      notifier.setPrompt(prompt, chatId)
       // 활동 기록도 같은 자리에서 지시를 받아 둔다(마스킹은 저장 직전에 한다)
-      activity.notePrompt(prompt)
-      const overrides = scheduler.claimOverrides(scheduleToken)
+      activity.notePrompt(prompt, chatId)
+      const overrides = scheduler.claimOverrides(scheduleToken, chatId)
       void agent.run(prompt, chatId, overrides, images, files).catch((e: unknown) => {
         console.error('작업 실행 실패', e)
         // 시작도 못 한 지시는 상태 이벤트가 하나도 안 나간다 — 알리지 않으면 화면이 영영 '생각 중'이다
         const message = e instanceof Error ? e.message : String(e)
-        agent.notifyNotStarted(message === BRIDGE_BUSY_ERROR ? tr('ipc.agentBridgeBusy') : message)
+        agent.notifyNotStarted(
+          message === BRIDGE_BUSY_ERROR ? tr('ipc.agentBridgeBusy') : message,
+          chatId
+        )
       })
       return { started: true }
     }
@@ -729,6 +737,7 @@ export function registerIpc(
     codeFolders.forget(chatId)
     // 이어받던 Claude 세션·Codex 스레드 연결도 버린다
     agent.forgetChatSession(chatId)
+    agent.dropChat(chatId)
     return chats.remove(chatId)
   })
   // 보낸 말 고쳐 다시 보내기·답 다시 받기 — 그 말부터 끝까지 지우고, 이어받던 AI 세션도 버린다
@@ -739,7 +748,7 @@ export function registerIpc(
     if (typeof rawMessageId !== 'number' || !Number.isInteger(rawMessageId))
       throw new Error('bad message id')
     // 일하는 중에 자르면 끝난 실행이 지운 자리 뒤에 기록을 다시 남긴다(뒷정리만 남았으면 기다린다)
-    if (await agent.waitRunSettled()) throw new Error(tr('ipc.chatTruncateBusy'))
+    if (await agent.waitRunSettled(rawChatId)) throw new Error(tr('ipc.chatTruncateBusy'))
     const removed = chats.truncateFrom(rawChatId, rawMessageId)
     agent.forgetChatSession(rawChatId)
     return removed
@@ -772,7 +781,10 @@ export function registerIpc(
     if (typeof path !== 'string' || !importablePaths.has(path)) throw new Error('bad import path')
     return asideImporter.run(path)
   })
-  handleFromRenderer(IPC.agentStop, () => agent.stop())
+  // 그 대화의 일만 멈춘다(다른 대화는 계속 돈다). 대화를 안 주면 전부
+  handleFromRenderer(IPC.agentStop, (rawChatId?: unknown) =>
+    agent.stop(typeof rawChatId === 'number' && Number.isInteger(rawChatId) ? rawChatId : undefined)
+  )
 
   // --- 자동화 플레이북 — 절차 문서만 오간다(비밀값 없음) --------------------
   handleFromRenderer(IPC.playbookList, () => playbooks.list())

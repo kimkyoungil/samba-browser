@@ -360,6 +360,9 @@ export type AgentEvent =
       toolCalls?: number
     }
 
+/** 화면으로 가는 실행 이벤트 — 대화방마다 AI 가 따로 돌아 어느 대화의 것인지 붙는다(대화 없는 실행은 없음) */
+export type ChatAgentEvent = AgentEvent & { chatId?: number }
+
 // Settings 는 shared/settings.ts 의 zod 스키마에서 파생된 타입 (z.infer)
 export type { Settings } from './settings'
 

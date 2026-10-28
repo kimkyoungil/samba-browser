@@ -85,6 +85,8 @@ interface PendingDispatch {
 interface ActiveRun {
   playbookId: string
   startedAt: number
+  /** 이 예약 실행이 도는 대화(대화방마다 따로 돌아 다른 대화의 이벤트를 걸러 낸다) */
+  chatId?: number
   /** 이번 실행에서 마지막으로 받은 AI 본문(끝나면 한 줄 요약으로 줄인다) */
   lastText: string
 }
@@ -239,13 +241,18 @@ export class PlaybookScheduler {
    * 이번 실행에 쓸 덮어쓰기(모델·권한 모드)를 받아 간다.
    * 모르는 토큰(사용자가 직접 친 문장)이면 undefined 라 평소대로 전역 설정을 쓴다
    */
-  claimOverrides(token: string | undefined): ScheduleRunOverrides | undefined {
+  claimOverrides(token: string | undefined, chatId?: number): ScheduleRunOverrides | undefined {
     if (token === undefined || this.pending === null || this.pending.token !== token) {
       return undefined
     }
     const { playbookId, overrides } = this.pending
     this.pending = null
-    this.active = { playbookId, startedAt: this.now(), lastText: '' }
+    this.active = {
+      playbookId,
+      startedAt: this.now(),
+      lastText: '',
+      ...(chatId === undefined ? {} : { chatId })
+    }
     this.deps.onChanged?.()
     return overrides
   }
@@ -254,9 +261,11 @@ export class PlaybookScheduler {
    * 러너가 내보내는 이벤트를 그대로 흘려 받는다(별도 통지 경로를 만들지 않는다).
    * 예약 실행이 돌고 있지 않으면 전부 무시한다
    */
-  noteAgentEvent(event: AgentEvent): void {
+  noteAgentEvent(event: AgentEvent & { chatId?: number }): void {
     const active = this.active
     if (active === null) return
+    // 다른 대화에서 동시에 돈 실행의 이벤트는 이 예약 실행 것이 아니다
+    if (active.chatId !== undefined && event.chatId !== active.chatId) return
     if (event.type === 'text') {
       active.lastText = event.text
       return

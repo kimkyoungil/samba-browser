@@ -33,11 +33,16 @@ interface OpenVisit {
   startedAt: number
 }
 
-export class ActivityRecorder {
-  private run: OpenRun | null = null
+/** 대화 하나의 실행 기록 상태 — 대화방마다 AI 가 따로 돌아 대화별로 둔다 */
+interface ChatRunState {
+  run: OpenRun | null
   /** 다음 실행에 적용된 플레이북 이름(playbook 이벤트가 status 보다 먼저 올 수 있다) */
-  private pendingPlaybook: string | undefined
-  private prompt = ''
+  pendingPlaybook: string | undefined
+  prompt: string
+}
+
+export class ActivityRecorder {
+  private readonly chats = new Map<number | undefined, ChatRunState>()
   private visit: OpenVisit | null = null
   private readonly now: () => number
 
@@ -46,38 +51,49 @@ export class ActivityRecorder {
   }
 
   /** agent:run 핸들러가 부른다. 이 시점의 지시를 기억해 둔다(마스킹은 저장할 때) */
-  notePrompt(prompt: string): void {
-    this.prompt = prompt
-    this.pendingPlaybook = undefined
+  notePrompt(prompt: string, chatId?: number): void {
+    const st = this.stateOf(chatId)
+    st.prompt = prompt
+    st.pendingPlaybook = undefined
+  }
+
+  private stateOf(chatId: number | undefined): ChatRunState {
+    let st = this.chats.get(chatId)
+    if (!st) {
+      st = { run: null, pendingPlaybook: undefined, prompt: '' }
+      this.chats.set(chatId, st)
+    }
+    return st
   }
 
   /**
    * 러너 이벤트 한 건. 어떤 경우에도 예외를 던지지 않는다 —
    * 기록이 실패한다고 작업이 멈추면 안 된다
    */
-  observeAgent(event: AgentEvent): void {
+  observeAgent(event: AgentEvent & { chatId?: number }): void {
     try {
+      const st = this.stateOf(event.chatId)
       if (!this.deps.enabled()) {
-        this.run = null
+        st.run = null
         return
       }
       if (event.type === 'playbook') {
-        this.pendingPlaybook = event.names[0]
+        st.pendingPlaybook = event.names[0]
         // 이미 시작한 실행이면 지금 붙인다(playbook 이벤트는 status 뒤에 올 수도 있다)
-        if (this.run) this.run.playbook = event.names[0]
+        if (st.run) st.run.playbook = event.names[0]
         return
       }
       if (event.type !== 'status') return
       if (event.state === 'running') {
-        this.run = {
-          prompt: this.prompt,
+        st.run = {
+          prompt: st.prompt,
           startedAt: this.now(),
-          ...(this.pendingPlaybook === undefined ? {} : { playbook: this.pendingPlaybook })
+          ...(st.pendingPlaybook === undefined ? {} : { playbook: st.pendingPlaybook })
         }
         return
       }
-      const open = this.run
-      this.run = null
+      const open = st.run
+      st.run = null
       // 사용자가 직접 멈춘 것(stopped)은 "한 일" 이 아니라 되풀이로 세지 않는다
       if (!open || event.state === 'stopped') return
       const at = this.now()

@@ -33,10 +33,10 @@ export interface NotifierDeps {
 }
 
 export interface AgentNotifier {
-  /** 작업 시작 시점의 사용자 지시를 기억해 둔다(요약 첫 줄에 쓴다) */
-  setPrompt: (prompt: string) => void
+  /** 작업 시작 시점의 사용자 지시를 기억해 둔다(요약 첫 줄에 쓴다). 대화방마다 따로 돌아 대화별로 둔다 */
+  setPrompt: (prompt: string, chatId?: number) => void
   /** 에이전트 이벤트 한 건을 살핀다. 어떤 경우에도 예외를 던지지 않는다 */
-  observe: (e: AgentEvent) => void
+  observe: (e: AgentEvent & { chatId?: number }) => void
   /** 설정 화면의 [테스트 보내기]. 켬/끔과 무관하게 지금 값으로 한 번 보낸다 */
   test: (channel: NotifyChannel) => Promise<NotifySendResult>
 }
@@ -55,9 +55,16 @@ export function notifyConfigOf(s: Settings): NotifyConfig {
 }
 
 export function createAgentNotifier(deps: NotifierDeps): AgentNotifier {
-  // 이번 작업의 사용자 지시와 마지막 응답 본문
-  let prompt = ''
-  let lastText = ''
+  // 대화별 이번 작업의 사용자 지시와 마지막 응답 본문
+  const runs = new Map<number | undefined, { prompt: string; lastText: string }>()
+  const runOf = (chatId: number | undefined): { prompt: string; lastText: string } => {
+    let r = runs.get(chatId)
+    if (!r) {
+      r = { prompt: '', lastText: '' }
+      runs.set(chatId, r)
+    }
+    return r
+  }
 
   const lang = (s: Settings): NotifyLang => (s.language === 'en' ? 'en' : 'ko')
 
@@ -82,15 +89,18 @@ export function createAgentNotifier(deps: NotifierDeps): AgentNotifier {
   }
 
   return {
-    setPrompt: (v: string): void => {
-      prompt = v
-      lastText = ''
+    setPrompt: (v: string, chatId?: number): void => {
+      const r = runOf(chatId)
+      r.prompt = v
+      r.lastText = ''
     },
-    observe: (e: AgentEvent): void => {
+    observe: (e: AgentEvent & { chatId?: number }): void => {
       try {
         const s = deps.settings()
+        const run = runOf(e.chatId)
+        const prompt = run.prompt
         if (e.type === 'text') {
-          lastText = e.text
+          run.lastText = e.text
           return
         }
         if (e.type === 'confirm') {
@@ -113,9 +123,10 @@ export function createAgentNotifier(deps: NotifierDeps): AgentNotifier {
         }
         if (e.type !== 'status') return
         if (e.state === 'running') {
-          lastText = ''
+          run.lastText = ''
           return
         }
+        const lastText = run.lastText
         if (e.state === 'done' && s.notifyOnDone) {
           const input = { event: 'done', prompt, text: lastText, lang: lang(s) } as const
           broadcast(buildNotifyMessage(input))

@@ -145,6 +145,11 @@ export class ChatRepo {
     return { chat: toChatDto(chat), messages: this.messages(chatId) }
   }
 
+  /** 대화 제목(메시지는 읽지 않는다). 없거나 지워졌으면 null */
+  title(chatId: number): string | null {
+    return this.findVisible(chatId)?.title ?? null
+  }
+
   /** 대화가 (이 작업공간에) 살아 있는가 — 메시지는 읽지 않는다 */
   exists(chatId: number): boolean {
     return this.findVisible(chatId) !== null

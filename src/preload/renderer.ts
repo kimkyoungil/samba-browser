@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import {
   IPC,
-  type AgentEvent,
+  type ChatAgentEvent,
   type AgentRunAck,
   type IpcResult,
   type Layout,
@@ -215,7 +215,9 @@ const api = {
       files?: AgentFile[]
     ): Promise<IpcResult<{ injected: boolean; id?: string }>> =>
       invoke(IPC.agentInject, prompt, chatId, images, files),
-    stop: (): Promise<IpcResult<void>> => invoke(IPC.agentStop),
+    // 그 대화의 일만 멈춘다(대화방마다 따로 돈다). 안 주면 도는 일을 모두 멈춘다
+    stop: (chatId?: number): Promise<IpcResult<void>> =>
+      chatId === undefined ? invoke(IPC.agentStop) : invoke(IPC.agentStop, chatId),
     // 대화마다 고른 AI. chatId 가 null 이면(아직 안 만든 새 대화) 앱 기본 연결 쪽 값만 돌려준다
     chatEngine: (
       chatId: number | null
@@ -236,8 +238,9 @@ const api = {
     confirmReply: (requestId: string, approved: boolean): void => {
       ipcRenderer.send(IPC.agentConfirmReply, requestId, approved)
     },
-    onEvent: (cb: (e: AgentEvent) => void): (() => void) => {
-      const h = (_: unknown, e: AgentEvent): void => cb(e)
+    // 실행 이벤트 — 어느 대화의 것인지(chatId)가 붙어 온다
+    onEvent: (cb: (e: ChatAgentEvent) => void): (() => void) => {
+      const h = (_: unknown, e: ChatAgentEvent): void => cb(e)
       ipcRenderer.on(IPC.agentEvent, h)
       return () => ipcRenderer.off(IPC.agentEvent, h)
     }

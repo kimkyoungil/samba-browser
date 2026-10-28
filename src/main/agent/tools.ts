@@ -68,6 +68,7 @@ import { automationBlocked, runAsAutomation } from '../browser/human-activity'
 import type { AgentToolCall, SiteActionTool } from '../../shared/site-memory'
 import type { AgentTodo, AgentTodoStatus, HandoffKind } from '../../shared/ipc'
 import { PLAYBOOK_INSTRUCTIONS_MAX, type PlaybookDto } from '../../shared/playbook'
+import { needsBrowserTurn } from './browser-turn'
 
 // 읽기 전용 모드에서 실행 자체를 거부할 때 돌려주는 문자열(AI 가 읽고 판단)
 const READ_ONLY_REFUSAL = 'refused: read-only mode'
@@ -569,6 +570,9 @@ export interface ToolContext {
   // 키패드 자동 입력을 이미 한 결제창(창 id|호스트) — 도구 세션을 넘어 공유한다. 브릿지는 요청마다 새
   // 세션을 열어 세션 안의 1회 제한이 하네스의 반복 호출을 막지 못했다(실기 2026-09-27). 주입되지 않으면 세션 안만 본다
   keypadEntered?: Set<string>
+  // 브라우저 차례 잡기(대화방마다 AI 가 따로 돌 때). 브라우저·폰 도구는 부르기 전에 이걸 기다린다 —
+  // 다른 대화가 브라우저를 쓰는 중이면 그 일이 끝날 때까지. 없으면(브릿지·테스트) 기다리지 않는다
+  browserTurn?: () => Promise<void>
 }
 
 const text = (t: string): { content: [{ type: 'text'; text: string }] } => ({
@@ -2796,6 +2800,26 @@ ${submittedNote}`
     ...(ctx.phone && hasConnectedPhone(ctx.phone) ? createPhoneTools(ctx.phone) : []),
     ...(ctx.pay ? [createPayTool(ctx.pay)] : [])
   ]
+  // 브라우저·폰 도구는 브라우저 차례를 잡은 뒤에 돈다(다른 대화의 AI 와 같은 탭을 번갈아 누르지 않게)
+  const turn = ctx.browserTurn
+  if (turn) {
+    for (let i = 0; i < tools.length; i++) {
+      const t = tools[i]
+      if (!needsBrowserTurn(t.name)) continue
+      const handler = t.handler as (args: unknown, extra: unknown) => Promise<unknown>
+      tools[i] = {
+        ...t,
+        handler: async (args: unknown, extra: unknown) => {
+          try {
+            await turn()
+          } catch {
+            return text('stopped: this task was stopped while waiting for the browser.')
+          }
+          return handler(args, extra)
+        }
+      } as typeof t
+    }
+  }
   // 서버 객체에 도구 배열을 그대로 얹어 둔다 — 브릿지 도구 세션(runner.ts 의 createToolSession)이
   // MCP 내부 필드에 기대지 않고 이 값을 그대로 읽는다.
   // 도구마다 zod 스키마 타입이 달라 SdkMcpToolDefinition<Schema> 그대로는 하나의 배열 타입으로

@@ -66,6 +66,7 @@ import { generatedImageMarkdown } from '../../shared/generated-image'
 import type { AgentAuth } from '../ai/auth-route'
 import type { ChatEngine } from '../../shared/ai'
 import { makeCounter } from './counter'
+import type { BrowserTurn, TurnOwner } from './browser-turn'
 import type { SiteScriptStore } from './site-scripts-store'
 import { buildScriptsBlock } from '../../shared/site-scripts'
 import { createTextDeduper } from './dedupe'
@@ -318,6 +319,14 @@ export class AgentRunner {
   private readonly lanes = new Map<string, LaneState>()
   // 브릿지 세션들이 함께 보는 키패드 입력 기록(창 id|호스트) — 한 결제창에 결제 비밀번호를 두 번 넣지 않는다
   private readonly bridgeKeypadEntered = new Set<string>()
+  // 대화방마다 따로 도는 앱에서 여러 실행기가 함께 쓰는 브라우저 차례(runner-pool.ts). 없으면 차례 없이 돈다
+  private browserTurn: BrowserTurn | null = null
+  // 지금 실행의 차례 쥔 표(실행마다 새로). stop() 이 바로 놓는다
+  private turnOwner: TurnOwner | null = null
+  // 다른 실행기(브릿지 담당)에 하네스 세션이 열려 있는지 — 열려 있으면 채팅 실행을 받지 않는다
+  private bridgeBusy: (() => boolean) | null = null
+  // 대화 제목(브라우저 차례를 기다리는 쪽에 '어느 대화가 쓰는 중'으로 보인다)
+  private chatTitleOf: ((chatId: number) => string | null) | null = null
 
   private laneStateOf(name: string): LaneState {
     let st = this.lanes.get(name)
@@ -386,6 +395,31 @@ export class AgentRunner {
   /** 대화별 코드 작업 폴더를 읽는 곳. 주입하지 않으면 코드 작업 모드가 없다 */
   setCodeFolders(fn: ((chatId: number) => string | null) | null): void {
     this.codeFolderOf = fn
+  }
+
+  /** 여러 실행기가 함께 쓰는 브라우저 차례. 주입하지 않으면(실행기 하나) 차례 없이 돈다 */
+  setBrowserTurn(turn: BrowserTurn | null): void {
+    this.browserTurn = turn
+  }
+
+  /** 다른 실행기에 하네스(브릿지) 세션이 열려 있는지 알려 주는 곳 */
+  setBridgeBusy(fn: (() => boolean) | null): void {
+    this.bridgeBusy = fn
+  }
+
+  /** 대화 제목 읽기(브라우저 차례 기다림 안내에 쓴다) */
+  setChatTitles(fn: ((chatId: number) => string | null) | null): void {
+    this.chatTitleOf = fn
+  }
+
+  /** 이 실행기에 하네스(브릿지) 세션이 열려 있는가 */
+  hasBridgeSession(): boolean {
+    return this.session !== null || this.laneSessions > 0
+  }
+
+  /** 지금 브라우저 차례를 쥔 실행이 이 실행기의 것인가 */
+  holdsBrowserTurn(): boolean {
+    return this.turnOwner !== null && this.browserTurn?.current() === this.turnOwner
   }
 
   /** 대화별 PC 잠금을 읽는 곳. 주입하지 않으면 잠금이 없다 */
@@ -640,6 +674,11 @@ export class AgentRunner {
     this.generation += 1
     abort.abort()
     this.clearPending()
+    // 브라우저 차례도 곧바로 놓는다 — 기다리던 다른 대화가 스트림이 끝나기를 기다리지 않게
+    if (this.turnOwner) {
+      this.browserTurn?.release(this.turnOwner)
+      this.turnOwner = null
+    }
     // 중단했으면 스트림이 실제로 끝날 때까지 기다리지 않고 곧바로 자동 잠금 보류를 푼다
     this.releaseVaultHold?.()
     this.releaseVaultHold = null
@@ -870,7 +909,8 @@ export class AgentRunner {
     // (그때는 notifyNotStarted 도 상태를 못 보내) 화면이 '생각 중'에 멈췄다
     if (this.abort && this.settledGeneration === this.generation && this.runFinished)
       await this.runFinished
-    if (this.session || this.laneSessions > 0) throw new Error(BRIDGE_BUSY_ERROR)
+    if (this.session || this.laneSessions > 0 || this.bridgeBusy?.() === true)
+      throw new Error(BRIDGE_BUSY_ERROR)
     // 이미 실행 중이면 세대 가드 없이 status 를 emit 하면 진행 중인 실행의 UI 를 덮어쓸 수 있다.
     // 핸들러가 throw 를 { ok: false, error } 로 ack 하므로 에러만 던진다.
     if (this.abort) {
@@ -942,8 +982,11 @@ export class AgentRunner {
     const autoContinuing = prompt.startsWith(AUTO_CONTINUE_PROMPT)
     if (!autoContinuing) this.autoContinueLeft = 1
     // 사용자의 새 지시는 지금 보이는 탭부터 조작한다 — 이전 자동화가 뒤 탭에 남긴 대상 표식을 지운다
-    // (사람이 창을 쓰는 중이라 뒤에서만 돌던 자동화의 대상 탭이 새 지시로 이어지지 않게, visible-guard.ts)
-    if (!autoContinuing && !prompt.startsWith(LEARN_PROMPT_PREFIX)) {
+    // (사람이 창을 쓰는 중이라 뒤에서만 돌던 자동화의 대상 탭이 새 지시로 이어지지 않게, visible-guard.ts).
+    // 대화방마다 따로 도는 앱(브라우저 차례가 있음)은 브라우저 차례를 잡는 순간에 지운다 — 시작할 때 지우면
+    // 브라우저를 쓰는 다른 대화의 작업 탭 표식까지 지운다
+    const freshInstruction = !autoContinuing && !prompt.startsWith(LEARN_PROMPT_PREFIX)
+    if (freshInstruction && !this.browserTurn) {
       const tabs = this.tabs as Partial<TabManager>
       if (typeof tabs.clearAgentTarget === 'function') tabs.clearAgentTarget()
     }
@@ -1104,8 +1147,33 @@ export class AgentRunner {
       phones?.approvePayment
         ? phones.approvePayment(phoneCtx(), req)
         : Promise.resolve({ ok: false, reason: 'declined' as const })
-    const server = createSambaTools(
-      this.buildToolContext({
+    // 브라우저 차례 — 이 실행이 브라우저·폰 도구를 처음 부를 때 잡고, 끝나면(finally·stop) 놓는다.
+    // 차례를 새로 잡았으면 작업 탭 표식을 지운다(사용자의 새 지시이거나, 그새 다른 대화가 브라우저를 썼다)
+    const browserTurn = this.browserTurn
+    const turnOwner: TurnOwner = {
+      key: this,
+      label: (chatId === undefined ? null : this.chatTitleOf?.(chatId)) ?? ''
+    }
+    this.turnOwner = turnOwner
+    const takeBrowserTurn = browserTurn
+      ? async (): Promise<void> => {
+          const got = await browserTurn.acquire(turnOwner, abort.signal, (holder) =>
+            emit({
+              type: 'step',
+              label: holder.label
+                ? `브라우저 차례 기다리는 중 — '${holder.label}' 대화가 쓰는 중`
+                : '브라우저 차례 기다리는 중 — 다른 대화가 쓰는 중',
+              ok: true
+            })
+          )
+          if (got.acquired && (freshInstruction || got.previousKey !== this)) {
+            const tabs = this.tabs as Partial<TabManager>
+            if (typeof tabs.clearAgentTarget === 'function') tabs.clearAgentTarget()
+          }
+        }
+      : undefined
+    const server = createSambaTools({
+      ...this.buildToolContext({
         s,
         jobId,
         tick: counter.tick,
@@ -1132,8 +1200,9 @@ export class AgentRunner {
               signal: abort.signal
             }
           : undefined
-      })
-    )
+      }),
+      ...(takeBrowserTurn ? { browserTurn: takeBrowserTurn } : {})
+    })
     emit({ type: 'status', state: 'running', toolCalls: 0 })
     emit({ type: 'turn', turnId })
     if (savedCodeFolder !== null && codeRoot === null)
@@ -1574,6 +1643,9 @@ export class AgentRunner {
         this.markAutomationIdle()
         this.clearPending()
       }
+      // 이 실행이 쥔 브라우저 차례를 놓는다(차례는 실행마다라 stop 뒤 새 실행의 차례는 건드리지 않는다)
+      browserTurn?.release(turnOwner)
+      if (this.turnOwner === turnOwner) this.turnOwner = null
       // 끼어들기 통로를 닫는다(중단·오류로 끝났어도)
       runChannelClose()
       // 중단으로 끝났어도 그때까지의 대화는 남긴다

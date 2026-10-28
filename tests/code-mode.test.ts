@@ -1,7 +1,7 @@
 // 코드 작업 모드 — 대화에 작업 폴더가 있으면 코드 도구를 붙이고 비밀번호·결제·폰 도구는 뺀다.
 // 폴더 고르기 거절 규칙, 도구 목록, Codex 셸 끄기, 실행기 연결(Claude·Codex)
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, parse } from 'node:path'
 import type { AgentEvent } from '../src/shared/ipc'
@@ -354,6 +354,51 @@ describe('실행기 — 대화에 작업 폴더가 있으면 코드 모드', () 
     plain.runner.setCodexThreads(threads('') as unknown as CodexThreadStore)
     await plain.runner.run('안녕', 5)
     expect(codexInputs[0].resume).toBe('T-OLD-THREAD')
+  })
+
+  it('Codex: 너무 길어진 스레드(문맥 60% 넘음)는 이어받지 않고 앞부분 요약 + 새 스레드로 연다', async () => {
+    // 가짜 Codex 홈에 39만 토큰짜리 스레드 기록을 둔다(실기 10/28 워크룸)
+    const home = join(base, 'codex-home')
+    const dir = join(home, 'sessions', '2026', '10', '27')
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(
+      join(dir, 'rollout-2026-10-27T21-49-19-T-LONG-THREAD.jsonl'),
+      JSON.stringify({
+        type: 'event_msg',
+        payload: {
+          type: 'token_count',
+          info: { last_token_usage: { total_tokens: 389_719 }, model_context_window: 475_000 }
+        }
+      })
+    )
+    const before = process.env.CODEX_HOME
+    process.env.CODEX_HOME = home
+    try {
+      const saved: unknown[][] = []
+      codexRuns = [
+        [
+          { type: 'thread', id: 'T-FRESH' },
+          { type: 'done', ok: true }
+        ]
+      ]
+      const { runner, events } = makeRunner('codex', null)
+      runner.setCodexThreads({
+        get: () => 'T-LONG-THREAD',
+        noteOf: () => '',
+        set: (...a: unknown[]) => saved.push(a),
+        clear: () => {}
+      } as unknown as CodexThreadStore)
+      await runner.run('계속해', 5)
+      expect(codexInputs[0].resume).toBeUndefined()
+      expect(events).toContainEqual({
+        type: 'text',
+        text: '(대화가 길어져 앞부분을 요약해 새 세션으로 이어갑니다)'
+      })
+      expect(saved[0]?.[1]).toBe('T-FRESH')
+    } finally {
+      if (before === undefined) delete process.env.CODEX_HOME
+      else process.env.CODEX_HOME = before
+    }
   })
 
   it('PC 잠금: 폴더가 붙어 있어도 코드 도구 없이 돌고, 파일 도구를 빼며, 지시문에 PC LOCK 을 알린다', async () => {

@@ -60,6 +60,7 @@ import { resolveModel } from '../ai/models'
 import type { CodexInput } from './provider-codex'
 import { CODEX_TOOL_TOKEN_ENV, openCodexToolServer, type CodexToolServer } from './codex-tools'
 import { developerNoteKey, type CodexThreadStore } from './codex-threads'
+import { codexContextTooLong, codexThreadContext } from './codex-context'
 import { pdfTextBlock } from './pdf-text'
 import { collectGeneratedImages } from './codex-images'
 import { generatedImageMarkdown } from '../../shared/generated-image'
@@ -1288,8 +1289,14 @@ export class AgentRunner {
         // 이어받을 스레드가 있으면 앞 대화(붙인 사진 포함)를 Codex 가 기억한다 — 없을 때만 앞부분 대화를 싣는다.
         // 개발자 지시는 스레드를 처음 열 때만 실리므로(이어받기에는 안 실림, 실측) 지시가 바뀐 스레드는 새로 연다
         const stored = chatId === undefined ? null : (this.codexThreads?.get(chatId) ?? null)
+        // 스레드가 너무 길어졌으면(문맥이 창의 60%·최대 30만) 이어받지 않고 앞부분 요약 + 새 스레드로 —
+        // 39만 토큰 스레드가 모델이 붐빌 때 답 없이 멈췄다(실기 10/28). Claude 세션과 같은 기준
+        const tooLong = stored !== null && codexContextTooLong(await codexThreadContext(stored))
+        if (tooLong && !learning)
+          emit({ type: 'text', text: '(대화가 길어져 앞부분을 요약해 새 세션으로 이어갑니다)' })
         const thread =
           stored !== null &&
+          !tooLong &&
           chatId !== undefined &&
           (this.codexThreads?.noteOf?.(chatId) ?? '') === developerNoteKey(devNote)
             ? stored

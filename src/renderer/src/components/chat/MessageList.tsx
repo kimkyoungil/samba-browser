@@ -24,8 +24,8 @@ export function MessageList(): React.JSX.Element {
   const messages = useChatStore((s) => s.messages)
   const status = useChatStore((s) => s.status)
   const activeChatId = useChatStore((s) => s.activeChatId)
-  // 지금 보는 대화가 일하는 대화인가(다른 대화를 보는 중이면 마지막 말풍선에 '쓰는 중'을 달지 않는다)
-  const viewRunning = useChatStore((s) => s.status === 'running' && s.runChatId === s.activeChatId)
+  // 지금 보는 대화가 일하는 중인가(status 는 화면 대화의 것 — 대화방마다 따로 돈다)
+  const viewRunning = useChatStore((s) => s.status === 'running')
   // 맨 아래 대기 말풍선 수 — 늘면 따라 내려간다
   const pendingCount = useChatStore((s) => s.queue.length + s.injecting.length)
   const box = useRef<HTMLDivElement>(null)

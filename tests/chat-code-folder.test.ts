@@ -42,7 +42,7 @@ beforeEach(() => {
   useChatStore.setState({
     status: 'idle',
     activeChatId: null,
-    runChatId: null,
+    runs: {},
     messages: [],
     queue: [],
     codeFolder: null,
@@ -81,7 +81,7 @@ describe('코드 작업 폴더', () => {
     expect(useChatStore.getState().codeFolder).toBeNull()
 
     vi.clearAllMocks()
-    useChatStore.setState({ activeChatId: 7, runChatId: 7, status: 'running' })
+    useChatStore.setState({ activeChatId: 7, status: 'running' })
     await useChatStore.getState().pickCodeFolder()
     expect(pickCodeFolder).not.toHaveBeenCalled()
   })

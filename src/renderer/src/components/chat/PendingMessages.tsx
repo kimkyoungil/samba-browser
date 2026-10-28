@@ -3,22 +3,20 @@ import { useTranslation } from 'react-i18next'
 import { useChatStore, type QueuedMessage } from '@renderer/stores/chatStore'
 
 // 일하는 중에 보낸 말 — 대화 맨 아래에 흐린 말풍선으로(Claude 앱처럼).
-// 끼워 넣는 중인 말은 '곧 전달', 대기열의 말은 [지금 보내기 · 취소]. 다른 대화가 일하는 중이면 [취소]만
+// 끼워 넣는 중인 말은 '곧 전달', 대기열의 말은 [지금 보내기 · 취소]. 대화방마다 따로 돌아 이 대화 몫만 보인다
 export function PendingMessages(): React.JSX.Element | null {
   const { t } = useTranslation()
   const queue = useChatStore((s) => s.queue)
   const injecting = useChatStore((s) => s.injecting)
-  const runChatId = useChatStore((s) => s.runChatId)
   const activeChatId = useChatStore((s) => s.activeChatId)
   const status = useChatStore((s) => s.status)
   const unqueue = useChatStore((s) => s.unqueue)
   const sendNow = useChatStore((s) => s.sendNow)
-  const viewIsRun = runChatId === activeChatId
   // 이 대화 몫의 대기 말(대기열 자리 번호를 함께 — 취소·지금 보내기가 쓴다)
   const mine = queue
     .map((q, i) => ({ q, i }))
-    .filter(({ q }) => (q.chatId ?? runChatId) === activeChatId)
-  const sending = viewIsRun ? injecting : []
+    .filter(({ q }) => (q.chatId ?? null) === activeChatId)
+  const sending = injecting.filter((q) => (q.chatId ?? null) === activeChatId)
   if (mine.length === 0 && sending.length === 0) return null
   const running = status === 'running'
   return (
@@ -30,7 +28,7 @@ export function PendingMessages(): React.JSX.Element | null {
       ))}
       {mine.map(({ q, i }) => (
         <PendingBubble key={`q-${i}`} q={q}>
-          {running && viewIsRun && (
+          {running && (
             <button
               type="button"
               onClick={() => void sendNow(i)}
@@ -39,7 +37,6 @@ export function PendingMessages(): React.JSX.Element | null {
               {t('chat.sendNow')}
             </button>
           )}
-          {running && !viewIsRun && <span>{t('chat.waitOther')}</span>}
           <button
             type="button"
             onClick={() => unqueue(i)}

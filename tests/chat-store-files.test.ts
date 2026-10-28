@@ -34,7 +34,7 @@ describe('첨부 파일 보내기', () => {
   it('일하는 중에 붙인 파일은 대기열에 함께 두었다가 끝나면 같이 보낸다', async () => {
     useChatStore.setState({ status: 'running' })
     useChatStore.getState().enqueue('다음 것도', undefined, files)
-    expect(useChatStore.getState().queue).toEqual([{ text: '다음 것도', files }])
+    expect(useChatStore.getState().queue).toEqual([{ text: '다음 것도', files, chatId: 1 }])
     useChatStore.getState().handleEvent({ type: 'status', state: 'done', toolCalls: 0 })
     await new Promise((r) => setTimeout(r, 0))
     expect(run).toHaveBeenCalledWith('다음 것도', 1, undefined, undefined, files)

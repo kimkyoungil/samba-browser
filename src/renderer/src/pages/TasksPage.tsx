@@ -35,10 +35,17 @@ import { cn } from '@renderer/lib/utils'
 export function TasksPage(): React.JSX.Element {
   const { t, i18n } = useTranslation()
   const openSettings = useUiStore((s) => s.openSettings)
-  const status = useChatStore((s) => s.status)
-  const currentLabel = useChatStore((s) => s.currentLabel)
-  const toolCalls = useChatStore((s) => s.toolCalls)
-  const taskProgress = useChatStore((s) => s.taskProgress)
+  // 지금 일하는 대화 — 화면 대화가 일하면 그것, 아니면 일하는 다른 대화 하나(대화방마다 따로 돈다)
+  const runChatId = useChatStore((s) => {
+    if (s.status === 'running' && s.activeChatId !== null) return s.activeChatId
+    const id = Object.keys(s.runs).find((k) => s.runs[Number(k)].status === 'running')
+    return id === undefined ? null : Number(id)
+  })
+  const run = useChatStore((s) => (runChatId === null ? null : (s.runs[runChatId] ?? null)))
+  const status = run?.status ?? 'idle'
+  const currentLabel = run?.currentLabel ?? ''
+  const toolCalls = run?.toolCalls ?? 0
+  const taskProgress = run?.taskProgress ?? null
   const playbooks = usePlaybookStore((s) => s.items)
   const loadPlaybooks = usePlaybookStore((s) => s.load)
   const scheduleById = useScheduleStore((s) => s.byId)
@@ -132,7 +139,11 @@ export function TasksPage(): React.JSX.Element {
                   <span className="tabular-nums">{t('tasks.running.steps', { n: toolCalls })}</span>
                 </p>
               </div>
-              <SecondaryButton onClick={() => void useChatStore.getState().stop()}>
+              <SecondaryButton
+                onClick={() => {
+                  if (runChatId !== null) void window.samba.agent.stop(runChatId)
+                }}
+              >
                 {t('tasks.running.stop')}
               </SecondaryButton>
             </div>

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
 import { Import, Pin, PinOff, Plus, Search, X } from 'lucide-react'
@@ -42,8 +42,18 @@ export function ChatList(): React.JSX.Element {
   const searching = chatQuery.trim() !== ''
   // 받아 온 개수가 상한만큼 꽉 찼으면 더 있을 수 있다
   const hasMore = chats.length >= chatLimit
-  // 일하는 대화(그 줄에 도는 표시, 일하는 동안 지우기 막음). 다른 대화·새 대화는 일하는 중에도 연다
-  const runningChatId = useChatStore((s) => (s.status === 'running' ? s.runChatId : null))
+  // 일하는 대화들(그 줄에 도는 표시, 일하는 동안 지우기 막음). 대화방마다 따로 돌아 여럿일 수 있다.
+  // 배열을 바로 고르면 매번 새 값이라 다시 그리기가 끝나지 않는다 — 번호 글줄로 골라 Set 으로 편다
+  const runningKey = useChatStore((s) =>
+    Object.entries(s.runs)
+      .filter(([, r]) => r.status === 'running')
+      .map(([id]) => id)
+      .join(',')
+  )
+  const runningIds = useMemo(
+    () => new Set(runningKey.split(',').filter(Boolean).map(Number)),
+    [runningKey]
+  )
   // 지우기 확인 창에 올린 대화(✕ 한 번으로 바로 지워지지 않게 — 사장님 요청)
   const [deleting, setDeleting] = useState<ChatDto | null>(null)
   // Aside 대화 가져오기 창
@@ -123,7 +133,7 @@ export function ChatList(): React.JSX.Element {
               key={chat.id}
               chat={chat}
               active={chat.id === activeChatId}
-              running={chat.id === runningChatId}
+              running={runningIds.has(chat.id)}
               // 고정한 대화 묶음이 끝나는 자리에 가는 선을 긋는다
               lastPinned={
                 chat.pinned === true && chats[i + 1]?.pinned !== true && i < chats.length - 1

@@ -30,7 +30,6 @@ beforeEach(() => {
   useChatStore.setState({
     status: 'running',
     activeChatId: 5,
-    runChatId: 5,
     injecting: [],
     sendNowItem: null,
     draftReturn: null,
@@ -48,7 +47,7 @@ describe('지금 보내기', () => {
     expect(inject).toHaveBeenCalledWith('먼저 보낼 말', 5, undefined, undefined)
     const s = useChatStore.getState()
     expect(s.queue).toEqual([{ text: '그다음 말' }])
-    expect(s.injecting).toEqual([{ text: '먼저 보낼 말', id: 'J9' }])
+    expect(s.injecting).toEqual([{ text: '먼저 보낼 말', id: 'J9', chatId: 5 }])
     expect(stop).not.toHaveBeenCalled()
   })
 
@@ -56,7 +55,7 @@ describe('지금 보내기', () => {
     inject.mockResolvedValueOnce({ ok: true, data: { injected: false } })
     await useChatStore.getState().sendNow(0)
     expect(stop).toHaveBeenCalledTimes(1)
-    expect(useChatStore.getState().sendNowItem).toEqual({ text: '먼저 보낼 말' })
+    expect(useChatStore.getState().sendNowItem).toEqual({ text: '먼저 보낼 말', chatId: 5 })
     useChatStore.getState().handleEvent({ type: 'status', state: 'stopped' })
     await tick()
     expect(run).toHaveBeenCalledWith('먼저 보낼 말', 5)

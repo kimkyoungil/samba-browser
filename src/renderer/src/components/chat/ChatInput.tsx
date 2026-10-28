@@ -31,11 +31,8 @@ const INPUT_MAX_HEIGHT = 200
 export function ChatInput(): React.JSX.Element {
   const { t } = useTranslation()
   const { send, status, stop, enqueue, sendWhileRunning, engine } = useChatStore()
-  const runChatId = useChatStore((s) => s.runChatId)
-  const activeChatId = useChatStore((s) => s.activeChatId)
-  // 이 대화가 일하는 중인가. 다른 대화가 일하는 중이면 보낸 말은 그 일이 끝난 뒤 이 대화에서 돈다(대기)
-  const running = status === 'running' && runChatId === activeChatId
-  const busyElsewhere = status === 'running' && !running
+  // 이 대화가 일하는 중인가(status 는 화면 대화의 것). 다른 대화가 일하는 중이어도 이 대화는 바로 보낸다
+  const running = status === 'running'
   // Claude 대화는 일하는 중 보낸 말을 바로 끼워 넣고, Codex 는 끝난 뒤 이어서 보낸다(대기열)
   const canInject = engine === 'claude'
   // 쓰다 만 글은 앱을 껐다 켜도 남는다(이 화면의 저장소에 둔다)
@@ -285,9 +282,7 @@ export function ChatInput(): React.JSX.Element {
           placeholder={
             running
               ? t(canInject ? 'chat.placeholderInject' : 'chat.placeholderRunning')
-              : busyElsewhere
-                ? t('chat.placeholderOtherRunning')
-                : t('chat.placeholder')
+              : t('chat.placeholder')
           }
           style={{ maxHeight: INPUT_MAX_HEIGHT }}
           className="min-w-0 flex-1 resize-none bg-transparent leading-relaxed outline-none"
@@ -310,19 +305,9 @@ export function ChatInput(): React.JSX.Element {
             onClick={() => submit()}
             disabled={!canSend}
             aria-label={
-              running
-                ? t(canInject ? 'chat.injectSend' : 'chat.queueSend')
-                : busyElsewhere
-                  ? t('chat.queueSend')
-                  : t('chat.send')
+              running ? t(canInject ? 'chat.injectSend' : 'chat.queueSend') : t('chat.send')
             }
-            title={
-              running
-                ? t(canInject ? 'chat.injectSend' : 'chat.queueSend')
-                : busyElsewhere
-                  ? t('chat.queueSend')
-                  : t('chat.send')
-            }
+            title={running ? t(canInject ? 'chat.injectSend' : 'chat.queueSend') : t('chat.send')}
             className="mb-px flex h-6.5 w-6.5 shrink-0 items-center justify-center rounded-lg bg-[var(--text)] text-white disabled:opacity-40"
           >
             <ArrowUp className="h-3.5 w-3.5" />

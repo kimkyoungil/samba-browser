@@ -20,7 +20,7 @@ export function CodeFolderMenu(): React.JSX.Element {
   const clear = useChatStore((s) => s.clearCodeFolder)
   const setPcLock = useChatStore((s) => s.setPcLock)
   // 일하는 대화는 끝난 뒤에 바꾼다
-  const busy = useChatStore((s) => s.status === 'running' && s.activeChatId === s.runChatId)
+  const busy = useChatStore((s) => s.status === 'running')
   const [open, setOpen] = useState(false)
   const mode: Mode = locked ? 'lock' : folder ? 'folder' : 'default'
   const name = folder ? (folder.split(/[\\/]/).filter(Boolean).pop() ?? folder) : null

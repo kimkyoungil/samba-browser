@@ -266,9 +266,9 @@ describe('러너 — /compact', () => {
 
 describe('화면 — /compact', () => {
   it('일하는 중에 보낸 /compact 는 끼워 넣지 않고 끝난 뒤에 돈다', async () => {
-    useChatStore.setState({ status: 'running', activeChatId: 5, runChatId: 5, queue: [] })
+    useChatStore.setState({ status: 'running', activeChatId: 5, queue: [] })
     await useChatStore.getState().sendWhileRunning('/compact')
     expect(inject).not.toHaveBeenCalled()
-    expect(useChatStore.getState().queue).toEqual([{ text: '/compact' }])
+    expect(useChatStore.getState().queue).toEqual([{ text: '/compact', chatId: 5 }])
   })
 })

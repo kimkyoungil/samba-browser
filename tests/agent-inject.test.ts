@@ -213,7 +213,7 @@ describe('화면 — 끼어들기', () => {
     await useChatStore.getState().sendWhileRunning('끼어든 말', [img])
     expect(inject).toHaveBeenCalledWith('끼어든 말', 5, [img], undefined)
     expect(useChatStore.getState().injecting).toEqual([
-      { id: 'J1', text: '끼어든 말', images: [img] }
+      { id: 'J1', text: '끼어든 말', chatId: 5, images: [img] }
     ])
     useChatStore.getState().handleEvent({ type: 'split', injectIds: ['J1'], texts: ['끼어든 말'] })
     const s = useChatStore.getState()
@@ -233,7 +233,7 @@ describe('화면 — 끼어들기', () => {
   it('못 넣었거나 대기열이 이미 있으면 대기열로 간다', async () => {
     inject.mockResolvedValueOnce({ ok: true, data: { injected: false } })
     await useChatStore.getState().sendWhileRunning('하나')
-    expect(useChatStore.getState().queue).toEqual([{ text: '하나' }])
+    expect(useChatStore.getState().queue).toEqual([{ text: '하나', chatId: 5 }])
     await useChatStore.getState().sendWhileRunning('둘')
     // 순서가 뒤바뀌지 않게 대기열 뒤에 선다(묻지도 않는다)
     expect(inject).toHaveBeenCalledTimes(1)

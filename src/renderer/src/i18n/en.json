@@ -1566,11 +1566,11 @@
     "off": "PC access",
     "lockLabel": "PC locked",
     "modeDefault": "Default",
-    "modeDefaultDesc": "Browser work only. Codex can still read files on this PC (it cannot change them).",
+    "modeDefaultDesc": "Browser work only. The AI can search your Claude app memory, and Codex can still read files on this PC (it cannot change them).",
     "modeFolder": "Code work folder",
     "modeFolderDesc": "Reads and edits only inside the chosen folder. Commands ask first every time in Confirm mode, and only for risky ones (deleting, git push) in Auto mode. Password and payment tools are off.",
     "modeLock": "PC lock",
-    "modeLockDesc": "The AI cannot read any file on this PC. It sees only web pages and what you attach.",
+    "modeLockDesc": "The AI cannot read any file on this PC (not even your Claude app memory). It sees only web pages and what you attach.",
     "pick": "Pick folder",
     "change": "Change folder",
     "busy": "You can change it after the current task"

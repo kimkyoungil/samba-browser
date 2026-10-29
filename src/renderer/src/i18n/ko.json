@@ -1566,11 +1566,11 @@
     "off": "PC 접근",
     "lockLabel": "PC 잠금",
     "modeDefault": "기본",
-    "modeDefaultDesc": "브라우저 일만 해요. Codex 는 PC 파일을 읽을 수는 있어요(고치지는 못해요).",
+    "modeDefaultDesc": "브라우저 일만 해요. 클로드 앱 기억은 찾아 읽고, Codex 는 PC 파일도 읽을 수 있어요(고치지는 못해요).",
     "modeFolder": "코드 작업 폴더",
     "modeFolderDesc": "고른 폴더 안에서만 읽고 고쳐요. 명령은 '확인' 모드면 매번, '자동' 모드면 지우기·git push 같은 위험한 것만 물어요. 비밀번호·결제 도구는 꺼져요.",
     "modeLock": "PC 잠금",
-    "modeLockDesc": "AI 가 이 PC 의 파일을 하나도 못 읽어요. 붙인 사진·파일과 웹페이지만 봐요.",
+    "modeLockDesc": "AI 가 이 PC 의 파일을 하나도 못 읽어요(클로드 앱 기억도). 붙인 사진·파일과 웹페이지만 봐요.",
     "pick": "폴더 고르기",
     "change": "폴더 바꾸기",
     "busy": "작업이 끝난 뒤에 바꿀 수 있어요"

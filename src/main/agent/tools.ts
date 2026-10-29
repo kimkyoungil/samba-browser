@@ -69,6 +69,7 @@ import type { AgentToolCall, SiteActionTool } from '../../shared/site-memory'
 import type { AgentTodo, AgentTodoStatus, HandoffKind } from '../../shared/ipc'
 import { PLAYBOOK_INSTRUCTIONS_MAX, type PlaybookDto } from '../../shared/playbook'
 import { needsBrowserTurn } from './browser-turn'
+import { createMemoryTools, MEMORY_TOOL_NAMES, type MemoryToolContext } from './tools-memory'
 
 // 읽기 전용 모드에서 실행 자체를 거부할 때 돌려주는 문자열(AI 가 읽고 판단)
 const READ_ONLY_REFUSAL = 'refused: read-only mode'
@@ -573,6 +574,8 @@ export interface ToolContext {
   // 브라우저 차례 잡기(대화방마다 AI 가 따로 돌 때). 브라우저·폰 도구는 부르기 전에 이걸 기다린다 —
   // 다른 대화가 브라우저를 쓰는 중이면 그 일이 끝날 때까지. 없으면(브릿지·테스트) 기다리지 않는다
   browserTurn?: () => Promise<void>
+  // 클로드 앱 기억 읽기(memory_search·memory_read). PC 잠금 대화와 브릿지에는 붙이지 않는다
+  memory?: MemoryToolContext
 }
 
 const text = (t: string): { content: [{ type: 'text'; text: string }] } => ({
@@ -2794,6 +2797,7 @@ ${submittedNote}`
     ...(ctx.siteMemory ? [rememberSite] : []),
     ...(ctx.scripts ? [saveScript, runScript] : []),
     ...(ctx.playbooks ? [listPlaybooks, updatePlaybook] : []),
+    ...(ctx.memory ? createMemoryTools(ctx.memory) : []),
     done,
     // 폰이 한 대도 붙어 있지 않으면 폰 도구를 아예 내보내지 않는다 —
     // 목록에 있으면 모델이 웹 작업 중에도 phone_tap 을 부른다(실기에서 관찰)
@@ -2867,6 +2871,8 @@ export const SAMBA_TOOL_NAMES = [
   'done',
   // 코드 작업 모드에서만 등록된다
   ...CODE_TOOL_NAMES,
+  // PC 잠금이 아닌 대화에서만 등록된다
+  ...MEMORY_TOOL_NAMES,
   // 폰 도구가 주입되지 않은 실행에서도 이름은 허용 목록에 있어야 모델이 거부 문구를 받는다
   ...PHONE_TOOL_NAMES,
   PAY_TOOL_NAME

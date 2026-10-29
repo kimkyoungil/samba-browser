@@ -183,7 +183,7 @@ export const CODEX_PC_LOCK_NOTE = [
  * 꼭 닿아야 할 안내를 더하면 이 값을 올린다 — 옛 판으로 연 스레드는 한 번 앞부분 요약 + 새 스레드로 다시 연다
  * (실기 10/29: '노든 설정 = localhost:3000/samba/settings' 안내가 이미 열린 대화에는 닿지 않았다)
  */
-export const CODEX_PROMPT_REVISION = '2026-10-29'
+export const CODEX_PROMPT_REVISION = '2026-10-29b'
 
 /** 스레드를 연 지시의 지문 — 지시문 판 + 개발자 지시. 다음 말은 이 값이 같을 때만 그 스레드를 이어받는다 */
 export function codexThreadKey(devNote: string): string {
@@ -1214,7 +1214,16 @@ export class AgentRunner {
             }
           : undefined
       }),
-      ...(takeBrowserTurn ? { browserTurn: takeBrowserTurn } : {})
+      ...(takeBrowserTurn ? { browserTurn: takeBrowserTurn } : {}),
+      // 클로드 앱 기억 읽기 — PC 잠금 대화만 뺀다(사장님 10/29 "다 읽게 하고 PC 접근 잠갔을 때만 못 읽게")
+      ...(pcLocked
+        ? {}
+        : {
+            memory: {
+              tick: counter.tick,
+              onStep: (label: string, ok: boolean) => emit({ type: 'step', label, ok })
+            }
+          })
     })
     emit({ type: 'status', state: 'running', toolCalls: 0 })
     emit({ type: 'turn', turnId })

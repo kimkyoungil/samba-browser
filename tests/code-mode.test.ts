@@ -290,6 +290,19 @@ describe('실행기 — 대화에 작업 폴더가 있으면 코드 모드', () 
     expect(toolCallCap(1200, true)).toBe(1200)
   })
 
+  it('클로드 앱 기억 읽기는 보통·코드 대화에 붙고, PC 잠금 대화에만 빠진다', async () => {
+    const plain = makeRunner('claude', null)
+    await plain.runner.run('노든 설정 어디야', 5)
+    expect(toolCtx?.memory).toBeDefined()
+    const code = makeRunner('claude', base)
+    await code.runner.run('코드 고쳐', 5)
+    expect(toolCtx?.memory).toBeDefined()
+    const locked = makeRunner('claude', base)
+    locked.runner.setPcLocks(() => true)
+    await locked.runner.run('요약해', 5)
+    expect(toolCtx?.memory).toBeUndefined()
+  })
+
   it('읽기 전용 권한이면 코드 도구도 읽기만', async () => {
     const { runner } = makeRunner('claude', base, 'read_only')
     await runner.run('보기만 해', 5)

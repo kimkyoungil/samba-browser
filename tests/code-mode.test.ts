@@ -400,12 +400,26 @@ describe('실행기 — 대화에 작업 폴더가 있으면 코드 모드', () 
     try {
       const saved: unknown[][] = []
       codexRuns = [
+        // 넘어가기 전 자동 압축(기록으로 요약)
+        [
+          { type: 'text', text: '- 남은 일: 카페 후보 정리' },
+          { type: 'done', ok: true }
+        ],
         [
           { type: 'thread', id: 'T-FRESH' },
           { type: 'done', ok: true }
         ]
       ]
       const { runner, events } = makeRunner('codex', null)
+      const rows: { role: 'user' | 'assistant'; content: string }[] = [
+        { role: 'user', content: '카페 후보 정리해' },
+        { role: 'assistant', content: '절반 했어요' }
+      ]
+      runner.setChatSessions(null, () => rows)
+      runner.setTranscript((_c, entry) => {
+        rows.push({ role: 'assistant', content: entry.text })
+        return null
+      })
       runner.setCodexThreads({
         get: () => 'T-LONG-THREAD',
         noteOf: () => '',
@@ -413,10 +427,16 @@ describe('실행기 — 대화에 작업 폴더가 있으면 코드 모드', () 
         clear: () => {}
       } as unknown as CodexThreadStore)
       await runner.run('계속해', 5)
+      // 요약 요청(이어받기 없이 기록 원문) → 새 스레드는 그 요약부터
       expect(codexInputs[0].resume).toBeUndefined()
+      expect(codexInputs[0].prompt).toContain('카페 후보 정리해')
+      expect(codexInputs[1].resume).toBeUndefined()
+      expect(codexInputs[1].prompt).toContain('[앞 대화 압축 요약]')
+      expect(codexInputs[1].prompt).toContain('- 남은 일: 카페 후보 정리')
       expect(events).toContainEqual({
-        type: 'text',
-        text: '(대화가 길어져 앞부분을 요약해 새 세션으로 이어갑니다)'
+        type: 'step',
+        label: '대화가 길어져 앞 대화 요약(새 세션으로)',
+        ok: true
       })
       expect(saved[0]?.[1]).toBe('T-FRESH')
     } finally {

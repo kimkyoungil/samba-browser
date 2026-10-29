@@ -159,6 +159,20 @@ describe('명령·앞부분 요약', () => {
     expect(source).not.toContain('옛 답')
     expect(compactSourceText([])).toBe('')
   })
+
+  it('요약 원문에서 자동 학습 턴(지시와 그 답)은 뺀다 — 대화 맥락이 아니다', () => {
+    const source = compactSourceText([
+      { role: 'user', content: '두 페이지 제목 봐줘' },
+      { role: 'assistant', content: '끝났습니다 — Example Domain' },
+      { role: 'user', content: '[자동 학습] 통한 절차를 스크립트로 저장해' },
+      { role: 'assistant', content: 'read_titles 스크립트를 저장했습니다' },
+      { role: 'user', content: '다음 거 해' }
+    ])
+    expect(source).toContain('끝났습니다 — Example Domain')
+    expect(source).toContain('다음 거 해')
+    expect(source).not.toContain('자동 학습')
+    expect(source).not.toContain('read_titles')
+  })
 })
 
 describe('러너 — /compact', () => {

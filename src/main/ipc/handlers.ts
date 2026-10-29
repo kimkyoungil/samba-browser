@@ -318,6 +318,11 @@ export function registerIpc(
   // 브라우저 차례를 기다리는 대화에 '어느 대화가 쓰는 중'인지 보인다
   agent.setChatTitles((chatId) => chats.title(chatId))
   agent.setTranscript((chatId, entry) => {
+    // 사용자 말 없는 기록(대화가 길어져 앱이 스스로 남긴 압축 요약)은 답 한 줄만 남긴다
+    if (entry.prompt === '') {
+      chats.append({ chatId, role: 'assistant', content: entry.text, steps: entry.steps })
+      return null
+    }
     const user = chats.append({ chatId, role: 'user', content: entry.prompt })
     chats.append({ chatId, role: 'assistant', content: entry.text, steps: entry.steps })
     // 사용자 말 줄 번호를 돌려준다 — 화면이 고쳐 다시 보낼 때 여기부터 지운다

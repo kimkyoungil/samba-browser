@@ -228,9 +228,53 @@ describe('실행기 — 긴 대화', () => {
     await runner.run('둘째 지시', 3)
     await tick(40)
     expect(queryInputs[1].resume).toBeUndefined()
+    // 기록 저장소가 없으면 자동 압축을 못 해 예전처럼 최근 턴만 넘긴다
     expect(queryInputs[1].prompt).toContain('앞부분 요약')
-    const texts = events.filter((e) => e.type === 'text').map((e) => (e as { text: string }).text)
-    expect(texts.some((t) => t.includes('요약해 새 세션으로 이어갑니다'))).toBe(true)
+    expect(queryInputs[1].prompt).toContain('앞에서 한 보고')
+    void events
+  })
+
+  it('새 세션으로 넘어갈 때 AI 가 앞 대화를 요약해(/compact 처럼) 기록에 남기고, 새 세션은 그 요약부터 싣는다', async () => {
+    const store = tmpStore()
+    const { runner, events } = makeRunner(store)
+    // 기록: 앞 대화 + 저장되는 줄(자동 압축 요약이 여기로 들어온다)
+    const rows: { role: 'user' | 'assistant'; content: string }[] = [
+      { role: 'user', content: '쿠팡 11계정은 셀릭스야, 기억해' },
+      { role: 'assistant', content: '네, 11계정 = 셀릭스로 기억할게요' }
+    ]
+    const saved: { prompt: string; text: string }[] = []
+    runner.setChatSessions(store, () => rows)
+    runner.setTranscript((_chatId, entry) => {
+      saved.push({ prompt: entry.prompt, text: entry.text })
+      if (entry.prompt !== '') rows.push({ role: 'user', content: entry.prompt })
+      rows.push({ role: 'assistant', content: entry.text })
+      return null
+    })
+    scripts = [
+      [init('s1'), said('첫 보고', 150_000), ok()],
+      // 자동 압축 요청의 답
+      [said('- 목표·지시: 11계정 = 셀릭스', 2_000), ok()],
+      [init('s2'), said('둘째 보고', 15_000), ok()]
+    ]
+    await runner.run('첫 지시', 5)
+    await tick(40)
+    await runner.run('둘째 지시', 5)
+    await tick(60)
+    // 1) 요약 요청은 도구 없이, 기록 원문으로
+    expect(queryInputs[1].allowedTools).toEqual([])
+    expect(queryInputs[1].prompt).toContain('쿠팡 11계정은 셀릭스야')
+    expect(queryInputs[1].prompt).toContain('continues in a fresh session')
+    // 2) 기록에 압축 요약 한 줄(사용자 말 없이)
+    expect(saved.some((r) => r.prompt === '' && r.text.includes('11계정 = 셀릭스'))).toBe(true)
+    // 3) 새 세션은 이어받지 않고 그 요약을 앞부분으로 싣는다
+    expect(queryInputs[2].resume).toBeUndefined()
+    expect(queryInputs[2].prompt).toContain('[앞 대화 압축 요약]')
+    expect(queryInputs[2].prompt).toContain('- 목표·지시: 11계정 = 셀릭스')
+    expect(events).toContainEqual({
+      type: 'step',
+      label: '대화가 길어져 앞 대화 요약(새 세션으로)',
+      ok: true
+    })
   })
 
   it('문맥이 작으면 종전처럼 같은 세션을 이어받는다', async () => {

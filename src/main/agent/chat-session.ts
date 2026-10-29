@@ -176,7 +176,7 @@ export function buildHistoryNote(
   })
   return [
     '[이 대화의 앞부분 요약 — 새 세션이라 도구 결과는 기억하지 못한다. 필요하면 화면을 다시 읽어라]',
-    ...(summary ? ['[사용자가 /compact 로 압축한 앞 대화 요약]', summary, '[그 뒤의 대화]'] : []),
+    ...(summary ? ['[앞 대화 압축 요약]', summary, '[그 뒤의 대화]'] : []),
     ...lines,
     ''
   ].join('\n')
@@ -208,9 +208,17 @@ const COMPACT_SOURCE_TOTAL_MAX = 60_000
  */
 export function compactSourceText(messages: readonly HistoryMessage[]): string {
   const { summary, after } = splitAtCompact(messages)
+  // 자동 학습 턴(절차를 스크립트로 저장)은 대화 맥락이 아니다 — 그 지시와 바로 뒤 답을 뺀다
+  const learnAnswers = new Set<number>()
+  after.forEach((m, i) => {
+    if (m.role === 'user' && m.content.startsWith('[자동 학습]')) learnAnswers.add(i + 1)
+  })
+  const kept = after.filter(
+    (m, i) => !learnAnswers.has(i) && !(m.role === 'user' && m.content.startsWith('[자동 학습]'))
+  )
   const lines: string[] = []
   let total = 0
-  for (const m of [...after].reverse()) {
+  for (const m of [...kept].reverse()) {
     if ((m.role !== 'user' && m.role !== 'assistant') || m.content.trim() === '') continue
     const body = m.content.trim().slice(0, COMPACT_SOURCE_MESSAGE_MAX)
     const line = `- ${m.role === 'user' ? '사용자' : 'AI'}: ${body}`
@@ -226,10 +234,15 @@ export function compactSourceText(messages: readonly HistoryMessage[]): string {
   ].join('\n')
 }
 
-/** /compact 요약을 부탁하는 글. focus 는 사용자가 덧붙인 '무엇을 남길지' */
-export function compactPrompt(focus: string): string {
+/**
+ * /compact 요약을 부탁하는 글. focus 는 사용자가 덧붙인 '무엇을 남길지'.
+ * auto 는 대화가 길어져 새 세션으로 넘어가며 앱이 스스로 압축할 때
+ */
+export function compactPrompt(focus: string, auto = false): string {
   return [
-    'The user ran /compact. Summarize this whole conversation so the summary can replace the history in a fresh session.',
+    auto
+      ? 'This conversation became too long and continues in a fresh session. Summarize this whole conversation so the summary can replace the history there.'
+      : 'The user ran /compact. Summarize this whole conversation so the summary can replace the history in a fresh session.',
     "Write it in the user's language (Korean) as concise bullet points under these headings: 목표·지시, 확인된 사실(이름·숫자·주소·계정 이름), 한 일과 결과, 남은 일, 지금 열린 탭·화면 상태(있으면).",
     'Do not copy credentials: login passwords, payment card numbers, one-time verification codes or API keys.',
     'Everything else the user told you or asked you to remember must be kept exactly — numbers, order numbers, prices, names, IDs and codes they gave (even if they call it secret).',

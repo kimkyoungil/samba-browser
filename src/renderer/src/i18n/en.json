@@ -305,7 +305,7 @@
     "dropHere": "Drop to attach (images, PDF, text files)",
     "fileRemove": "Remove file",
     "fileTooLarge": "{{name}} is too large (text files 200k characters, 300k in total, PDF 10MB)",
-    "fileUnsupported": "{{name}} cannot be read yet (images, PDF, txt, csv, md, json and other text files)",
+    "fileUnsupported": "{{name}} cannot be read yet (images, PDF, Excel xlsx, txt, csv, md, json and other text files)",
     "fileTooMany": "You can attach up to {{max}} files at once",
     "searchPlaceholder": "Search chats",
     "searchClear": "Clear search",

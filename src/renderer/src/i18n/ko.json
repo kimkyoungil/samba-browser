@@ -305,7 +305,7 @@
     "dropHere": "여기에 놓으면 첨부돼요 (사진·PDF·글 파일)",
     "fileRemove": "파일 빼기",
     "fileTooLarge": "{{name}} 은(는) 너무 커서 붙일 수 없어요 (글 파일 20만 자·합계 30만 자, PDF 10MB)",
-    "fileUnsupported": "{{name}} 은(는) 아직 못 읽는 형식이에요 (사진·PDF·txt·csv·md·json 등 글 파일)",
+    "fileUnsupported": "{{name}} 은(는) 아직 못 읽는 형식이에요 (사진·PDF·엑셀 xlsx·txt·csv·md·json 등 글 파일)",
     "fileTooMany": "파일은 한 번에 {{max}}개까지 붙일 수 있어요",
     "searchPlaceholder": "지난 대화 찾기",
     "searchClear": "검색 지우기",

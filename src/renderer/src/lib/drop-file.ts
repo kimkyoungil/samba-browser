@@ -10,6 +10,7 @@ import {
   type AgentFile
 } from '@shared/agent-file'
 import { readAgentImage } from './paste-image'
+import { isSheetFileName, readSheetFile } from './sheet-file'
 
 export type DropFileError = 'too-large' | 'unsupported'
 export type DropFileResult = { image: AgentImage } | { file: AgentFile } | { error: DropFileError }
@@ -58,6 +59,11 @@ export async function readDroppedFile(file: File): Promise<DropFileResult> {
     if (file.size > AGENT_PDF_MAX_BYTES) return { error: 'too-large' }
     const bytes = new Uint8Array(await file.arrayBuffer())
     return { file: { kind: 'pdf', name: file.name, data: toBase64(bytes) } }
+  }
+  // 엑셀은 시트마다 표를 글자로 바꿔 글 파일처럼 붙인다
+  if (isSheetFileName(file.name)) {
+    const r = await readSheetFile(file)
+    return typeof r === 'string' ? { error: r } : { file: r }
   }
   if (isTextFileName(file.name)) {
     // 글자 수 상한보다 바이트가 4배 넘게 크면 읽기 전에 거른다(한글 UTF-8 은 한 글자 3바이트)

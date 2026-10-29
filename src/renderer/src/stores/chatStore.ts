@@ -585,7 +585,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const seq = get().runSeq + 1
     // 보낸 순간 입력줄에 보이던 AI — 새 대화를 만드는 동안 무엇이 바뀌어도 이 값으로 남긴다
     const engine = get().engine
-    const engineChosen = get().engineChosen
     const codeFolder = get().codeFolder
     const pcLocked = get().pcLocked
     set((s) => ({
@@ -609,9 +608,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
         )
         if (created?.ok) {
           chatId = created.data.id
-          // 새 대화에서 AI 를 직접 골랐으면 그 대화에 먼저 남긴다 — 화면이 이 대화로 넘어가 AI 를
-          // 다시 읽기 전에, 그리고 실행 전에(메인이 이 값으로 경로를 고른다)
-          if (engineChosen) await window.samba.agent.setChatEngine?.(chatId, engine)
+          // 입력줄에 보이던 AI 를 그 대화에 먼저 남긴다 — 화면이 이 대화로 넘어가 AI 를 다시 읽기 전에,
+          // 그리고 실행 전에(메인이 이 값으로 경로를 고른다). 직접 고르지 않았어도 남긴다: 앞 대화의 Codex 가
+          // 화면에 남아 있는데 고른 적이 없다고 안 남기면 메인은 기본 AI(Claude)로 돌았다(실기 10/29 빈 답)
+          await window.samba.agent.setChatEngine?.(chatId, engine)
           // 새 대화에서 골라 둔 코드 작업 폴더도 실행 전에 붙인다(메인이 이 값으로 코드 모드를 켠다)
           if (codeFolder) await window.samba.agent.setCodeFolder?.(chatId, codeFolder)
           if (pcLocked) await window.samba.agent.setPcLock?.(chatId, true)

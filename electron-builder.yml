@@ -15,6 +15,8 @@ files:
 asarUnpack:
   - resources/**
   - node_modules/onnxruntime-node/**
+  # Claude Agent SDK 의 실행 파일(claude.exe) — asar 안에서는 실행할 수 없다(provider.ts packagedClaudeExecutable)
+  - node_modules/@anthropic-ai/claude-agent-sdk-win32-x64/**
 win:
   executableName: noden Browser
 nsis:

@@ -9,6 +9,30 @@ import type { AgentImage } from '../../shared/agent-image'
 import { MAX_TOOL_CALLS, type AgentEffort } from '../../shared/settings'
 import type { AgentAuth } from '../ai/auth-route'
 import { runCodex, type CodexEvent, type CodexInput } from './provider-codex'
+import { existsSync } from 'node:fs'
+import { dirname, join, sep } from 'node:path'
+
+/**
+ * 설치판의 Claude 실행 파일. SDK 0.3.287 은 플랫폼 패키지(@anthropic-ai/claude-agent-sdk-win32-x64)의 claude.exe 를
+ * 띄우는데, 설치판은 그 파일을 app.asar(압축 묶음) 안에 넣어 실행하지 못했다 — "native binary … exists but failed to
+ * launch" 로 Claude 대화가 매번 빈 답으로 끝났다(실기 10/29). electron-builder 가 풀어 둔 사본(app.asar.unpacked)을
+ * 알려 준다. 개발판(node_modules 그대로)·다른 플랫폼은 undefined — SDK 가 스스로 찾는다
+ */
+export function packagedClaudeExecutable(
+  resolve: (id: string) => string = (id) => require.resolve(id),
+  exists: (p: string) => boolean = existsSync
+): string | undefined {
+  if (process.platform !== 'win32') return undefined
+  try {
+    const pkg = resolve(`@anthropic-ai/claude-agent-sdk-win32-${process.arch}/package.json`)
+    const packed = `app.asar${sep}`
+    if (!pkg.includes(packed)) return undefined
+    const exe = join(dirname(pkg.replace(packed, `app.asar.unpacked${sep}`)), 'claude.exe')
+    return exists(exe) ? exe : undefined
+  } catch {
+    return undefined
+  }
+}
 
 export interface ProviderInput {
   prompt: string
@@ -131,8 +155,10 @@ export function buildQueryOptions(
   // 연결 경로에 따른 환경(내 API 키 경로만 ANTHROPIC_API_KEY 를 담는다). 생략하면 현재 연결 기준
   env: Record<string, string | undefined> | undefined = resolveEnv(input.auth ?? currentAuth())
 ): Options {
+  const executable = packagedClaudeExecutable()
   return {
     env,
+    ...(executable ? { pathToClaudeCodeExecutable: executable } : {}),
     systemPrompt: input.systemPrompt,
     model: input.model,
     effort: input.effort ?? 'medium',

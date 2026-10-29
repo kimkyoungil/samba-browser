@@ -178,6 +178,18 @@ export const CODEX_PC_LOCK_NOTE = [
   'Do not ask for file paths; if a task needs a local file, ask the user to attach it.'
 ].join(' ')
 
+/**
+ * Codex 지시문 판 — Codex 는 지시문(시스템 프롬프트·개발자 지시)을 스레드를 처음 열 때만 받는다. 기본 지시문에
+ * 꼭 닿아야 할 안내를 더하면 이 값을 올린다 — 옛 판으로 연 스레드는 한 번 앞부분 요약 + 새 스레드로 다시 연다
+ * (실기 10/29: '노든 설정 = localhost:3000/samba/settings' 안내가 이미 열린 대화에는 닿지 않았다)
+ */
+export const CODEX_PROMPT_REVISION = '2026-10-29'
+
+/** 스레드를 연 지시의 지문 — 지시문 판 + 개발자 지시. 다음 말은 이 값이 같을 때만 그 스레드를 이어받는다 */
+export function codexThreadKey(devNote: string): string {
+  return developerNoteKey(`[prompt ${CODEX_PROMPT_REVISION}]\n${devNote}`)
+}
+
 /** 코드 작업 모드에서 Codex 에 개발자 지시로 싣는 짧은 안내(이어받는 말에도 매번 실린다) */
 export function codexCodeDeveloperNote(root: string): string {
   return [
@@ -1298,7 +1310,7 @@ export class AgentRunner {
           stored !== null &&
           !tooLong &&
           chatId !== undefined &&
-          (this.codexThreads?.noteOf?.(chatId) ?? '') === developerNoteKey(devNote)
+          (this.codexThreads?.noteOf?.(chatId) ?? '') === codexThreadKey(devNote)
             ? stored
             : null
         const codexHistory = (): string =>
@@ -1373,7 +1385,7 @@ export class AgentRunner {
           settled = outcome.settled
           // 스레드를 연 개발자 지시의 지문도 남긴다 — 다음 말은 지시가 같을 때만 이 스레드를 이어받는다
           if (outcome.threadId && chatId !== undefined)
-            this.codexThreads?.set(chatId, outcome.threadId, developerNoteKey(devNote))
+            this.codexThreads?.set(chatId, outcome.threadId, codexThreadKey(devNote))
         } finally {
           await tools?.close()
           if (shots) await rm(shots.dir, { recursive: true, force: true }).catch(() => undefined)

@@ -54,3 +54,13 @@ describe('SDK 옵션 조립', () => {
     expect(o.model).toBe('sonnet')
   })
 })
+
+describe('노든 관리 화면 안내', () => {
+  // 실기 10/29: "노든 설정에서 쿠팡 11계정 인증 테스트" 를 브라우저 자체 설정(noden://)에서 찾다가 막혔다
+  it('마켓 API 키·인증 테스트는 노든 웹 설정(localhost:3000/samba/settings)에서 직접 연다고 알린다', () => {
+    const prompt = buildSystemPrompt('ko', 'guard')
+    expect(prompt).toContain('http://localhost:3000/samba/settings')
+    expect(prompt).toContain('인증 테스트')
+    expect(prompt).toMatch(/Never ask the user to open it for you/)
+  })
+})

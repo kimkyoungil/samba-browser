@@ -51,7 +51,7 @@ vi.mock('../src/main/agent/tools', () => ({
   SAMBA_TOOL_NAMES: []
 }))
 
-const { AgentRunner } = await import('../src/main/agent/runner')
+const { AgentRunner, codexThreadKey } = await import('../src/main/agent/runner')
 
 // 글자 층이 있는 아주 작은 PDF(Helvetica 'Hello noden')
 const TINY_PDF = Buffer.from(
@@ -233,7 +233,8 @@ describe('러너 — Codex 대화', () => {
 
   it('이어받기가 아무 답도 못 내고 실패하면 새 스레드로 한 번 다시 돈다(실패를 알리지 않는다)', async () => {
     const { runner, events, threads } = makeRunner('codex')
-    threads.set(7, 'thread-gone')
+    // 지금 판 지시문으로 연 스레드(판이 달라도 새로 여니 이어받기 실패 경로를 보려면 같은 판이어야 한다)
+    threads.set(7, 'thread-gone', codexThreadKey(''))
     codexRuns = [
       [{ type: 'done', ok: false, message: 'no rollout found for thread id thread-gone' }],
       [

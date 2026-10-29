@@ -13,7 +13,11 @@ import type { ToolContext } from '../src/main/agent/tools'
 import { CodeFolderStore, codeFolderRefusal } from '../src/main/agent/code-folders'
 import { buildCodexArgs, CODEX_NO_LOCAL_ACCESS } from '../src/main/agent/provider-codex'
 import { CodexThreadStore, developerNoteKey } from '../src/main/agent/codex-threads'
-import { CODEX_PC_LOCK_NOTE, codexCodeDeveloperNote } from '../src/main/agent/runner'
+import {
+  CODEX_PC_LOCK_NOTE,
+  codexCodeDeveloperNote,
+  codexThreadKey
+} from '../src/main/agent/runner'
 import { buildQueryOptions } from '../src/main/agent/provider'
 import { CODE_MODE_MAX_TOOL_CALLS, MAX_TOOL_CALLS, toolCallCap } from '../src/shared/settings'
 
@@ -337,23 +341,30 @@ describe('실행기 — 대화에 작업 폴더가 있으면 코드 모드', () 
     old.runner.setCodexThreads(threads('') as unknown as CodexThreadStore)
     await old.runner.run('지금은 고칠 수 있어?', 5)
     expect(codexInputs[0].resume).toBeUndefined()
-    expect(saved[0]).toEqual([5, 'T-NEW-THREAD', developerNoteKey(codexCodeDeveloperNote(base))])
+    expect(saved[0]).toEqual([5, 'T-NEW-THREAD', codexThreadKey(codexCodeDeveloperNote(base))])
 
     // 같은 지시로 연 스레드는 그대로 이어받는다
     codexInputs.length = 0
     const same = makeRunner('codex', base)
     same.runner.setCodexThreads(
-      threads(developerNoteKey(codexCodeDeveloperNote(base))) as unknown as CodexThreadStore
+      threads(codexThreadKey(codexCodeDeveloperNote(base))) as unknown as CodexThreadStore
     )
     await same.runner.run('계속해', 5)
     expect(codexInputs[0].resume).toBe('T-OLD-THREAD')
 
-    // 폴더 없는 보통 대화는 지시가 없던 옛 스레드를 지금처럼 이어받는다
+    // 폴더 없는 보통 대화도 지금 판 지시문으로 연 스레드는 그대로 이어받는다
     codexInputs.length = 0
     const plain = makeRunner('codex', null)
-    plain.runner.setCodexThreads(threads('') as unknown as CodexThreadStore)
+    plain.runner.setCodexThreads(threads(codexThreadKey('')) as unknown as CodexThreadStore)
     await plain.runner.run('안녕', 5)
     expect(codexInputs[0].resume).toBe('T-OLD-THREAD')
+
+    // 옛 판 지시문으로 연 스레드(지문 없음)는 한 번 새로 연다 — 새 안내(노든 설정 위치 등)가 닿게
+    codexInputs.length = 0
+    const stale = makeRunner('codex', null)
+    stale.runner.setCodexThreads(threads('') as unknown as CodexThreadStore)
+    await stale.runner.run('안녕', 5)
+    expect(codexInputs[0].resume).toBeUndefined()
   })
 
   it('Codex: 너무 길어진 스레드(문맥 60% 넘음)는 이어받지 않고 앞부분 요약 + 새 스레드로 연다', async () => {

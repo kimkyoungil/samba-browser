@@ -8,7 +8,13 @@ import type {
   HandoffKind,
   IpcResult
 } from '@shared/ipc'
-import { parseCompactCommand, RECENT_CHAT_LIMIT, titleFromMessage } from '@shared/chat'
+import {
+  foldNoteBeforeStep,
+  parseCompactCommand,
+  RECENT_CHAT_LIMIT,
+  restoreFinalNote,
+  titleFromMessage
+} from '@shared/chat'
 import { agentImageDataUrl, type AgentImage } from '@shared/agent-image'
 import type { AgentFile } from '@shared/agent-file'
 import { DEFAULT_SETTINGS, type AgentEffort } from '@shared/settings'
@@ -56,6 +62,8 @@ export interface Step {
   ok: boolean
   // 번역 키. 있으면 화면에서 i18n 문구로 바꿔 보여 준다(메인이 보내는 label 은 그대로 표시)
   key?: string
+  // AI 가 일하는 중에 쓴 중간 말(도구 단계가 아니다) — 끝 보고와 섞이지 않게 단계 기록에 둔다
+  note?: boolean
 }
 
 // 캡차·2FA 사용자 넘김 카드 상태
@@ -847,8 +855,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
           }
         }
     }
-    if (e.type === 'step' && last?.role === 'ai') {
-      patchLast({ steps: [...(last.steps ?? []), { label: e.label, ok: e.ok }] })
+    // 진행 기록 한 줄(자동 학습 차례 등) — 끝 보고 자리는 그대로 두고 단계 기록에만 붙인다
+    if (e.type === 'step' && e.note && last?.role === 'ai') {
+      patchLast({ steps: [...(last.steps ?? []), { label: e.label, ok: e.ok, note: true }] })
+    } else if (e.type === 'step' && last?.role === 'ai') {
+      // 도구 단계가 시작되면 그때까지 쓴 글은 중간 말로 옮긴다 — 말풍선 글자리에는 끝 보고만 남는다
+      const folded = foldNoteBeforeStep(last.text, last.steps ?? [])
+      patchLast({
+        text: folded.text,
+        steps: [...folded.steps, { label: e.label, ok: e.ok }]
+      })
       patchRun(target, (r) => ({ toolCalls: r.toolCalls + 1, currentLabel: e.label, retry: null }))
     }
     if (e.type === 'progress' && e.kind === 'apiRetry')
@@ -914,6 +930,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
             partial: undefined
           }
         ])
+      // 마지막에 도구로 끝내 끝 보고 글이 비었으면 마지막 중간 말을 답 글로 되돌린다(메인 기록과 같게)
+      else if (done && last?.role === 'ai' && !last.text) {
+        const final = restoreFinalNote(last.text, last.steps ?? [])
+        if (final.text) putMsgs([...msgs.slice(0, -1), { ...last, ...final }])
+      }
       // 이 대화의 다음 말 — 완료면 맨 앞 것을 이어서 보내고, 중단·실패면 저절로 돌지 않게 입력칸으로 돌려준다.
       // AI 가 집어 들지 못하고 끝난 끼어든 말도 이 대화 몫으로 대기열 맨 앞에 돌린다.
       // [지금 보내기]로 하던 일을 멈춘 경우엔 그 말을 먼저 보내고, 남은 대기열은 그대로 둔다.

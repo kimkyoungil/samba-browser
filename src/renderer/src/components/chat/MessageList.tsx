@@ -114,6 +114,8 @@ const MessageRow = memo(function MessageRow({
       {/* 답 글이 흘러오기 시작하면 '생각하는 중' 표시를 멈춘다 */}
       {m.thinking && <ThinkingBlock text={m.thinking} live={running && !shown} />}
       {m.todos && m.todos.length > 0 && <TodoChecklist items={m.todos} running={running} />}
+      {/* 한 일(단계·중간 말)이 먼저, 그 아래 답 글 — 끝나면 답 글이 곧 끝 보고다(클로드 앱처럼) */}
+      <StepLog steps={m.steps ?? []} running={running} />
       {/* /compact 로 남긴 압축 요약은 '대화를 압축했어요' 한 줄(누르면 요약)로 그린다 */}
       {shown &&
         (shown.startsWith(COMPACT_MARK) ? (
@@ -125,7 +127,6 @@ const MessageRow = memo(function MessageRow({
       {m.partial ? (
         <span className="inline-block h-[1em] w-[2px] animate-pulse bg-[var(--text)]" />
       ) : null}
-      <StepLog steps={m.steps ?? []} running={running} />
       {/* 다 쓴 답만 복사한다(쓰는 중인 글은 아직 바뀐다). 마지막 답은 [다시 받기]와 함께 늘 보인다 */}
       {!running && (m.text || (last && !busy)) && (
         <div

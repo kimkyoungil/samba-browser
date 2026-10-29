@@ -2754,8 +2754,12 @@ ${submittedNote}`
   // 상한에 도달했을 때 "done 으로 마무리하라"고 안내하기 때문에, 마무리 호출까지 막으면 안 된다
   const done = tool(
     'done',
-    'Finish the task with a short summary for the user.',
-    { summary: z.string() },
+    'Finish the task with the final report for the user (see FINAL REPORT): first line starts with 끝났습니다 / 일부만 끝났습니다 / 못 끝냈습니다 / 확인이 필요합니다 + " — " + what it is about, then results and what the user must do. Afterwards write the same report as your last message.',
+    {
+      summary: z
+        .string()
+        .describe('final report, first line e.g. "끝났습니다 — 두 페이지 제목을 확인했습니다"')
+    },
     async ({ summary }) => {
       if (ctx.finalConfirm) {
         const ok = await ctx.confirm(summary, 'finish')

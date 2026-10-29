@@ -14,12 +14,40 @@ export const RECENT_CHAT_LIMIT = 20
 /** 제목을 자동으로 지을 때 잘라 쓰는 첫 메시지 길이 */
 export const CHAT_TITLE_MAX = 40
 
-/** 진행 로그 한 줄. 화면의 Step 과 같은 모양이되, 저장되는 칸은 이 셋뿐이다 */
+/** 진행 로그 한 줄. 화면의 Step 과 같은 모양이되, 저장되는 칸은 이 넷뿐이다 */
 export interface ChatStepDto {
   label: string
   ok: boolean
   /** 번역 키(있으면 화면에서 i18n 문구로 바꿔 보여 준다) */
   key?: string
+  /** AI 가 일하는 중에 쓴 중간 말(도구 단계가 아니다). label 이 그 글이다 */
+  note?: boolean
+}
+
+/**
+ * 도구 단계가 시작되면, 그때까지 쓴 답 글은 '중간 말'로 단계 기록에 넣고 답 글을 비운다 —
+ * 답 글에는 마지막 단계 뒤에 쓴 글(끝 보고)만 남는다. 노든은 일하며 쓴 혼잣말과 끝 보고를 한 말풍선에
+ * 이어 붙여 끝 보고가 묻혔다(사장님 10/29 "업무가 끝나면 끝났습니다 하고 보고를 해야 되잖아")
+ */
+export function foldNoteBeforeStep<S extends { label: string; ok: boolean; note?: boolean }>(
+  text: string,
+  steps: S[]
+): { text: string; steps: S[] } {
+  const note = text.trim()
+  if (note === '') return { text, steps }
+  return { text: '', steps: [...steps, { label: note, ok: true, note: true } as S] }
+}
+
+/** 끝났는데 끝 보고 글이 비었으면(마지막에 도구로 끝냄) 마지막 중간 말을 답 글로 되돌린다 */
+export function restoreFinalNote<S extends { label: string; ok: boolean; note?: boolean }>(
+  text: string,
+  steps: S[]
+): { text: string; steps: S[] } {
+  if (text.trim() !== '') return { text, steps }
+  for (let i = steps.length - 1; i >= 0; i--) {
+    if (steps[i].note) return { text: steps[i].label, steps: steps.filter((_, j) => j !== i) }
+  }
+  return { text, steps }
 }
 
 /** 대화 한 줄(목록용) */
@@ -99,9 +127,12 @@ export function sanitizeSteps(steps: unknown): ChatStepDto[] | null {
     const step = raw as Record<string, unknown>
     const label = typeof step.label === 'string' ? step.label : ''
     const key = typeof step.key === 'string' ? step.key : undefined
-    rows.push(
-      key === undefined ? { label, ok: step.ok === true } : { label, ok: step.ok === true, key }
-    )
+    rows.push({
+      label,
+      ok: step.ok === true,
+      ...(key === undefined ? {} : { key }),
+      ...(step.note === true ? { note: true } : {})
+    })
   }
   return rows
 }

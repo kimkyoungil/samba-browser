@@ -336,7 +336,8 @@ export type AgentEvent =
   // 일하는 중 끼어든 말을 AI 가 집어 들었다 — 화면은 '곧 전달' 칩을 말풍선으로 바꾸고 새 답 말풍선을 연다
   // (texts 는 화면에 칩이 없을 때 쓰는 글. 첨부 미리보기는 화면이 가진 것을 쓴다)
   | { type: 'split'; injectIds: string[]; texts: string[] }
-  | { type: 'step'; label: string; ok: boolean }
+  // note=true 는 도구 단계가 아니라 진행 기록 한 줄(자동 학습 차례의 글·안내 등) — 끝 보고 자리를 건드리지 않는다
+  | { type: 'step'; label: string; ok: boolean; note?: boolean }
   | { type: 'confirm'; requestId: string; action: string; kind?: 'danger' | 'finish' }
   // 진행 상황만 알리는 이벤트(도구 호출 아님). SDK 재시도 대기와, 플레이북이 부르는
   // progress 도구의 "3/26" 표시 두 가지가 이 자리에 온다

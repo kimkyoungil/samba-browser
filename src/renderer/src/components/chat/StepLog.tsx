@@ -22,14 +22,16 @@ export function StepLog({
 }): React.JSX.Element | null {
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
-  if (!steps.length) return null
+  // 중간 말(note)은 도구 단계가 아니다 — 개수·종류·실패에는 세지 않고, 펼친 목록에만 순서대로 끼운다
+  const work = steps.filter((s) => !s.note)
+  if (!work.length) return null
   // 번역 키가 붙은 단계(사용자 확인 대기 → 재개)는 화면 언어로 보여 준다
   const labelOf = (s: Step): string => (s.key ? t(s.key) : s.label)
-  const summary = summarizeSteps(steps.map((s) => ({ label: labelOf(s), ok: s.ok })))
-  const last = steps[steps.length - 1]
+  const summary = summarizeSteps(work.map((s) => ({ label: labelOf(s), ok: s.ok })))
+  const last = work[work.length - 1]
   const headline = running
     ? labelOf(last)
-    : steps.length === 1
+    : work.length === 1
       ? labelOf(last)
       : [
           t('chat.stepsCount', { n: summary.total }),
@@ -51,7 +53,7 @@ export function StepLog({
           <StepMark ok={summary.failed < summary.total} />
         )}
         <span className="min-w-0 truncate">{headline}</span>
-        {running && steps.length > 1 && (
+        {running && work.length > 1 && (
           <span className="shrink-0 text-[var(--text3)]">
             {t('chat.stepsCount', { n: summary.total })}
           </span>
@@ -70,16 +72,23 @@ export function StepLog({
       </button>
       {open && (
         <div className="mt-1.5 ml-1 flex flex-col gap-1.5 border-l border-[var(--line)] pl-3">
-          {steps.map((s, i) => (
-            <div key={i} className="flex items-center gap-2">
-              {running && i === steps.length - 1 ? (
-                <span className="h-3.5 w-3.5 shrink-0 animate-spin rounded-full border-2 border-[var(--accent)]/20 border-t-[var(--accent)]" />
-              ) : (
-                <StepMark ok={s.ok} />
-              )}
-              <span className="min-w-0 break-words">{labelOf(s)}</span>
-            </div>
-          ))}
+          {steps.map((s, i) =>
+            s.note ? (
+              // 일하며 쓴 중간 말 — 단계 사이에 흐린 글로
+              <p key={i} className="whitespace-pre-wrap break-words text-[var(--text3)]">
+                {s.label}
+              </p>
+            ) : (
+              <div key={i} className="flex items-center gap-2">
+                {running && i === steps.length - 1 ? (
+                  <span className="h-3.5 w-3.5 shrink-0 animate-spin rounded-full border-2 border-[var(--accent)]/20 border-t-[var(--accent)]" />
+                ) : (
+                  <StepMark ok={s.ok} />
+                )}
+                <span className="min-w-0 break-words">{labelOf(s)}</span>
+              </div>
+            )
+          )}
         </div>
       )}
     </div>

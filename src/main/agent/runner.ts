@@ -8,7 +8,12 @@ import {
   type ChatSessionStore,
   type HistoryMessage
 } from './chat-session'
-import { COMPACT_MARK, parseCompactCommand } from '../../shared/chat'
+import {
+  COMPACT_MARK,
+  foldNoteBeforeStep,
+  parseCompactCommand,
+  restoreFinalNote
+} from '../../shared/chat'
 import { randomUUID } from 'crypto'
 import { tmpdir } from 'os'
 import { mkdtemp, rm, writeFile } from 'fs/promises'
@@ -120,7 +125,8 @@ const AUTO_CONTINUE_PROMPT = '직전 작업을 그 자리에서 이어서'
 export interface TranscriptEntry {
   prompt: string
   text: string
-  steps: { label: string; ok: boolean }[]
+  // note 는 일하는 중에 쓴 중간 말(도구 단계 앞에서 답 글에서 옮겨 온 것)
+  steps: { label: string; ok: boolean; note?: boolean }[]
 }
 
 /**
@@ -183,7 +189,7 @@ export const CODEX_PC_LOCK_NOTE = [
  * 꼭 닿아야 할 안내를 더하면 이 값을 올린다 — 옛 판으로 연 스레드는 한 번 앞부분 요약 + 새 스레드로 다시 연다
  * (실기 10/29: '노든 설정 = localhost:3000/samba/settings' 안내가 이미 열린 대화에는 닿지 않았다)
  */
-export const CODEX_PROMPT_REVISION = '2026-10-29b'
+export const CODEX_PROMPT_REVISION = '2026-10-29c'
 
 /** 스레드를 연 지시의 지문 — 지시문 판 + 개발자 지시. 다음 말은 이 값이 같을 때만 그 스레드를 이어받는다 */
 export function codexThreadKey(devNote: string): string {
@@ -878,10 +884,15 @@ export class AgentRunner {
     const live = this.liveRun
     if (live && !live.saved && live.chatId !== undefined && this.transcript) {
       live.saved = true
-      const text = [live.entry.text, live.partial].filter((t) => t !== '').join('\n')
+      // 쓰던 끝 보고가 없으면 마지막 중간 말을 답 글로(그 뒤에 '앱을 닫아 중단' 을 붙인다)
+      const base = live.partial
+        ? { text: live.entry.text, steps: live.entry.steps }
+        : restoreFinalNote(live.entry.text, live.entry.steps)
+      const text = [base.text, live.partial].filter((t) => t !== '').join('\n')
       try {
         this.transcript(live.chatId, {
           ...live.entry,
+          steps: base.steps,
           text: text === '' ? QUIT_NOTE : `${text}\n${QUIT_NOTE}`
         })
       } catch (e: unknown) {
@@ -979,7 +990,11 @@ export class AgentRunner {
       if (chatId === undefined || !this.transcript || live.saved) return
       live.saved = true
       try {
-        const saved = this.transcript(chatId, entry)
+        // 마지막에 도구로 끝내 끝 보고 글이 비었으면 마지막 중간 말을 답 글로 남긴다
+        const saved = this.transcript(chatId, {
+          ...entry,
+          ...restoreFinalNote(entry.text, entry.steps)
+        })
         // 그새 다음 실행이 시작됐어도 꼬리표로 짝을 찾으니 세대와 상관없이 알린다
         if (saved) this.emit({ type: 'saved', turnId, rowId: saved.userRowId })
       } catch (e: unknown) {
@@ -1053,8 +1068,18 @@ export class AgentRunner {
     const scripts = s.siteMemoryEnabled ? this.siteScripts : null
     const scriptsBlock = scripts ? buildScriptsBlock(scripts.list()) : ''
     // 이 실행이 최신 세대일 때만 UI 로 이벤트를 보낸다
-    const emit = (e: AgentEvent): void => {
+    const emit = (raw: AgentEvent): void => {
       if (gen !== this.generation) return
+      // 자동 학습 차례(일이 끝난 뒤 절차를 스크립트로 저장)는 끝 보고를 덮지 않는다 — 그 글·단계는 전부 진행 기록으로,
+      // 쓰는 중 글·생각·할 일은 보내지 않는다(실기 10/29: '스크립트를 저장했습니다' 가 끝 보고 자리를 차지했다)
+      if (learning && (raw.type === 'partial' || raw.type === 'thinking' || raw.type === 'todos'))
+        return
+      const e: AgentEvent =
+        learning && raw.type === 'text'
+          ? { type: 'step', label: raw.text, ok: true, note: true }
+          : learning && raw.type === 'step'
+            ? { ...raw, note: true }
+            : raw
       if (e.type === 'status' && e.state !== 'running') this.settledGeneration = gen
       // 끝난 실행으로 구독 로그인이 살아 있는지 알린다(인증 실패면 '로그인 만료', 성공이면 해제)
       if (e.type === 'status' && e.state === 'done') reportAuth(true)
@@ -1062,7 +1087,13 @@ export class AgentRunner {
         reportAuth(false)
       if (e.type === 'text') entry.text = entry.text ? `${entry.text}\n${e.text}` : e.text
       if (e.type === 'partial') live.partial = e.text
-      if (e.type === 'step') entry.steps.push({ label: e.label, ok: e.ok })
+      // 도구 단계가 시작되면 그때까지 쓴 글은 중간 말로 단계 기록에 넣는다 — 답 글에는 끝 보고만 남는다
+      if (e.type === 'step' && e.note) entry.steps.push({ label: e.label, ok: e.ok, note: true })
+      else if (e.type === 'step') {
+        const folded = foldNoteBeforeStep(entry.text, entry.steps)
+        entry.text = folded.text
+        entry.steps = [...folded.steps, { label: e.label, ok: e.ok }]
+      }
       // 성공이면 완주 경로, 도구를 쓰다 실패(상한·오류)했으면 부분 경로를 남긴다.
       // 연결·인증 문제로 시작도 못 한 실패(auth:*)는 배울 것이 없다. 속도 지표도 여기서 한 줄 적는다
       if (e.type === 'status' && (e.state === 'done' || e.state === 'failed')) {
@@ -1592,14 +1623,17 @@ export class AgentRunner {
             followUp = `${AUTO_CONTINUE_PROMPT} 끝까지 진행하고, 끝나면 done 으로 보고해.`
           } else if (scripts && shouldLearn(prompt, runJsLog)) {
             // 성공이든 실패든, 통한 구간까지는 다음에 재생할 수 있게 스스로 저장하게 한다
+            // 끝 보고 뒤에 붙이지 않고 진행 기록 한 줄로
             emit({
-              type: 'text',
-              text: '(이번에 통한 절차를 다음부터 한 번에 재생하도록 저장합니다)'
+              type: 'step',
+              label: '(이번에 통한 절차를 다음부터 한 번에 재생하도록 저장합니다)',
+              ok: true,
+              note: true
             })
             followUp = buildLearnPrompt({
               userPrompt: prompt,
               runs: runJsLog,
-              steps: entry.steps,
+              steps: entry.steps.filter((st) => !st.note),
               savedScripts: scripts
                 .list()
                 .map((sc) => ({ name: sc.name, description: sc.description }))

@@ -74,6 +74,26 @@ beforeEach(() => {
 })
 
 describe('pageBridge.snapshot: iframe 합치기', () => {
+  // 11번가 셀러오피스는 화면 안 탭마다 iframe 을 두고 안 보이는 탭은 숨긴다 — 숨은 탭의 상품 목록을 눌러
+  // 엉뚱한 곳이 눌렸다(실기 10/30). 화면에 안 그려지는 프레임은 목록에서 뺀다
+  it('화면에 안 그려지는 프레임(hidden)은 목록에서 뺀다', async () => {
+    const { tab } = fakeTab(
+      snap('https://soffice.11st.co.kr/view/8006', [el(1, '상품조회/수정')]),
+      [
+        {
+          url: 'https://soffice.11st.co.kr/a',
+          result: { ...snap('https://soffice.11st.co.kr/a', [el(2, '전체 선택')]), hidden: true }
+        },
+        {
+          url: 'https://soffice.11st.co.kr/b',
+          result: snap('https://soffice.11st.co.kr/b', [el(3, '템플릿 추가')])
+        }
+      ]
+    )
+    const s = await pageBridge.snapshot(tab)
+    expect(s.elements.map((e) => e.id)).toEqual([1, 200003])
+  })
+
   it('메인 프레임과 iframe 요소를 한 목록으로 돌려준다', async () => {
     const { tab, mainCalls } = fakeTab(
       snap('https://order.29cm.co.kr/order', [el(1, '주문하기')], '주문서'),

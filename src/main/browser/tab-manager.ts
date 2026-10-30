@@ -136,7 +136,9 @@ export const COLLAPSED_MIN_HEIGHT = 800
 /**
  * Keep background automation renderable without changing the visible browser layout.
  * 브라우저 영역이 접혀 있으면 0 크기 대신 창 밖(왼쪽)에 제 크기로 둔다 — 0×0 뷰에는 진짜 마우스 입력이
- * 아예 들어가지 않았다(실측 10/30). 창 밖 뷰도 크롬은 페이지에 크기를 넘기지 않으므로 배치 크기는 fitCollapsed 가 준다
+ * 아예 들어가지 않았다(실측 10/30). 창 밖 뷰도 크롬은 페이지에 크기를 넘기지 않으므로 배치 크기는 fitCollapsed 가 준다.
+ * 창이 최소화돼 창 크기가 0 일 때도 마찬가지 — 폰으로 보던 중 최소화된 창에서 만든 탭은 0 크기라 화면 캡처가
+ * "no visible page", 클릭도 안 닿았다(실기 10/30 두 번째)
  */
 export function computeBehindBounds(
   layout: Layout,
@@ -146,8 +148,8 @@ export function computeBehindBounds(
   gateHidden: boolean
 ): Layout {
   const empty = computeViewBounds({ ...layout, width: 0, height: 0 }, width, height)
-  if (gateHidden || width <= 0 || height <= 0) return empty
-  const bounds = computeViewBounds(layout, width, height, mobile)
+  if (gateHidden) return empty
+  const bounds = width > 0 && height > 0 ? computeViewBounds(layout, width, height, mobile) : empty
   if (bounds.width > 0 && bounds.height > 0) return bounds
   const w = Math.max(width, COLLAPSED_MIN_WIDTH)
   const h = Math.max(height, COLLAPSED_MIN_HEIGHT)

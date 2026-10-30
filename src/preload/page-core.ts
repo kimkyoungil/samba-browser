@@ -705,6 +705,37 @@ export function rectOf(id: number): ClickPoint | null {
   return { x: Math.round(point.x), y: Math.round(point.y) }
 }
 
+/** iframe 요소가 부모 문서에 그려지는가(display:none·visibility:hidden·크기 0 이면 아니다) */
+function frameElementShown(fe: HTMLElement): boolean {
+  if (fe.getClientRects().length === 0) return false
+  const r = fe.getBoundingClientRect()
+  if (r.width <= 0 || r.height <= 0) return false
+  const v = fe.ownerDocument.defaultView?.getComputedStyle(fe).visibility
+  return v !== 'hidden' && v !== 'collapse'
+}
+
+/**
+ * 이 프레임(또는 그 위 프레임)이 화면에 그려지지 않는가 — 11번가 셀러오피스는 화면 안 탭(상품조회/수정·
+ * 상품정보 템플릿 관리…)마다 iframe 을 두고 안 보이는 탭은 display:none 으로 숨긴다. 숨은 탭의 상품 목록을
+ * 읽고 눌러 엉뚱한 곳이 눌렸다(실기 10/30). 다른 출처 부모라 못 보면 보이는 것으로 둔다
+ */
+export function frameHidden(): boolean {
+  try {
+    let w: Window = window
+    for (let depth = 0; depth < 8; depth++) {
+      const fe = w.frameElement as HTMLElement | null
+      if (!fe) return false
+      if (!frameElementShown(fe)) return true
+      const parent = fe.ownerDocument.defaultView
+      if (!parent || parent === w) return false
+      w = parent
+    }
+  } catch {
+    return false
+  }
+  return false
+}
+
 /**
  * 이 프레임이 부모 문서 안 어디에 있는지(부모 뷰포트 기준, 테두리·안쪽 여백을 뺀 내용 영역 왼쪽 위).
  * 프레임 안 요소를 진짜 마우스로 누를 때 메인 프로세스가 좌표를 위로 합산한다 — 11번가 셀러오피스
@@ -714,6 +745,8 @@ export function frameOffset(): ClickPoint | null {
   try {
     const fe = window.frameElement as HTMLElement | null
     if (!fe) return null
+    // 그려지지 않는 프레임(숨은 화면 탭의 iframe)은 위치가 0,0 으로 나와 진짜 클릭이 엉뚱한 곳(왼쪽 메뉴)에 떨어졌다
+    if (!frameElementShown(fe)) return null
     fe.scrollIntoView?.({ block: 'nearest' })
     const r = fe.getBoundingClientRect()
     const cs = fe.ownerDocument.defaultView?.getComputedStyle(fe)
@@ -2018,11 +2051,14 @@ export function runAgentOp(raw: unknown): unknown {
   const text = typeof r.text === 'string' ? r.text : ''
   const value = typeof r.value === 'string' ? r.value : ''
   switch (r.op) {
-    case 'snapshot':
-      return buildSnapshot({
+    case 'snapshot': {
+      const snap = buildSnapshot({
         ...(typeof r.query === 'string' ? { query: r.query } : {}),
         ...(typeof r.selector === 'string' ? { selector: r.selector } : {})
       })
+      // 화면에 안 그려지는 프레임은 표시해 메인이 목록에서 뺀다
+      return window !== window.top && frameHidden() ? { ...snap, hidden: true } : snap
+    }
     case 'textOf':
       return textOf(id)
     case 'click':

@@ -91,7 +91,8 @@ const snapshotSchema = z.object({
   text: z.string(),
   elements: z.array(elementSchema),
   total: z.number().int().optional(),
-  selectorError: z.string().optional()
+  selectorError: z.string().optional(),
+  hidden: z.boolean().optional()
 })
 
 // 결제 비밀번호 키패드 판정용 신호. 값은 담기지 않는다(개수·존재 여부만)
@@ -502,9 +503,10 @@ export const pageBridge = {
     const { main, frames } = await callEveryFrame(tab, op, snapshotSchema)
     // 선택자가 잘못됐으면 프레임 합치기 전에 그대로 알린다
     if (main.selectorError !== undefined) return main
-    // 아무것도 없는 프레임(광고·추적용 빈 iframe)은 목록을 흐리기만 한다
+    // 아무것도 없는 프레임(광고·추적용 빈 iframe)은 목록을 흐리기만 한다. 화면에 안 그려지는 프레임(숨은 화면 탭의
+    // iframe)도 뺀다 — 11번가 셀러오피스에서 숨은 탭의 상품 목록을 눌러 엉뚱한 곳이 눌렸다(실기 10/30)
     const useful: FrameSnapshot[] = frames
-      .filter((f) => f.value.elements.length > 0 || f.value.text.length > 0)
+      .filter((f) => !f.value.hidden && (f.value.elements.length > 0 || f.value.text.length > 0))
       .map((f) => ({ index: f.index, host: f.host, snapshot: f.value }))
     return mergeFrameSnapshots(main, useful)
   },

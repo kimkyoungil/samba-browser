@@ -118,6 +118,18 @@ describe('computeBehindBounds — 접힌 브라우저 영역', () => {
     )
   })
 
+  // 실기 10/30 두 번째: 폰으로 보던 중 최소화된 창(창 크기 0)에서 만든 탭이 0 크기라 캡처·클릭이 안 됐다
+  it('창이 최소화돼 창 크기가 0 이어도 창 밖 PC 크기로 둔다', () => {
+    const b = computeBehindBounds(collapsed, 0, 0, false, false)
+    expect(b).toMatchObject({
+      x: -COLLAPSED_MIN_WIDTH,
+      width: COLLAPSED_MIN_WIDTH,
+      height: COLLAPSED_MIN_HEIGHT
+    })
+    // 보이던 배치여도 창 크기가 0 이면 같다
+    expect(computeBehindBounds(reported, 0, 0, false, false).width).toBe(COLLAPSED_MIN_WIDTH)
+  })
+
   it('로그인 게이트 중에는 0 크기', () => {
     expect(computeBehindBounds(collapsed, 1440, 900, false, true).width).toBe(0)
   })

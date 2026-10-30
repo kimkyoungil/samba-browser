@@ -25,6 +25,8 @@ export interface PageSnapshot {
   total?: number
   // selector 인자가 CSS 문법에 맞지 않을 때의 안내. 정상 스냅샷에는 없다
   selectorError?: string
+  // iframe 이 화면에 그려지지 않는다(숨은 화면 탭의 iframe 등). 메인이 합칠 때 뺀다
+  hidden?: boolean
 }
 
 /**

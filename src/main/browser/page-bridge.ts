@@ -1,4 +1,4 @@
-import { clipboard, webContents } from 'electron'
+import { BrowserWindow, clipboard, webContents } from 'electron'
 import type { NativeImage, WebContents, WebFrameMain } from 'electron'
 import { z } from 'zod'
 import type {
@@ -28,6 +28,19 @@ import {
   withAutomationInputSync,
   expectAutomationMouseDown
 } from './human-activity'
+import { setFocusEmulation } from './emulation'
+
+/** 노든 창 중 하나가 OS 포커스를 가졌는가 — 대역(시험)처럼 알 수 없으면 가진 것으로 본다 */
+function appHasFocus(): boolean {
+  try {
+    return (
+      typeof BrowserWindow?.getFocusedWindow !== 'function' ||
+      BrowserWindow.getFocusedWindow() !== null
+    )
+  } catch {
+    return true
+  }
+}
 
 // preload 가 실행되는 격리 월드 id. Electron 의 WorldId.ISOLATED_WORLD = 999
 export const ISOLATED_WORLD_ID = 999
@@ -822,7 +835,10 @@ export const pageBridge = {
     // 키 입력은 포커스를 가진 페이지만 받는다. 뒤에서 도는 탭(브릿지 작업)은 포커스가 없어 글자가 하나도 안 들어가고
     // 값 직접 넣기로 떨어졌다(실기 2026-09-29 partner.hmall.com "패스워드를 입력하세요!") — 치는 동안만 포커스를 준다
     const before = webContents?.getFocusedWebContents?.() ?? null
-    if (typeof wc.focus === 'function' && !(wc.isFocused?.() ?? false)) wc.focus()
+    // 단 노든이 OS 포커스를 가진 때만 진짜 포커스를 준다 — 최소화·뒤에 있는 창의 페이지에 focus() 를 부르면 그 창이
+    // 사람이 쓰는 화면 앞으로 튀어나왔다(사장님 10/30 "최소화시켜놨는데 왜 자꾸 혼자 튀어나오냐"). 그때는 포커스 흉내로 키를 받게 한다
+    if (!appHasFocus()) await setFocusEmulation(wc, true)
+    else if (typeof wc.focus === 'function' && !(wc.isFocused?.() ?? false)) wc.focus()
     const giveBack = (): void => {
       if (before && before !== wc && !before.isDestroyed()) before.focus?.()
     }

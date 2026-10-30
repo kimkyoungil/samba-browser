@@ -26,7 +26,9 @@ export function createMainWindow(position?: { x: number; y: number }): BrowserWi
       contextIsolation: true
     }
   })
-  win.on('ready-to-show', () => win.show())
+  // 처음 한 번만 보여 준다 — on 으로 걸면 창이 최소화된 채 탭이 페이지를 옮길 때마다 ready-to-show 가 다시 와서
+  // 창이 혼자 튀어나왔다(사장님 10/30 "최소화시켜놨는데 왜 자꾸 다시 혼자 튀어나오냐", 실측: AI 의 이동마다 복원)
+  win.once('ready-to-show', () => win.show())
   win.webContents.setWindowOpenHandler(({ url }) => {
     // 외부 브라우저로 넘기는 건 http/https 만. file:/javascript: 등은 무시한다
     if (isHttpUrl(url)) void shell.openExternal(url)

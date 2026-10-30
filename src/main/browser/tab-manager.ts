@@ -162,21 +162,19 @@ export function computeBehindBounds(
   // Native views paint above the app shell, even at child index zero.
   return { ...fallback, x: fallback.x - w }
 }
-// 탭이 마지막으로 보였을 때 창이 이 폭 이상(PC 창 최소 폭)이면 페이지가 그 크기를 그대로 들고 있으므로
-// 흉내를 걸지 않는다(PC 화면은 안 바뀐다). 폰으로 볼 때(창 폭 300px 남짓)는 폰 폭 배치라 건다
-export const COLLAPSED_KEEP_WINDOW_WIDTH = 1000
-
 /**
  * 화면에 크기가 없는 탭에 PC 화면 크기 흉내를 걸어야 하는가(순수 함수).
- * 실제 크기를 한 번도 못 받았거나(접힌 동안 만든 탭) 마지막으로 보인 때가 폰 폭 창이면 건다. 모바일 탭은 제 흉내가 있다
+ * 실제 크기를 한 번도 못 받았거나(접힌 동안 만든 탭) 마지막으로 보인 폭이 PC 화면 폭(1280)보다 좁으면 건다 —
+ * 접혀도 페이지는 마지막 크기를 그대로 들고 있어, 702px 로 보던 11번가 탭은 최소화한 뒤에도 고정 메뉴가
+ * 표의 전체 선택 칸을 덮었다(실기 10/30). 사람은 그동안 이 탭을 안 보므로 배치가 바뀌어도 된다. 모바일 탭은 제 흉내가 있다
  */
 export function needsCollapsedSize(
   visible: boolean,
   mobile: boolean,
-  lastWindowWidth: number | undefined
+  lastRealWidth: number | undefined
 ): boolean {
   if (visible || mobile) return false
-  return lastWindowWidth === undefined || lastWindowWidth < COLLAPSED_KEEP_WINDOW_WIDTH
+  return lastRealWidth === undefined || lastRealWidth < COLLAPSED_MIN_WIDTH
 }
 
 // 이미 하드닝한 파티션 이름. session.fromPartition 은 같은 인스턴스를 돌려주므로 1회만 건다
@@ -197,8 +195,8 @@ const downloadPolicy: DownloadPolicy = {
 // 탭 webContents → 지금 그 탭을 쥔 TabManager. 탭을 다른 창으로 옮기면(adoptTab) 바뀐다 —
 // 생성 때 건 webContents 리스너들이 옛 창의 관리자가 아니라 지금 창의 관리자에게 알리게 한다
 const ownerOf = new WeakMap<WebContents, TabManager>()
-// 탭이 마지막으로 화면에 보였을 때의 창 폭(fitCollapsed) — 접힌 동안 페이지는 그때 크기를 그대로 들고 있다
-const lastRealWindowWidth = new WeakMap<WebContents, number>()
+// 탭이 마지막으로 화면에 보인 폭(fitCollapsed) — 접힌 동안 페이지는 그 크기를 그대로 들고 있다
+const lastRealWidth = new WeakMap<WebContents, number>()
 // 접혀 있어 PC 화면 크기 흉내를 건 탭
 const collapsedSized = new WeakSet<WebContents>()
 // 접혀 있어 숨은 채로 깨워 둔(스로틀링 끔·포커스 흉내) 탭
@@ -749,8 +747,9 @@ export class TabManager {
     if (popup) {
       this.focusedPopupId = id
       if (!popup.win.isDestroyed()) {
-        if (this.holdVisible()) {
-          // 사람이 이 창을 쓰는 중이면 포커스를 가져가지 않는다 — 숨어 있으면 포커스 없이 보여만 준다
+        // 사람이 이 창을 쓰는 중이거나 노든이 OS 포커스를 갖지 않았으면(최소화·다른 앱을 쓰는 중) 포커스를
+        // 가져가지 않는다 — 숨어 있으면 포커스 없이 보여만 준다(사장님 10/30 "최소화시켜놨는데 왜 자꾸 혼자 튀어나오냐")
+        if (this.holdVisible() || BrowserWindow.getFocusedWindow() === null) {
           if (!popup.win.isVisible()) popup.win.showInactive()
         } else {
           popup.win.show()
@@ -1123,7 +1122,7 @@ export class TabManager {
     const visible = bounds.width > 0 && bounds.height > 0 && bounds.x >= 0
     const [w, h] = this.win.getContentSize()
     if (visible) {
-      lastRealWindowWidth.set(wc, w)
+      lastRealWidth.set(wc, bounds.width)
       if (collapsedSized.has(wc)) {
         collapsedSized.delete(wc)
         // 모바일 탭은 제 흉내(412 폭)가 같은 자리를 쓴다 — 풀면 그것까지 지운다
@@ -1144,7 +1143,7 @@ export class TabManager {
       void setFocusEmulation(wc, true)
     }
     if (collapsedSized.has(wc)) return
-    if (!needsCollapsedSize(false, tab.mobile, lastRealWindowWidth.get(wc))) return
+    if (!needsCollapsedSize(false, tab.mobile, lastRealWidth.get(wc))) return
     collapsedSized.add(wc)
     // 창 밖에 둔 크기(computeBehindBounds)와 같은 크기로 배치한다 — 입력 좌표가 뷰 밖으로 나가지 않게
     void applyCollapsedSize(

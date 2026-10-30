@@ -139,10 +139,14 @@ describe('needsCollapsedSize — 숨은 탭에 PC 화면 크기 흉내를 거는
   it('접힌 동안 만들어 실제 크기를 한 번도 못 받은 탭은 건다', () => {
     expect(needsCollapsedSize(false, false, undefined)).toBe(true)
   })
-  it('마지막으로 폰 폭 창에서 보였던 탭은 건다', () => {
+  it('마지막으로 폰 폭으로 보였던 탭은 건다', () => {
     expect(needsCollapsedSize(false, false, 390)).toBe(true)
   })
-  it('PC 창에서 보였던 탭은 그 크기를 그대로 들고 있어 걸지 않는다(PC 화면 배치가 안 바뀐다)', () => {
+  // 실기 10/30: 702px 로 보던 11번가 탭은 최소화 뒤에도 고정 메뉴가 표의 전체 선택 칸을 덮었다
+  it('PC 화면 폭(1280)보다 좁게 보였던 탭도 건다', () => {
+    expect(needsCollapsedSize(false, false, 702)).toBe(true)
+  })
+  it('넓게 보였던 탭은 그 크기를 그대로 들고 있어 걸지 않는다', () => {
     expect(needsCollapsedSize(false, false, 1440)).toBe(false)
   })
   it('보이는 탭·모바일 탭은 걸지 않는다', () => {

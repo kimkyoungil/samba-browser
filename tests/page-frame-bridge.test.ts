@@ -15,11 +15,15 @@ vi.mock('../src/main/browser/frame-channel', () => ({
     const host = new URL(frame.url).host
     frameCalls.push({ host, op })
     if (frameReply.fail.has(host)) throw new Error('frame call failed')
-    return frame.result
+    // 동작마다 다른 답이 필요한 시험(rectOf + frameOffset)은 함수로 준다
+    return typeof frame.result === 'function'
+      ? (frame.result as (o: Record<string, unknown>) => unknown)(op)
+      : frame.result
   }
 }))
 
 const { pageBridge } = await import('../src/main/browser/page-bridge')
+const { consumeAutomationMouseDown } = await import('../src/main/browser/human-activity')
 
 function el(id: number, text = ''): PageElement {
   return { id, tag: 'button', role: 'button', text, isSecret: false }
@@ -32,6 +36,8 @@ function snap(url: string, elements: PageElement[], text = ''): PageSnapshot {
 interface FakeFrame {
   url: string
   result: unknown
+  /** 부모 프레임. 비우면 메인 프레임 */
+  parent?: unknown
 }
 
 /** 메인 프레임 결과 + 하위 프레임 목록을 가진 가짜 탭 */
@@ -47,6 +53,7 @@ function fakeTab(
     framesInSubtree: []
   }
   mainFrame.framesInSubtree = [mainFrame, ...frames]
+  for (const f of frames) f.parent ??= mainFrame
   const webContents = {
     isDestroyed: () => false,
     mainFrame,
@@ -262,11 +269,39 @@ describe('pageBridge.rectOf / clickAt — 실제 마우스 클릭 폴백', () =>
     expect(mainCalls).toEqual(['__samba.rectOf(7)'])
   })
 
-  it('iframe 안 요소는 화면 좌표를 알 수 없어 null 이다', async () => {
-    const { tab, mainCalls } = fakeTab({ x: 1, y: 2 }, [{ url: POSTCODE, result: null }])
-    expect(await pageBridge.rectOf(tab, 100015)).toBeNull()
+  // 11번가 셀러오피스 상품 목록(iframe) 체크칸 — 합성 클릭을 무시해 진짜 마우스로 눌러야 했다(실기 10/30)
+  it('iframe 안 요소는 프레임 안 좌표에 프레임 위치를 더한다', async () => {
+    const grid = (op: Record<string, unknown>): unknown =>
+      op.op === 'rectOf' ? { x: 30, y: 40 } : { x: 100, y: 200 }
+    const { tab, mainCalls } = fakeTab({ x: 1, y: 2 }, [{ url: POSTCODE, result: grid }])
+    expect(await pageBridge.rectOf(tab, 100015)).toEqual({ x: 130, y: 240 })
     expect(mainCalls).toEqual([])
-    expect(frameCalls).toEqual([])
+    expect(frameCalls.map((c) => c.op)).toEqual([{ op: 'rectOf', id: 15 }, { op: 'frameOffset' }])
+  })
+
+  it('프레임 안 프레임은 위로 올라가며 위치를 모두 더한다', async () => {
+    const outer: FakeFrame = { url: 'https://soffice.11st.co.kr/a', result: { x: 10, y: 20 } }
+    const inner: FakeFrame = {
+      url: 'https://soffice.11st.co.kr/b',
+      result: (op: Record<string, unknown>) =>
+        op.op === 'rectOf' ? { x: 5, y: 5 } : { x: 100, y: 100 },
+      parent: outer
+    }
+    const { tab } = fakeTab(null, [outer, inner])
+    expect(await pageBridge.rectOf(tab, 200007)).toEqual({ x: 115, y: 125 })
+  })
+
+  it('프레임 위치를 못 재면(다른 출처 부모) null 이다', async () => {
+    const grid = (op: Record<string, unknown>): unknown =>
+      op.op === 'rectOf' ? { x: 30, y: 40 } : null
+    const { tab } = fakeTab(null, [{ url: POSTCODE, result: grid }])
+    expect(await pageBridge.rectOf(tab, 100015)).toBeNull()
+  })
+
+  it('프레임 안 좌표를 못 구하면 위치는 묻지 않고 null 이다', async () => {
+    const { tab } = fakeTab(null, [{ url: POSTCODE, result: null }])
+    expect(await pageBridge.rectOf(tab, 100015)).toBeNull()
+    expect(frameCalls.map((c) => c.op.op)).toEqual(['rectOf'])
   })
 
   it('좌표를 못 구하면 null 을 그대로 돌려준다', async () => {
@@ -281,6 +316,14 @@ describe('pageBridge.rectOf / clickAt — 실제 마우스 클릭 폴백', () =>
       { type: 'mouseDown', x: 120, y: 341, button: 'left', clickCount: 1 },
       { type: 'mouseUp', x: 120, y: 341, button: 'left', clickCount: 1 }
     ])
+  })
+
+  it('clickAt 이 보낸 누름은 사람 입력으로 세지 않게 미리 적어 둔다', () => {
+    const { tab } = fakeTab(null, [])
+    const wc = tab.view.webContents
+    pageBridge.clickAt(tab, 10, 10)
+    expect(consumeAutomationMouseDown(wc)).toBe(true)
+    expect(consumeAutomationMouseDown(wc)).toBe(false)
   })
 
   it('좌표가 화면 밖(음수)이면 보내지 않는다', () => {
@@ -319,7 +362,15 @@ describe('pageBridge.typeLogin — 로그인 칸 진짜 키 입력', () => {
 
   it('클릭 뒤 그 칸에 포커스가 없으면 키를 하나도 보내지 않는다(다른 칸에 쳐지는 사고 방지)', async () => {
     // 포커스 확인 3번(처음 + 다시 누르기 2번)과 직접 포커스까지 모두 실패
-    const { tab, inputEvents } = typingTab([{ x: 10, y: 20 }, false, false, false, false, false, 'ok'])
+    const { tab, inputEvents } = typingTab([
+      { x: 10, y: 20 },
+      false,
+      false,
+      false,
+      false,
+      false,
+      'ok'
+    ])
     await pageBridge.typeLogin(tab, 5, 'a@1')
     // Tab 으로 칸을 옮겨 보는 것 말고는 글자 키를 보내지 않는다
     expect(inputEvents.some((e) => e.type === 'char')).toBe(false)

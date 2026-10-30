@@ -706,6 +706,26 @@ export function rectOf(id: number): ClickPoint | null {
 }
 
 /**
+ * 이 프레임이 부모 문서 안 어디에 있는지(부모 뷰포트 기준, 테두리·안쪽 여백을 뺀 내용 영역 왼쪽 위).
+ * 프레임 안 요소를 진짜 마우스로 누를 때 메인 프로세스가 좌표를 위로 합산한다 — 11번가 셀러오피스
+ * 상품 목록(iframe) 체크칸이 합성 클릭에 반응하지 않았다(실기 10/30). 다른 출처 부모면 접근이 막혀 null
+ */
+export function frameOffset(): ClickPoint | null {
+  try {
+    const fe = window.frameElement as HTMLElement | null
+    if (!fe) return null
+    fe.scrollIntoView?.({ block: 'nearest' })
+    const r = fe.getBoundingClientRect()
+    const cs = fe.ownerDocument.defaultView?.getComputedStyle(fe)
+    const padL = cs ? parseFloat(cs.paddingLeft) || 0 : 0
+    const padT = cs ? parseFloat(cs.paddingTop) || 0 : 0
+    return { x: r.left + fe.clientLeft + padL, y: r.top + fe.clientTop + padT }
+  } catch {
+    return null
+  }
+}
+
+/**
  * 입력칸 값의 글자 수. 메인 프로세스가 진짜 키 입력(typeLogin)으로 넣은 값이 들어갔는지 확인할 때 쓴다 —
  * 값 자체는 돌려주지 않는다(비밀 칸). 요소가 없거나 입력칸이 아니면 -1
  */
@@ -1202,7 +1222,12 @@ export function idOfExactText(text: string, nth = 0): number {
   for (const el of Array.from(document.querySelectorAll<HTMLElement>('body *'))) {
     if ((el.textContent ?? '').replace(/\s+/g, ' ').trim() !== want) continue
     // 같은 글자를 가진 자식이 있으면 바깥 껍데기다 — 가장 안쪽만 센다
-    if (Array.from(el.children).some((c) => (c.textContent ?? '').replace(/\s+/g, ' ').trim() === want)) continue
+    if (
+      Array.from(el.children).some(
+        (c) => (c.textContent ?? '').replace(/\s+/g, ' ').trim() === want
+      )
+    )
+      continue
     if (!isVisible(el, visible)) continue
     const r = el.getBoundingClientRect()
     if (r.width <= 0 || r.height <= 0) continue
@@ -1226,7 +1251,13 @@ export function idOfRowCell(id: number, index: number): number {
   const line = Math.round(ref.top + ref.height / 2)
   const onLine = (el: Element): boolean => {
     const r = el.getBoundingClientRect()
-    if (r.width < 8 || r.height < 8 || r.width > ROW_CELL_MAX_WIDTH || r.height > ROW_CELL_MAX_HEIGHT) return false
+    if (
+      r.width < 8 ||
+      r.height < 8 ||
+      r.width > ROW_CELL_MAX_WIDTH ||
+      r.height > ROW_CELL_MAX_HEIGHT
+    )
+      return false
     return r.top <= line && r.bottom >= line
   }
   // 그리드는 고정 열(체크·번호)과 스크롤 열을 다른 상자에 그린다 — 문서 전체에서 같은 높이의 칸을 모은다.
@@ -1246,8 +1277,7 @@ export function idOfRowCell(id: number, index: number): number {
     named.length >= 3
       ? named
       : inGrid.filter((el) => onLine(el) && !(el.parentElement && onLine(el.parentElement)))
-  )
-    .sort((a, b) => a.getBoundingClientRect().left - b.getBoundingClientRect().left)
+  ).sort((a, b) => a.getBoundingClientRect().left - b.getBoundingClientRect().left)
   const cell = cells[index]
   return cell ? ensureId(cell) : -1
 }
@@ -1583,7 +1613,12 @@ const CAPTURE_MAX_PER_WINDOW = 3
 export const CAPTURE_USERNAME_STEP_MS = 5 * 60_000
 
 /** 앞 단계에서 기억한 아이디를 쓸 수 있는가 — 기한(ms) 안이고 값이 있을 때만 그 아이디를 준다(순수 함수) */
-export function pickStepUsername(username: string, at: number, now: number, windowMs: number): string {
+export function pickStepUsername(
+  username: string,
+  at: number,
+  now: number,
+  windowMs: number
+): string {
   if (!username || !at) return ''
   return now - at >= 0 && now - at < windowMs ? username : ''
 }
@@ -2009,6 +2044,8 @@ export function runAgentOp(raw: unknown): unknown {
       return isSecretField(id)
     case 'rectOf':
       return rectOf(id)
+    case 'frameOffset':
+      return frameOffset()
     case 'keypadSignals':
       return keypadSignals()
     case 'keypadLayout':

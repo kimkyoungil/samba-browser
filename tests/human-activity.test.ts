@@ -4,6 +4,8 @@ import {
   HUMAN_BUSY_MS,
   HUMAN_BUSY_REFUSAL,
   automationBlocked,
+  consumeAutomationMouseDown,
+  expectAutomationMouseDown,
   humanBusy,
   isHumanInputEvent,
   markHuman,
@@ -43,6 +45,23 @@ describe('human-activity', () => {
     // 끝난 직후(늦게 도착한 제 이벤트)도 사람으로 세지 않는다
     expect(isHumanInputEvent(wc)).toBe(false)
     expect(isHumanInputEvent(wc, Date.now() + 5000)).toBe(true)
+  })
+
+  // 실기 10/30: 프레임 안 체크칸 진짜 클릭의 누름이 0.8초 꼬리보다 늦게 돌아와 '사람 클릭'으로 세여 다음 클릭이 거절됐다
+  it('자동화가 보낸 마우스 누름은 늦게 돌아와도 보낸 수만큼 사람 입력에서 뺀다', () => {
+    const wc = fakeWc()
+    expectAutomationMouseDown(wc, 1000)
+    expectAutomationMouseDown(wc, 1100)
+    expect(consumeAutomationMouseDown(wc, 4000)).toBe(true)
+    expect(consumeAutomationMouseDown(wc, 4000)).toBe(true)
+    // 보낸 것보다 많이 돌아온 누름은 사람이다
+    expect(consumeAutomationMouseDown(wc, 4000)).toBe(false)
+  })
+
+  it('오래된(10초 넘은) 누름 예약은 사람 클릭을 가리지 않는다', () => {
+    const wc = fakeWc()
+    expectAutomationMouseDown(wc, 1000)
+    expect(consumeAutomationMouseDown(wc, 1000 + 10_001)).toBe(false)
   })
 })
 

@@ -356,4 +356,22 @@ describe('click 마지막 폴백 — 진짜 마우스 클릭', () => {
     expect(pageBridge.clickAt).not.toHaveBeenCalled()
     expect(textOut(r)).toBe(NO_CHANGE)
   })
+
+  // 11번가 셀러오피스 상품 목록 체크칸 — 합성 클릭이 '됐다'고 답했는데 체크가 안 됐다(실기 10/30)
+  it('native=true 면 합성 클릭 없이 바로 진짜 마우스 클릭을 보낸다', async () => {
+    const { tools } = build(true)
+    const r = await get(tools, 'click').handler({ id: 100003, label: '체크', native: true })
+    expect(pageBridge.click).not.toHaveBeenCalled()
+    expect(pageBridge.rectOf).toHaveBeenCalledWith(fakeTab, 100003)
+    expect(pageBridge.clickAt).toHaveBeenCalledWith(fakeTab, 120, 340)
+    expect(textOut(r)).toContain('real mouse click sent')
+  })
+
+  it('native=true 인데 화면 위치를 모르면 실패를 알린다', async () => {
+    pageBridge.rectOf.mockImplementation(async () => null)
+    const { tools } = build(true)
+    const r = await get(tools, 'click').handler({ id: 3, label: '체크', native: true })
+    expect(pageBridge.clickAt).not.toHaveBeenCalled()
+    expect(textOut(r)).toContain('native click failed')
+  })
 })

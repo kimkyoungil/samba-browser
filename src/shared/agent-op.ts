@@ -18,8 +18,11 @@ export type AgentOp =
   | { op: 'fillValue'; id: number; value: string }
   | { op: 'submitForm'; id: number }
   | { op: 'isSecretField'; id: number }
-  // 요소 가운데의 뷰포트 좌표(실제 마우스 클릭을 보낼 자리). 메인 프레임에서만 쓴다
+  // 요소 가운데의 뷰포트 좌표(실제 마우스 클릭을 보낼 자리). 프레임에서는 그 프레임 안 좌표
   | { op: 'rectOf'; id: number }
+  // 이 프레임(iframe)이 부모 문서의 어디에 있는지 — 부모 뷰포트 기준 내용 영역 왼쪽 위. 프레임 안 요소를
+  // 진짜 마우스로 누를 때 좌표를 위로 합산한다(같은 출처 프레임만, 아니면 null)
+  | { op: 'frameOffset' }
   | { op: 'valueLength'; id: number }
   | { op: 'hasFocus'; id: number }
   | { op: 'focusEl'; id: number }

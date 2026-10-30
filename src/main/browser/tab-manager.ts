@@ -44,6 +44,7 @@ import {
   isAutomation,
   isBackgroundAutomation,
   isHumanInputEvent,
+  consumeAutomationMouseDown,
   lastHumanInWindowAt,
   markHuman,
   markHumanInWindow
@@ -1036,7 +1037,10 @@ export class TabManager {
     }
     wc.on('before-input-event', () => note('key'))
     wc.on('before-mouse-event', (_e, mouse) => {
-      if (isHumanMouseInput(mouse.type)) note('pointer')
+      if (!isHumanMouseInput(mouse.type)) return
+      // 자동화가 보낸 누름이 늦게 돌아온 것이면 사람으로 세지 않는다
+      if (consumeAutomationMouseDown(wc)) return
+      note('pointer')
     })
   }
 

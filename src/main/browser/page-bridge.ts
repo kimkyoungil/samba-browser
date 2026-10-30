@@ -25,7 +25,8 @@ import {
   isAutomation,
   markMachineInput,
   withAutomationInput,
-  withAutomationInputSync
+  withAutomationInputSync,
+  expectAutomationMouseDown
 } from './human-activity'
 
 // preload 가 실행되는 격리 월드 id. Electron 의 WorldId.ISOLATED_WORLD = 999
@@ -422,6 +423,8 @@ function opToCode(op: AgentOp): string {
       return `__samba.isSecretField(${op.id})`
     case 'rectOf':
       return `__samba.rectOf(${op.id})`
+    case 'frameOffset':
+      return 'null'
     case 'valueLength':
       return `__samba.valueLength(${op.id})`
     case 'hasFocus':
@@ -707,14 +710,32 @@ export const pageBridge = {
   /**
    * 요소 가운데의 뷰포트 좌표(스크롤 반영). 실제 마우스 클릭(clickAt)을 보낼 자리다.
    *
-   * iframe 안 요소는 지원하지 않는다 — 프레임의 화면 위치를 알려면 frame.frameElement 가
-   * 필요한데 메인 프로세스에서는 접근할 수 없어 좌표를 합산할 수 없다. 프레임 요소는
-   * preload 안의 폴백(합성 클릭·Enter·좌표 클릭)까지만 쓴다
+   * iframe 안 요소는 프레임 안 좌표에 프레임마다 '부모 문서 안 위치'(frameOffset — 그 프레임의 preload 가
+   * window.frameElement 로 잰다)를 위로 더해 탭 뷰포트 좌표로 바꾼다. 다른 출처 부모라 위치를 못 재면 null —
+   * 그때는 preload 안의 폴백(합성 클릭·Enter·좌표 클릭)까지만 쓴다
    */
   rectOf: async (tab: Tab, id: number): Promise<ClickPoint | null> => {
     const { frameIndex, id: localId } = decodeFrameId(id)
-    if (frameIndex !== 0) return null
-    return call(tab.view.webContents, opToCode({ op: 'rectOf', id: localId }), pointSchema)
+    const wc = tab.view.webContents
+    if (frameIndex === 0) return call(wc, opToCode({ op: 'rectOf', id: localId }), pointSchema)
+    if (wc.isDestroyed()) return null
+    const frame = agentSubFrames(wc)[frameIndex - 1]
+    if (!frame) return null
+    const inner = await callFrame(frame, { op: 'rectOf', id: localId }, pointSchema)
+    if (!inner) return null
+    let x = inner.x
+    let y = inner.y
+    // 프레임에서 메인까지 올라가며 각 프레임의 부모 안 위치를 더한다
+    let cur: WebFrameMain | null = frame
+    for (let depth = 0; cur && cur !== wc.mainFrame && depth < 8; depth++) {
+      const off = await callFrame(cur, { op: 'frameOffset' }, pointSchema).catch(() => null)
+      if (!off) return null
+      x += off.x
+      y += off.y
+      cur = cur.parent
+    }
+    if (cur !== wc.mainFrame) return null
+    return { x: Math.round(x), y: Math.round(y) }
   },
   /**
    * 뷰포트 좌표에 진짜 마우스 클릭을 보낸다(webContents.sendInputEvent).
@@ -731,6 +752,7 @@ export const pageBridge = {
     try {
       // 자동화의 클릭이 before-mouse-event 로 사람의 마우스 누름으로 세이지 않게 감싼다
       const send = (): void => {
+        expectAutomationMouseDown(wc)
         wc.sendInputEvent({ type: 'mouseDown', ...point })
         wc.sendInputEvent({ type: 'mouseUp', ...point })
       }
@@ -840,7 +862,9 @@ export const pageBridge = {
       }
       if (!focused) {
         giveBack()
-        console.warn('[type-login] 클릭 뒤 이 칸에 포커스가 없다 — 키 입력을 하지 않고 값 직접 넣기로')
+        console.warn(
+          '[type-login] 클릭 뒤 이 칸에 포커스가 없다 — 키 입력을 하지 않고 값 직접 넣기로'
+        )
         return pageBridge.fillValue(tab, id, value)
       }
       // 이미 든 값(아이디 저장 등)은 전체 선택으로 덮어쓴다
@@ -879,7 +903,9 @@ export const pageBridge = {
     )
     if (length !== value.length) {
       // 글자 수만 남긴다(값은 남기지 않는다)
-      console.warn(`[type-login] 키 입력 뒤 글자 수 ${length}/${value.length}, 포커스 ${wc.isFocused?.()} — 값 직접 넣기로`)
+      console.warn(
+        `[type-login] 키 입력 뒤 글자 수 ${length}/${value.length}, 포커스 ${wc.isFocused?.()} — 값 직접 넣기로`
+      )
       return pageBridge.fillValue(tab, id, value)
     }
     return 'ok'
@@ -922,6 +948,7 @@ export const pageBridge = {
       await pause(HUMAN_MOVE_MS)
       wc.sendInputEvent({ type: 'mouseMove', x: tx, y: ty })
       await pause(HUMAN_MOVE_MS)
+      expectAutomationMouseDown(wc)
       wc.sendInputEvent({ type: 'mouseDown', x: tx, y: ty, button: 'left', clickCount: 1 })
       await pause(HUMAN_PRESS_MS)
       wc.sendInputEvent({ type: 'mouseUp', x: tx, y: ty, button: 'left', clickCount: 1 })

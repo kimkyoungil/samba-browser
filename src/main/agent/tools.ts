@@ -1424,7 +1424,7 @@ ${handoffToolResult(result)}`
     return { tab, snapshot, tree: serializeSnapshot(snapshot) }
   }
 
-  const doClick = async (id: number, label: string): Promise<string> =>
+  const doClick = async (id: number, label: string, native = false): Promise<string> =>
     withPopupNotice(async () => {
       if (ctx.mode === 'read_only') return READ_ONLY_REFUSAL
       const tab = activeOr(ctx)
@@ -1439,11 +1439,21 @@ ${handoffToolResult(result)}`
         const ok = await ctx.confirm(`클릭: ${pageText || label}`, 'danger')
         if (!ok) return 'denied by user'
       }
+      // native=true: 합성 클릭 없이 바로 진짜 마우스 클릭 — 합성 클릭이 '됐다'고 답했는데 화면이 그대로인 칸
+      // (11번가 셀러오피스 상품 목록 체크칸, 실기 10/30 — Aside 는 진짜 마우스라 눌렸다)
+      if (native) {
+        const point = await pageBridge.rectOf(tab, id).catch(() => null)
+        if (!point) return 'native click failed: could not find where element is on screen'
+        if (!pageBridge.clickAt(tab, point.x, point.y))
+          return 'native click failed: a person is using this tab or the page is gone'
+        await pageBridge.waitForLoad(tab)
+        return 'ok: real mouse click sent (call get_page or screenshot to check)'
+      }
       const r = await pageBridge.click(tab, id)
       await pageBridge.waitForLoad(tab)
       // preload 의 폴백(합성 클릭 → Enter → 좌표 클릭)이 전부 헛돌았으면 마지막으로
       // 진짜 마우스 클릭을 보낸다. 합성 이벤트를 아예 믿지 않는 사이트(롯데온 주소 검색
-      // 결과의 '사용')가 있어서다. 프레임 안 요소는 좌표를 알 수 없어 여기서 끝낸다
+      // 결과의 '사용')가 있어서다. 프레임 안 요소도 프레임 위치를 더해 좌표를 구한다
       if (!r.includes(CLICK_NO_CHANGE_MARK)) return r
       const point = await pageBridge.rectOf(tab, id).catch(() => null)
       if (!point || !pageBridge.clickAt(tab, point.x, point.y)) return r
@@ -1636,9 +1646,20 @@ ${handoffToolResult(result)}`
 
   const click = tool(
     'click',
-    'For single actions; prefer run_js for sequences. Click element [n] from get_page.',
-    { id: z.number().int(), label: z.string().describe('element text, for logging') },
-    ({ id, label }) => guard(`클릭: ${label} (#${id})`, () => doClick(id, label), 'click')
+    'For single actions; prefer run_js for sequences. Click element [n] from get_page. ' +
+      'native=true sends a real mouse click at the element (also inside frames): use it when a click ' +
+      'answered ok but the page did not change, e.g. a list/grid checkbox still unchecked in a screenshot.',
+    {
+      id: z.number().int(),
+      label: z.string().describe('element text, for logging'),
+      native: z.boolean().optional().describe('real mouse click instead of a script click')
+    },
+    ({ id, label, native }) =>
+      guard(
+        `클릭${native ? '(마우스)' : ''}: ${label} (#${id})`,
+        () => doClick(id, label, native === true),
+        'click'
+      )
   )
 
   const typeTool = tool(
@@ -1833,11 +1854,12 @@ overlays left: ${after.length}${kept}`
         case 'page.clickNative': {
           const blocked = await payRefusal(asId(args[0]))
           if (blocked) return blocked
-          // 요소 가운데 좌표에 진짜 마우스 클릭(sendInputEvent). 프레임 안 요소는 좌표를 몰라 거절한다
+          // 요소 가운데 좌표에 진짜 마우스 클릭(sendInputEvent). 프레임 안 요소는 프레임 위치를 더한 좌표로(다른 출처라 못 재면 거절)
           const tab = activeOr(ctx)
           if (!tab) return 'no active tab'
           const point = await pageBridge.rectOf(tab, asId(args[0])).catch(() => null)
-          if (!point) return 'not found: element has no screen position (inside a frame or hidden)'
+          if (!point)
+            return 'not found: element has no screen position (hidden, or inside a cross-site frame)'
           return (await pageBridge.clickHuman(tab, point.x, point.y))
             ? 'ok'
             : 'failed: click not sent'

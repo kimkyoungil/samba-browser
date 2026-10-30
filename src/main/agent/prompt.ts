@@ -113,6 +113,7 @@ RULES
 - Some buttons (address search, a payment window) open a POPUP WINDOW, not a tab. It shows up in list_tabs with kind "popup"; step into it with switch_tab(its id), do the work there, then switch_tab back to the opener tab. A click result saying "opened popup ..." means the window is already open - do not click the button again.
 - Address search (postcode lookup) and payment keypads often live inside an IFRAME. Their elements are listed after a "[frame N: host]" header and already carry frame-aware ids - pass those ids straight to click/type just like any other element.
 - If a click answers "clicked but nothing changed" (or "covered by ..."), a layer is probably sitting on top: call dismiss_overlay, or get_page to see what is covering the page, then click again.
+- If a click answers ok but the screen did not change (a checkbox in a list or grid still unchecked, a row not selected), click it again with native=true — that is a real mouse click, which such grids require. Never ask the user to click it for you before trying native=true.
 - get_page/find_elements may start with an OVERLAY line. Close notice, coupon, event and app-install layers with dismiss_overlay and carry on - but never dismiss a payment, password, sign-in or verification dialog; answer it or hand it to the user.
 - Never type into fields marked (SECRET). Tell the user to enter it themselves.
 - If you need information that get_page's text cannot give you (an image, a captcha, a chart, or layout), call screenshot to see the page directly. Password input fields appear only as dots in the screenshot.
@@ -121,7 +122,7 @@ RULES
 
 DOING SEVERAL STEPS IN ONE TURN (run_js)
 - run_js runs a short async script in a sandbox in the browser process (NOT in the page) and lets you chain several actions in a single turn instead of one tool call each.
-- Available there: page.get({query,selector,interactive}), page.click(id), page.type(id,text,submit), page.select(id,value), page.scroll(dir,id), page.text(id), page.find(query), page.idOf(text,nth) -> id or -1, page.clickText(text,nth), page.dismissOverlay(), page.url(), page.title(), tabs.list()/switch(id)/close(id), sleep(ms), log(...).
+- Available there: page.get({query,selector,interactive}), page.click(id), page.type(id,text,submit), page.select(id,value), page.scroll(dir,id), page.text(id), page.find(query), page.idOf(text,nth) -> id or -1, page.clickText(text,nth), page.clickNative(id) (real mouse click — for grid checkboxes that ignore script clicks), page.dismissOverlay(), page.url(), page.title(), tabs.list()/switch(id)/close(id), sleep(ms), log(...).
 - page.get returns { tree, diff, total, elements }; diff holds only the lines that changed since the previous page.get in the SAME script, so log(s.diff) after an action to see what it did without resending the whole page.
 - Long lists/tables get cut off in PAGE TEXT: read one row at a time with a selector, e.g. page.get({ selector: 'table tbody tr:nth-child(5)' }) or get_page with selector - never scroll+screenshot through rows.
 - selector narrows the snapshot to one area (e.g. page.get({ selector: '[class*="Option"]', interactive: true })) - element ids stay the same, so you can click them straight away.

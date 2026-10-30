@@ -105,6 +105,27 @@ export function automationBlocked(wc: WebContents | null | undefined): string | 
   return humanBusy(wc) ? HUMAN_BUSY_REFUSAL : null
 }
 
+// 자동화가 보내고 아직 before-mouse-event 로 돌아오지 않은 마우스 누름 수 — 시각(꼬리 0.8초)만으로 가르면
+// 렌더러가 늦게 처리할 때(창이 가려짐·페이지가 바쁨) AI 자신의 클릭이 '사람 클릭'으로 세여 60초 동안 자기 클릭을
+// 막았다(실기 10/30: 프레임 안 체크칸 진짜 클릭이 "a person is using this tab" 으로 거절). 보낸 수만큼은 시각과 상관없이 뺀다
+const AUTOMATION_DOWN_TTL_MS = 10_000
+const pendingAutomationDowns = new WeakMap<WebContents, { n: number; until: number }>()
+
+/** 자동화가 이 탭에 마우스 누름을 하나 보낸다(돌아오는 before-mouse-event 하나를 사람 입력으로 세지 않게) */
+export function expectAutomationMouseDown(wc: WebContents, now = Date.now()): void {
+  const cur = pendingAutomationDowns.get(wc)
+  const n = (cur && cur.until > now ? cur.n : 0) + 1
+  pendingAutomationDowns.set(wc, { n, until: now + AUTOMATION_DOWN_TTL_MS })
+}
+
+/** 돌아온 마우스 누름이 자동화가 보낸 것이면 하나 빼고 true */
+export function consumeAutomationMouseDown(wc: WebContents, now = Date.now()): boolean {
+  const cur = pendingAutomationDowns.get(wc)
+  if (!cur || cur.until <= now || cur.n <= 0) return false
+  cur.n -= 1
+  return true
+}
+
 /** 동기 입력(clickAt 처럼 기다리지 않는 sendInputEvent)을 감싼다 — 그 이벤트를 사람 입력으로 세지 않게 */
 export function withAutomationInputSync<T>(wc: WebContents, fn: () => T): T {
   automationDepth.set(wc, (automationDepth.get(wc) ?? 0) + 1)

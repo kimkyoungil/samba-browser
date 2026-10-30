@@ -286,7 +286,7 @@ describe('pageBridge.rectOf / clickAt — 실제 마우스 클릭 폴백', () =>
   it('메인 프레임 요소의 좌표를 격리 월드에서 물어본다', async () => {
     const { tab, mainCalls } = fakeTab({ x: 120, y: 340 }, [])
     expect(await pageBridge.rectOf(tab, 7)).toEqual({ x: 120, y: 340 })
-    expect(mainCalls).toEqual(['__samba.rectOf(7)'])
+    expect(mainCalls).toEqual(['__samba.rectOf(7, false)'])
   })
 
   // 11번가 셀러오피스 상품 목록(iframe) 체크칸 — 합성 클릭을 무시해 진짜 마우스로 눌러야 했다(실기 10/30)
@@ -296,7 +296,11 @@ describe('pageBridge.rectOf / clickAt — 실제 마우스 클릭 폴백', () =>
     const { tab, mainCalls } = fakeTab({ x: 1, y: 2 }, [{ url: POSTCODE, result: grid }])
     expect(await pageBridge.rectOf(tab, 100015)).toEqual({ x: 130, y: 240 })
     expect(mainCalls).toEqual([])
-    expect(frameCalls.map((c) => c.op)).toEqual([{ op: 'rectOf', id: 15 }, { op: 'frameOffset' }])
+    // 프레임 위치를 물을 때 프레임 안 좌표도 같이 보내 부모 문서에서 덮였는지 본다
+    expect(frameCalls.map((c) => c.op)).toEqual([
+      { op: 'rectOf', id: 15, center: false },
+      { op: 'frameOffset', x: 30, y: 40 }
+    ])
   })
 
   it('프레임 안 프레임은 위로 올라가며 위치를 모두 더한다', async () => {
@@ -309,6 +313,20 @@ describe('pageBridge.rectOf / clickAt — 실제 마우스 클릭 폴백', () =>
     }
     const { tab } = fakeTab(null, [outer, inner])
     expect(await pageBridge.rectOf(tab, 200007)).toEqual({ x: 115, y: 125 })
+  })
+
+  // 11번가 702px 화면: 부모 문서의 왼쪽 고정 메뉴가 iframe 의 전체 선택 칸 자리를 덮었다(실기 10/30)
+  it('부모 문서에서 그 자리를 다른 요소가 덮었으면 covered 를 붙여 준다', async () => {
+    const grid = (op: Record<string, unknown>): unknown =>
+      op.op === 'rectOf'
+        ? { x: 30, y: 40 }
+        : { x: 100, y: 200, covered: 'link "신규상품 대량등록"' }
+    const { tab } = fakeTab(null, [{ url: POSTCODE, result: grid }])
+    expect(await pageBridge.rectOf(tab, 100015)).toEqual({
+      x: 130,
+      y: 240,
+      covered: 'link "신규상품 대량등록"'
+    })
   })
 
   it('프레임 위치를 못 재면(다른 출처 부모) null 이다', async () => {
@@ -401,7 +419,7 @@ describe('pageBridge.typeLogin — 로그인 칸 진짜 키 입력', () => {
     const { tab, mainCalls, inputEvents } = typingTab([{ x: 10, y: 20 }, true, 3])
     expect(await pageBridge.typeLogin(tab, 5, 'a@1')).toBe('ok')
     expect(mainCalls).toEqual([
-      '__samba.rectOf(5)',
+      '__samba.rectOf(5, false)',
       '__samba.hasFocus(5)',
       '__samba.valueLength(5)'
     ])

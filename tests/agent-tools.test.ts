@@ -367,6 +367,31 @@ describe('click 마지막 폴백 — 진짜 마우스 클릭', () => {
     expect(textOut(r)).toContain('real mouse click sent')
   })
 
+  // 11번가 702px: 고정 메뉴가 전체 선택 칸을 덮어 진짜 클릭이 메뉴에 떨어졌다(실기 10/30) — 덮였으면 누르지 않는다
+  it('끝까지 덮인 자리는 진짜 클릭을 보내지 않고 덮은 것을 알린다', async () => {
+    pageBridge.rectOf.mockImplementation(async () => ({
+      x: 120,
+      y: 340,
+      covered: 'link "신규상품 대량등록"'
+    }))
+    const { tools } = build(true)
+    const r = await get(tools, 'click').handler({ id: 100003, label: '체크', native: true })
+    expect(pageBridge.clickAt).not.toHaveBeenCalled()
+    expect(textOut(r)).toContain('신규상품 대량등록')
+    expect(textOut(r)).toContain('is on top')
+  })
+
+  it('처음엔 덮였어도 가운데로 스크롤해 다시 잰 자리가 비면 누른다', async () => {
+    pageBridge.rectOf
+      .mockImplementationOnce(async () => ({ x: 5, y: 340, covered: 'link "메뉴"' }))
+      .mockImplementationOnce(async () => ({ x: 400, y: 340 }))
+    const { tools } = build(true)
+    const r = await get(tools, 'click').handler({ id: 100003, label: '체크', native: true })
+    expect(pageBridge.rectOf).toHaveBeenLastCalledWith(fakeTab, 100003, true)
+    expect(pageBridge.clickAt).toHaveBeenCalledWith(fakeTab, 400, 340)
+    expect(textOut(r)).toContain('real mouse click sent')
+  })
+
   it('native=true 인데 화면 위치를 모르면 실패를 알린다', async () => {
     pageBridge.rectOf.mockImplementation(async () => null)
     const { tools } = build(true)

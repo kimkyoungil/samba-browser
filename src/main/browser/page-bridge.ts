@@ -165,12 +165,16 @@ const resultSchema = z.string()
 // isSecretField 결과는 boolean
 const boolSchema = z.boolean()
 
-// rectOf 결과 — 요소 가운데의 뷰포트 좌표. 못 구하면 null
-const pointSchema = z.object({ x: z.number(), y: z.number() }).nullable()
+// rectOf 결과 — 요소 가운데의 뷰포트 좌표. 못 구하면 null. 그 자리를 다른 누를 것이 덮었으면 covered(짧은 이름)
+const pointSchema = z
+  .object({ x: z.number(), y: z.number(), covered: z.string().max(80).optional() })
+  .nullable()
 
 export interface ClickPoint {
   x: number
   y: number
+  /** 진짜 클릭이 대상 대신 떨어질 요소('link "신규상품 대량등록"' 꼴). 없으면 그 자리는 대상이다 */
+  covered?: string
 }
 
 // findLoginFields 결과 — 못 찾은 필드는 없음(undefined).
@@ -436,7 +440,7 @@ function opToCode(op: AgentOp): string {
     case 'isSecretField':
       return `__samba.isSecretField(${op.id})`
     case 'rectOf':
-      return `__samba.rectOf(${op.id})`
+      return `__samba.rectOf(${op.id}, ${op.center === true})`
     case 'frameOffset':
       return 'null'
     case 'valueLength':
@@ -729,28 +733,33 @@ export const pageBridge = {
    * window.frameElement 로 잰다)를 위로 더해 탭 뷰포트 좌표로 바꾼다. 다른 출처 부모라 위치를 못 재면 null —
    * 그때는 preload 안의 폴백(합성 클릭·Enter·좌표 클릭)까지만 쓴다
    */
-  rectOf: async (tab: Tab, id: number): Promise<ClickPoint | null> => {
+  rectOf: async (tab: Tab, id: number, center = false): Promise<ClickPoint | null> => {
     const { frameIndex, id: localId } = decodeFrameId(id)
     const wc = tab.view.webContents
-    if (frameIndex === 0) return call(wc, opToCode({ op: 'rectOf', id: localId }), pointSchema)
+    if (frameIndex === 0)
+      return call(wc, opToCode({ op: 'rectOf', id: localId, center }), pointSchema)
     if (wc.isDestroyed()) return null
     const frame = agentSubFrames(wc)[frameIndex - 1]
     if (!frame) return null
-    const inner = await callFrame(frame, { op: 'rectOf', id: localId }, pointSchema)
+    const inner = await callFrame(frame, { op: 'rectOf', id: localId, center }, pointSchema)
     if (!inner) return null
     let x = inner.x
     let y = inner.y
-    // 프레임에서 메인까지 올라가며 각 프레임의 부모 안 위치를 더한다
+    let covered = inner.covered
+    // 프레임에서 메인까지 올라가며 각 프레임의 부모 안 위치를 더한다. 부모 문서에서 그 자리를 다른 요소가
+    // 덮었는지도 같이 본다(가장 바깥에서 덮은 것이 진짜 클릭을 받는다)
     let cur: WebFrameMain | null = frame
     for (let depth = 0; cur && cur !== wc.mainFrame && depth < 8; depth++) {
-      const off = await callFrame(cur, { op: 'frameOffset' }, pointSchema).catch(() => null)
+      const off = await callFrame(cur, { op: 'frameOffset', x, y }, pointSchema).catch(() => null)
       if (!off) return null
       x += off.x
       y += off.y
+      if (off.covered) covered = off.covered
       cur = cur.parent
     }
     if (cur !== wc.mainFrame) return null
-    return { x: Math.round(x), y: Math.round(y) }
+    const point = { x: Math.round(x), y: Math.round(y) }
+    return covered ? { ...point, covered } : point
   },
   /**
    * 뷰포트 좌표에 진짜 마우스 클릭을 보낸다(webContents.sendInputEvent).

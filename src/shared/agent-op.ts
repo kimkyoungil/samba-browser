@@ -19,10 +19,12 @@ export type AgentOp =
   | { op: 'submitForm'; id: number }
   | { op: 'isSecretField'; id: number }
   // 요소 가운데의 뷰포트 좌표(실제 마우스 클릭을 보낼 자리). 프레임에서는 그 프레임 안 좌표
-  | { op: 'rectOf'; id: number }
+  // center: 가로로도 가운데로 스크롤해 잰다(고정 메뉴 밑에 깔린 칸을 꺼낼 때). 결과에 덮은 것(covered)이 붙을 수 있다
+  | { op: 'rectOf'; id: number; center?: boolean }
   // 이 프레임(iframe)이 부모 문서의 어디에 있는지 — 부모 뷰포트 기준 내용 영역 왼쪽 위. 프레임 안 요소를
   // 진짜 마우스로 누를 때 좌표를 위로 합산한다(같은 출처 프레임만, 아니면 null)
-  | { op: 'frameOffset' }
+  // x·y(이 프레임 안 좌표)를 주면 부모 문서에서 그 자리를 다른 요소가 덮었는지(covered)도 본다
+  | { op: 'frameOffset'; x?: number; y?: number }
   | { op: 'valueLength'; id: number }
   | { op: 'hasFocus'; id: number }
   | { op: 'focusEl'; id: number }

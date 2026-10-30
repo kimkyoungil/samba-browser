@@ -696,13 +696,41 @@ export function coveringElement(el: HTMLElement): HTMLElement | null {
  * 요소 가운데의 뷰포트 좌표(스크롤 반영). 메인 프로세스가 실제 마우스 클릭
  * (webContents.sendInputEvent)을 보낼 자리다. 요소가 없거나 크기가 0 이면 null
  */
-export function rectOf(id: number): ClickPoint | null {
+export function rectOf(id: number, center = false): (ClickPoint & { covered?: string }) | null {
   const el = get(id)
   if (!el) return null
-  el.scrollIntoView?.({ block: 'center' })
+  // center: 가로로도 가운데로 — 왼쪽 고정 메뉴 밑으로 밀려 들어간 칸을 꺼낸다
+  el.scrollIntoView?.({ block: 'center', inline: center ? 'center' : 'nearest' })
   const point = centerPointOf(el)
   if (!point) return null
-  return { x: Math.round(point.x), y: Math.round(point.y) }
+  const x = Math.round(point.x)
+  const y = Math.round(point.y)
+  const covered = interactiveCoverAt(el, x, y)
+  return covered ? { x, y, covered } : { x, y }
+}
+
+/** 덮고 있는 요소를 사람이 알아볼 짧은 이름으로 — '링크 "신규상품 대량등록"' 꼴 */
+function coverLabel(el: Element): string {
+  const role = el.getAttribute('role') || el.tagName.toLowerCase()
+  const text = el instanceof HTMLElement ? labelOf(el) : ''
+  return text ? `${role} "${text.slice(0, 40)}"` : role
+}
+
+/**
+ * 진짜 클릭이 대상 대신 다른 '누를 수 있는 것'에 떨어지는가. 대상·그 안·그 바깥 껍데기·대상의 label 은 괜찮다.
+ * 누를 수 없는 투명 덮개(그리드가 좌표로 칸을 찾는 판)는 막지 않는다 — 그 판이 클릭을 받는 사이트가 있다
+ */
+function interactiveCoverAt(el: HTMLElement, x: number, y: number): string | null {
+  if (typeof document.elementFromPoint !== 'function') return null
+  const hit = document.elementFromPoint(x, y)
+  if (!hit || hit === el || el.contains(hit) || hit.contains(el)) return null
+  const label = hit.closest('label')
+  if (label && (label.contains(el) || (label as HTMLLabelElement).control === el)) return null
+  const clickable = hit.closest(
+    'a[href],button,input,select,textarea,[role=button],[role=link],[role=menuitem],[role=tab],[onclick]'
+  )
+  if (!clickable || clickable.contains(el)) return null
+  return coverLabel(clickable)
 }
 
 /** iframe 요소가 부모 문서에 그려지는가(display:none·visibility:hidden·크기 0 이면 아니다) */
@@ -741,18 +769,33 @@ export function frameHidden(): boolean {
  * 프레임 안 요소를 진짜 마우스로 누를 때 메인 프로세스가 좌표를 위로 합산한다 — 11번가 셀러오피스
  * 상품 목록(iframe) 체크칸이 합성 클릭에 반응하지 않았다(실기 10/30). 다른 출처 부모면 접근이 막혀 null
  */
-export function frameOffset(): ClickPoint | null {
+export function frameOffset(local?: ClickPoint): (ClickPoint & { covered?: string }) | null {
   try {
     const fe = window.frameElement as HTMLElement | null
     if (!fe) return null
     // 그려지지 않는 프레임(숨은 화면 탭의 iframe)은 위치가 0,0 으로 나와 진짜 클릭이 엉뚱한 곳(왼쪽 메뉴)에 떨어졌다
     if (!frameElementShown(fe)) return null
-    fe.scrollIntoView?.({ block: 'nearest' })
+    // 여기서 iframe 을 다시 스크롤하지 않는다 — 안쪽 요소의 scrollIntoView 가 바깥 문서까지 이미 맞춰 놓았는데,
+    // 화면보다 넓은 iframe 을 nearest 로 다시 맞추면 바깥 문서가 되밀려 칸이 화면 왼쪽 밖(음수 좌표)으로 나갔다
     const r = fe.getBoundingClientRect()
     const cs = fe.ownerDocument.defaultView?.getComputedStyle(fe)
     const padL = cs ? parseFloat(cs.paddingLeft) || 0 : 0
     const padT = cs ? parseFloat(cs.paddingTop) || 0 : 0
-    return { x: r.left + fe.clientLeft + padL, y: r.top + fe.clientTop + padT }
+    const x = r.left + fe.clientLeft + padL
+    const y = r.top + fe.clientTop + padT
+    if (!local) return { x, y }
+    // 부모 문서에서 그 자리를 덮은 게 이 iframe 이 아니면(왼쪽 고정 메뉴·모달) 진짜 클릭이 거기에 떨어진다 —
+    // 11번가 셀러오피스 702px 화면에서 고정 메뉴가 표의 전체 선택 칸을 덮었다(실기 10/30)
+    const doc = fe.ownerDocument
+    const hit =
+      typeof doc.elementFromPoint === 'function'
+        ? doc.elementFromPoint(x + local.x, y + local.y)
+        : fe
+    if (!hit || hit === fe) return { x, y }
+    const clickable = hit.closest(
+      'a[href],button,input,select,textarea,[role=button],[role=link],[role=menuitem],[role=tab],[onclick]'
+    )
+    return { x, y, covered: coverLabel(clickable ?? hit) }
   } catch {
     return null
   }
@@ -2046,6 +2089,9 @@ export function runAgentOp(raw: unknown): unknown {
     selector?: unknown
     submit?: unknown
     dir?: unknown
+    x?: unknown
+    y?: unknown
+    center?: unknown
   }
   const id = typeof r.id === 'number' ? r.id : 0
   const text = typeof r.text === 'string' ? r.text : ''
@@ -2079,9 +2125,11 @@ export function runAgentOp(raw: unknown): unknown {
     case 'isSecretField':
       return isSecretField(id)
     case 'rectOf':
-      return rectOf(id)
+      return rectOf(id, r.center === true)
     case 'frameOffset':
-      return frameOffset()
+      return frameOffset(
+        typeof r.x === 'number' && typeof r.y === 'number' ? { x: r.x, y: r.y } : undefined
+      )
     case 'keypadSignals':
       return keypadSignals()
     case 'keypadLayout':

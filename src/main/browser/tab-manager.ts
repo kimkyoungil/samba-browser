@@ -2,6 +2,7 @@ import {
   app,
   BrowserWindow,
   WebContentsView,
+  screen,
   session,
   type Input,
   type Session,
@@ -365,9 +366,16 @@ export class TabManager {
     return this.win
   }
 
+  // 노든 창이 최소화된 동안 페이지가 열어 화면 밖에 띄워 둔 팝업 창(parkPopup)
+  private parkedPopups = new Set<BrowserWindow>()
+
   constructor(private win: BrowserWindow) {
     // 창이 닫히면 남은 리스너·탭을 정리해 파괴된 창에 접근하지 않게 한다
     win.once('closed', () => this.dispose())
+    // 노든 창을 다시 열면 화면 밖에 띄워 둔 팝업도 제자리(부모 창 가운데)로 꺼낸다
+    win.on('restore', () => {
+      for (const p of [...this.parkedPopups]) this.unparkPopup(p)
+    })
     // 창 크기가 바뀌면 렌더러 보고를 기다리지 않고 메인이 먼저 맞춘다.
     // (최대화·복원·드래그 리사이즈 때 렌더러 보고가 누락되면 이전 크기가 그대로 남아
     //  웹페이지가 카드 밖까지 그려지던 문제를 막는다)
@@ -749,7 +757,9 @@ export class TabManager {
       if (!popup.win.isDestroyed()) {
         // 사람이 이 창을 쓰는 중이거나 노든이 OS 포커스를 갖지 않았으면(최소화·다른 앱을 쓰는 중) 포커스를
         // 가져가지 않는다 — 숨어 있으면 포커스 없이 보여만 준다(사장님 10/30 "최소화시켜놨는데 왜 자꾸 혼자 튀어나오냐")
-        if (this.holdVisible() || BrowserWindow.getFocusedWindow() === null) {
+        if (this.parkedPopups.has(popup.win)) {
+          // 노든 창이 최소화된 동안 화면 밖에 띄워 둔 팝업 — AI 가 다룬다고 사람 화면으로 꺼내지 않는다
+        } else if (this.holdVisible() || BrowserWindow.getFocusedWindow() === null) {
           if (!popup.win.isVisible()) popup.win.showInactive()
         } else {
           popup.win.show()
@@ -980,7 +990,8 @@ export class TabManager {
       // 브라우저 프로세스가 죽는 경우가 있었다), did-create-window 에서 받아 추적만 한다
       // 보이지 않는 탭(자동화가 뒤에서 조작하는 탭)이 연 팝업 창은 포커스를 가져가지 않게 숨긴 채 만들고
       // did-create-window 에서 showInactive 로 띄운다 — 사람이 쓰던 창의 키 입력이 팝업으로 넘어가지 않게
-      const quiet = openInBackground(tab.id, o.activeId)
+      // 노든 창이 최소화돼 있어도 숨긴 채 만든다 — registerPopup 이 화면 밖에 띄운다(사람 화면에 튀어나오지 않게)
+      const quiet = openInBackground(tab.id, o.activeId) || o.win.isMinimized()
       googlePopupTarget = isGoogleSigninUrl(target)
       return {
         action: 'allow',
@@ -1153,6 +1164,26 @@ export class TabManager {
     )
   }
 
+  /**
+   * 보이는 탭이 PC 화면 폭(1280)보다 좁으면 fn 동안만 PC 폭으로 배치한다 — 좁은 화면에서 왼쪽 고정 메뉴가 표의
+   * 칸을 덮어 진짜 클릭이 메뉴에 떨어지던 것(11번가 셀러오피스 702px, 실기 10/30). 끝나면 원래 폭으로 돌린다
+   */
+  async withDesktopLayout<T>(tab: Tab, fn: () => Promise<T>): Promise<T> {
+    if (!isTabAlive(tab) || tab.mobile) return fn()
+    const wc = tab.view.webContents
+    const b = tab.view.getBounds()
+    // 숨은 탭은 이미 PC 폭으로 배치돼 있다(fitCollapsed)
+    if (collapsedSized.has(wc) || b.width >= COLLAPSED_MIN_WIDTH) return fn()
+    await applyCollapsedSize(wc, COLLAPSED_MIN_WIDTH, Math.max(b.height, COLLAPSED_MIN_HEIGHT))
+    // 새 폭으로 다시 그려질 틈
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    try {
+      return await fn()
+    } finally {
+      if (!collapsedSized.has(wc) && isTabAlive(tab)) await clearCollapsedSize(wc)
+    }
+  }
+
   /** 더는 뒤에서 조작하지 않는 탭(자동화 대상도 레인도 아님)을 뒤 층에서 뗀다. 보이는 탭은 떼지 않는다 */
   private pruneBehind(): void {
     if (this.disposed || this.win.isDestroyed()) return
@@ -1255,6 +1286,42 @@ export class TabManager {
     win.setPosition(x, y)
   }
 
+  /**
+   * 노든 창이 최소화된 동안 페이지가 연 팝업 창은 모든 화면 밖(왼쪽)에 포커스 없이 띄워 둔다 — 최소화해 둔 노든에서
+   * AI 가 11번가를 다루는 동안 팝업이 사람 화면에 튀어나오지 않게(사장님 10/30 "최소화시켜놨는데 왜 자꾸 혼자
+   * 튀어나오냐"). 숨김·최소화가 아니라 화면 밖이라 AI 는 그 안을 그대로 읽고 누른다(스로틀링 끔).
+   * 노든 창을 다시 열거나 작업 표시줄에서 그 팝업을 누르면 제자리로 꺼낸다
+   */
+  private parkPopup(win: BrowserWindow): void {
+    if (win.isDestroyed()) return
+    let left = 0
+    try {
+      left = Math.min(...screen.getAllDisplays().map((d) => d.bounds.x))
+    } catch {
+      left = 0
+    }
+    const [w, h] = win.getSize()
+    win.webContents.setBackgroundThrottling(false)
+    win.setBounds({ x: left - w - 200, y: 0, width: w, height: h })
+    win.showInactive()
+    this.parkedPopups.add(win)
+    // 사람이 작업 표시줄에서 그 팝업을 눌러 실제로 활성화했을 때만 꺼낸다(페이지 안 포커스 이동은 무시)
+    const onFocus = (): void => {
+      if (win.isDestroyed() || !win.isFocused()) return
+      win.off('focus', onFocus)
+      this.unparkPopup(win)
+    }
+    win.on('focus', onFocus)
+    win.once('closed', () => this.parkedPopups.delete(win))
+  }
+
+  /** 화면 밖에 띄워 둔 팝업을 부모 창 가운데로 꺼낸다 */
+  private unparkPopup(win: BrowserWindow): void {
+    if (!this.parkedPopups.delete(win) || win.isDestroyed()) return
+    this.centerPopup(win)
+    win.webContents.setBackgroundThrottling(true)
+  }
+
   /** 팝업 창을 추적 목록에 넣고, 닫히면 뺀다. 페이지 조작 훅은 탭과 같은 것을 붙인다 */
   private registerPopup(win: BrowserWindow, openerId: string, profile: string): void {
     const popup = this.popups.add({
@@ -1298,6 +1365,8 @@ export class TabManager {
         action: 'allow',
         overrideBrowserWindowOptions: {
           autoHideMenuBar: true,
+          // 노든 창이 최소화돼 있으면 숨긴 채 만들어 registerPopup 이 화면 밖에 띄운다
+          ...(this.win.isMinimized() ? { show: false } : {}),
           // 여는 창과 같은 세션(partition)을 명시한다 — 덮어쓴 webPreferences 는 세션을 물려받지 않는다
           webPreferences: {
             nodeIntegrationInSubFrames: true,
@@ -1308,6 +1377,8 @@ export class TabManager {
     })
     wc.on('did-create-window', (child) => this.registerPopup(child, openerId, profile))
     win.on('close', (event) => this.popups.handleClose(popup, () => event.preventDefault()))
+    // 노든 창이 최소화된 동안 열린 팝업은 사람 화면 밖에 띄운다
+    if (!this.win.isDestroyed() && this.win.isMinimized() && !win.isVisible()) this.parkPopup(win)
     win.once('closed', () => {
       this.popups.remove(popup)
       this.lastDialogMessage.delete(popup.id)

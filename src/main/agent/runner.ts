@@ -189,7 +189,7 @@ export const CODEX_PC_LOCK_NOTE = [
  * 꼭 닿아야 할 안내를 더하면 이 값을 올린다 — 옛 판으로 연 스레드는 한 번 앞부분 요약 + 새 스레드로 다시 연다
  * (실기 10/29: '노든 설정 = localhost:3000/samba/settings' 안내가 이미 열린 대화에는 닿지 않았다)
  */
-export const CODEX_PROMPT_REVISION = '2026-10-29c'
+export const CODEX_PROMPT_REVISION = '2026-10-30a'
 
 /** 스레드를 연 지시의 지문 — 지시문 판 + 개발자 지시. 다음 말은 이 값이 같을 때만 그 스레드를 이어받는다 */
 export function codexThreadKey(devNote: string): string {

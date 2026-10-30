@@ -1424,6 +1424,42 @@ ${handoffToolResult(result)}`
     return { tab, snapshot, tree: serializeSnapshot(snapshot) }
   }
 
+  // realClick 이 못 보낸 까닭 중 '찾지 못함'(숨음·다른 출처 프레임)
+  const NO_SCREEN_POSITION = 'could not find where the element is on screen'
+  const COVERED_PREFIX = 'covered:'
+
+  /**
+   * 요소에 진짜 마우스 클릭을 보낸다. 그 자리를 다른 누를 것(왼쪽 고정 메뉴·모달)이 덮었으면 가로로도 가운데로
+   * 스크롤해 다시 재고, 그래도 덮였는데 탭이 PC 폭보다 좁으면 잠깐 PC 폭으로 배치해 누른다. 끝까지 덮였으면
+   * 누르지 않는다 — 11번가 702px 화면에서 고정 메뉴가 표의 전체 선택 칸을 덮어 엉뚱한 메뉴가 눌렸다(실기 10/30)
+   * @returns null = 보냄, 아니면 못 보낸 까닭(AI 에게 그대로 준다)
+   */
+  const realClick = async (tab: Tab, id: number, human = false): Promise<string | null> => {
+    // 화면 밖(음수 좌표)도 덮인 것처럼 다룬다 — 가운데로 다시 스크롤하면 들어온다
+    const offScreen = (p: { x: number; y: number }): boolean => p.x < 0 || p.y < 0
+    const send = async (): Promise<string | null> => {
+      let point = await pageBridge.rectOf(tab, id).catch(() => null)
+      if (point && (point.covered || offScreen(point)))
+        point = await pageBridge.rectOf(tab, id, true).catch(() => null)
+      if (!point) return NO_SCREEN_POSITION
+      if (point.covered) return `${COVERED_PREFIX}${point.covered}`
+      if (offScreen(point))
+        return `${COVERED_PREFIX}the page edge (the element is outside the visible area)`
+      const sent = human
+        ? await pageBridge.clickHuman(tab, point.x, point.y)
+        : pageBridge.clickAt(tab, point.x, point.y)
+      return sent ? null : 'a person is using this tab or the page is gone'
+    }
+    const first = await send()
+    if (!first?.startsWith(COVERED_PREFIX)) return first
+    const second =
+      typeof ctx.tabs.withDesktopLayout === 'function'
+        ? await ctx.tabs.withDesktopLayout(tab, send)
+        : first
+    if (!second?.startsWith(COVERED_PREFIX)) return second
+    return `${second.slice(COVERED_PREFIX.length)} is on top of that spot (a menu, banner or popup covers it) - close or move it, then try again`
+  }
+
   const doClick = async (id: number, label: string, native = false): Promise<string> =>
     withPopupNotice(async () => {
       if (ctx.mode === 'read_only') return READ_ONLY_REFUSAL
@@ -1442,10 +1478,8 @@ ${handoffToolResult(result)}`
       // native=true: 합성 클릭 없이 바로 진짜 마우스 클릭 — 합성 클릭이 '됐다'고 답했는데 화면이 그대로인 칸
       // (11번가 셀러오피스 상품 목록 체크칸, 실기 10/30 — Aside 는 진짜 마우스라 눌렸다)
       if (native) {
-        const point = await pageBridge.rectOf(tab, id).catch(() => null)
-        if (!point) return 'native click failed: could not find where element is on screen'
-        if (!pageBridge.clickAt(tab, point.x, point.y))
-          return 'native click failed: a person is using this tab or the page is gone'
+        const why = await realClick(tab, id)
+        if (why) return `native click failed: ${why}`
         await pageBridge.waitForLoad(tab)
         return 'ok: real mouse click sent (call get_page or screenshot to check)'
       }
@@ -1455,8 +1489,9 @@ ${handoffToolResult(result)}`
       // 진짜 마우스 클릭을 보낸다. 합성 이벤트를 아예 믿지 않는 사이트(롯데온 주소 검색
       // 결과의 '사용')가 있어서다. 프레임 안 요소도 프레임 위치를 더해 좌표를 구한다
       if (!r.includes(CLICK_NO_CHANGE_MARK)) return r
-      const point = await pageBridge.rectOf(tab, id).catch(() => null)
-      if (!point || !pageBridge.clickAt(tab, point.x, point.y)) return r
+      const why = await realClick(tab, id)
+      // 덮였으면 그 까닭을 붙여 준다(엉뚱한 곳을 누르지 않았다) — 위치를 모르거나 못 보냈으면 합성 결과 그대로
+      if (why) return why.includes('is on top') ? `${r}; real mouse click not sent: ${why}` : r
       await pageBridge.waitForLoad(tab)
       return `${r}; via native click (retried with a real mouse click; call get_page to check)`
     })
@@ -1857,12 +1892,11 @@ overlays left: ${after.length}${kept}`
           // 요소 가운데 좌표에 진짜 마우스 클릭(sendInputEvent). 프레임 안 요소는 프레임 위치를 더한 좌표로(다른 출처라 못 재면 거절)
           const tab = activeOr(ctx)
           if (!tab) return 'no active tab'
-          const point = await pageBridge.rectOf(tab, asId(args[0])).catch(() => null)
-          if (!point)
+          const why = await realClick(tab, asId(args[0]), true)
+          if (!why) return 'ok'
+          if (why === NO_SCREEN_POSITION)
             return 'not found: element has no screen position (hidden, or inside a cross-site frame)'
-          return (await pageBridge.clickHuman(tab, point.x, point.y))
-            ? 'ok'
-            : 'failed: click not sent'
+          return `failed: ${why}`
         }
         case 'page.clickText': {
           const id = await idOfText(asText(args[0]), asId(args[1]))

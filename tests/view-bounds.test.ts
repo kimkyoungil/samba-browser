@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest'
-import { computeViewBounds } from '../src/main/browser/tab-manager'
+import {
+  COLLAPSED_MIN_HEIGHT,
+  COLLAPSED_MIN_WIDTH,
+  computeBehindBounds,
+  computeViewBounds,
+  needsCollapsedSize
+} from '../src/main/browser/tab-manager'
 import type { Layout } from '../src/shared/ipc'
 
 // 렌더러가 1440x900 뷰포트에서 잰 실측값(계산 로직 자체는 여백 수치에 의존하지 않으므로
@@ -77,5 +83,58 @@ describe('computeViewBounds', () => {
     expect(b.width).toBe(300)
     expect(b.x).toBe(10)
     expect(b.height).toBe(500)
+  })
+})
+
+// 실기 10/30: 폰으로 대화만 보던 중(브라우저 영역 접힘) 재시작 뒤 만든 11번가 탭이 0×0 으로 배치돼
+// AI 의 진짜 클릭이 엉뚱한 메뉴에 떨어졌다 — 접혀도 창 밖에 PC 화면 크기로 둔다
+describe('computeBehindBounds — 접힌 브라우저 영역', () => {
+  const collapsed: Layout = {
+    x: 0,
+    y: 0,
+    width: 0,
+    height: 0,
+    viewportWidth: 390,
+    viewportHeight: 844
+  }
+
+  it('PC 창이면 창 크기 그대로 창 밖(왼쪽)에 둔다', () => {
+    const b = computeBehindBounds(collapsed, 1440, 900, false, false)
+    expect(b).toMatchObject({ x: -1440, y: 0, width: 1440, height: 900 })
+  })
+
+  it('폰 폭 창이어도 PC 최소 크기로 둔다', () => {
+    const b = computeBehindBounds(collapsed, 390, 844, false, false)
+    expect(b).toMatchObject({
+      x: -COLLAPSED_MIN_WIDTH,
+      width: COLLAPSED_MIN_WIDTH,
+      height: Math.max(844, COLLAPSED_MIN_HEIGHT)
+    })
+  })
+
+  it('보이는 영역이 있으면 그 자리를 그대로 쓴다', () => {
+    expect(computeBehindBounds(reported, 1440, 900, false, false)).toEqual(
+      computeViewBounds(reported, 1440, 900)
+    )
+  })
+
+  it('로그인 게이트 중에는 0 크기', () => {
+    expect(computeBehindBounds(collapsed, 1440, 900, false, true).width).toBe(0)
+  })
+})
+
+describe('needsCollapsedSize — 숨은 탭에 PC 화면 크기 흉내를 거는가', () => {
+  it('접힌 동안 만들어 실제 크기를 한 번도 못 받은 탭은 건다', () => {
+    expect(needsCollapsedSize(false, false, undefined)).toBe(true)
+  })
+  it('마지막으로 폰 폭 창에서 보였던 탭은 건다', () => {
+    expect(needsCollapsedSize(false, false, 390)).toBe(true)
+  })
+  it('PC 창에서 보였던 탭은 그 크기를 그대로 들고 있어 걸지 않는다(PC 화면 배치가 안 바뀐다)', () => {
+    expect(needsCollapsedSize(false, false, 1440)).toBe(false)
+  })
+  it('보이는 탭·모바일 탭은 걸지 않는다', () => {
+    expect(needsCollapsedSize(true, false, undefined)).toBe(false)
+    expect(needsCollapsedSize(false, true, undefined)).toBe(false)
   })
 })

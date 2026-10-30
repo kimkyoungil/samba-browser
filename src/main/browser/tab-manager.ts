@@ -25,7 +25,9 @@ import { moveItem } from '../../shared/reorder'
 import { attachInternalProtocol } from './internal-protocol'
 import type { PermissionMode, SearchEngine } from '../../shared/settings'
 import {
+  applyCollapsedSize,
   applyMobileEmulation,
+  clearCollapsedSize,
   clearMobileEmulation,
   MOBILE_WIDTH,
   setFocusEmulation
@@ -126,7 +128,16 @@ export function computeViewBounds(
   }
 }
 
-/** Keep background automation renderable without changing the visible browser layout. */
+// 브라우저 영역이 접혀(대화만 보는 좁은 창·설정 화면) 창 밖에 둔 탭의 최소 크기 — 폰으로 볼 때(창 폭 300px 남짓)도
+// AI 는 PC 화면 배치로 일한다
+export const COLLAPSED_MIN_WIDTH = 1280
+export const COLLAPSED_MIN_HEIGHT = 800
+
+/**
+ * Keep background automation renderable without changing the visible browser layout.
+ * 브라우저 영역이 접혀 있으면 0 크기 대신 창 밖(왼쪽)에 제 크기로 둔다 — 0×0 뷰에는 진짜 마우스 입력이
+ * 아예 들어가지 않았다(실측 10/30). 창 밖 뷰도 크롬은 페이지에 크기를 넘기지 않으므로 배치 크기는 fitCollapsed 가 준다
+ */
 export function computeBehindBounds(
   layout: Layout,
   width: number,
@@ -138,14 +149,32 @@ export function computeBehindBounds(
   if (gateHidden || width <= 0 || height <= 0) return empty
   const bounds = computeViewBounds(layout, width, height, mobile)
   if (bounds.width > 0 && bounds.height > 0) return bounds
+  const w = Math.max(width, COLLAPSED_MIN_WIDTH)
+  const h = Math.max(height, COLLAPSED_MIN_HEIGHT)
   const fallback = computeViewBounds(
-    { x: 0, y: 0, width, height, viewportWidth: width, viewportHeight: height },
-    width,
-    height,
+    { x: 0, y: 0, width: w, height: h, viewportWidth: w, viewportHeight: h },
+    w,
+    h,
     mobile
   )
   // Native views paint above the app shell, even at child index zero.
-  return { ...fallback, x: fallback.x - width }
+  return { ...fallback, x: fallback.x - w }
+}
+// 탭이 마지막으로 보였을 때 창이 이 폭 이상(PC 창 최소 폭)이면 페이지가 그 크기를 그대로 들고 있으므로
+// 흉내를 걸지 않는다(PC 화면은 안 바뀐다). 폰으로 볼 때(창 폭 300px 남짓)는 폰 폭 배치라 건다
+export const COLLAPSED_KEEP_WINDOW_WIDTH = 1000
+
+/**
+ * 화면에 크기가 없는 탭에 PC 화면 크기 흉내를 걸어야 하는가(순수 함수).
+ * 실제 크기를 한 번도 못 받았거나(접힌 동안 만든 탭) 마지막으로 보인 때가 폰 폭 창이면 건다. 모바일 탭은 제 흉내가 있다
+ */
+export function needsCollapsedSize(
+  visible: boolean,
+  mobile: boolean,
+  lastWindowWidth: number | undefined
+): boolean {
+  if (visible || mobile) return false
+  return lastWindowWidth === undefined || lastWindowWidth < COLLAPSED_KEEP_WINDOW_WIDTH
 }
 
 // 이미 하드닝한 파티션 이름. session.fromPartition 은 같은 인스턴스를 돌려주므로 1회만 건다
@@ -166,6 +195,12 @@ const downloadPolicy: DownloadPolicy = {
 // 탭 webContents → 지금 그 탭을 쥔 TabManager. 탭을 다른 창으로 옮기면(adoptTab) 바뀐다 —
 // 생성 때 건 webContents 리스너들이 옛 창의 관리자가 아니라 지금 창의 관리자에게 알리게 한다
 const ownerOf = new WeakMap<WebContents, TabManager>()
+// 탭이 마지막으로 화면에 보였을 때의 창 폭(fitCollapsed) — 접힌 동안 페이지는 그때 크기를 그대로 들고 있다
+const lastRealWindowWidth = new WeakMap<WebContents, number>()
+// 접혀 있어 PC 화면 크기 흉내를 건 탭
+const collapsedSized = new WeakSet<WebContents>()
+// 접혀 있어 숨은 채로 깨워 둔(스로틀링 끔·포커스 흉내) 탭
+const collapsedAwake = new WeakSet<WebContents>()
 
 /** 창 사이를 옮기는 탭 — exportTab 이 돌려주고 adoptTab 이 받는다 */
 export interface ExportedTab {
@@ -1005,13 +1040,15 @@ export class TabManager {
     const [w, h] = this.win.getContentSize()
     const b = computeViewBounds(this.layout, w, h, tab.mobile)
     const resized = !this.gateHidden && (b.width <= 0 || b.height <= 0) && w > 0 && h > 0
+    // 끝나면 원래 자리(뒤 층 탭은 창 밖 제 크기)로 돌려놓는다 — 0 으로 돌리면 그 탭의 좌표 클릭이 빗나간다
+    const before = tab.view.getBounds()
     if (resized) tab.view.setBounds({ x: 0, y: 0, width: w, height: h })
     this.win.contentView.addChildView(tab.view)
     try {
       return await fn()
     } finally {
       if (!this.win.isDestroyed()) {
-        if (resized && isTabAlive(tab)) tab.view.setBounds(b)
+        if (resized && isTabAlive(tab)) tab.view.setBounds(before)
         if (visible && isTabAlive(visible)) this.win.contentView.addChildView(visible.view)
       }
     }
@@ -1067,7 +1104,52 @@ export class TabManager {
   /** 뒤 탭 크기 — 보이는 탭과 같다. 로그인 게이트 중이면 0(게이트 화면 위로 비치지 않게) */
   private setBehindBounds(tab: Tab): void {
     const [w, h] = this.win.getContentSize()
-    tab.view.setBounds(computeBehindBounds(this.layout, w, h, tab.mobile, this.gateHidden))
+    const bounds = computeBehindBounds(this.layout, w, h, tab.mobile, this.gateHidden)
+    tab.view.setBounds(bounds)
+    this.fitCollapsed(tab, bounds)
+  }
+
+  /**
+   * 화면에 크기가 없는 탭(브라우저 영역이 접힘 — 대화만 보는 좁은 창·설정 화면, 또는 창 밖 뒤 층)을 PC 화면
+   * 크기로 배치되게 한다. 폰으로 대화만 보던 중 재시작 뒤 만든 탭은 페이지 크기가 0×0 이라, AI 가 잰 좌표로
+   * 보낸 진짜 클릭이 엉뚱한 곳(11번가 왼쪽 메뉴 '신규상품 대량등록')에 떨어졌다(실기 10/30).
+   * 실제 크기를 받으면(보이게 되면) 흉내를 푼다. 로그인 게이트 중에는 건드리지 않는다
+   */
+  private fitCollapsed(tab: Tab, bounds: Layout): void {
+    if (this.gateHidden || !isTabAlive(tab)) return
+    const wc = tab.view.webContents
+    const visible = bounds.width > 0 && bounds.height > 0 && bounds.x >= 0
+    const [w, h] = this.win.getContentSize()
+    if (visible) {
+      lastRealWindowWidth.set(wc, w)
+      if (collapsedSized.has(wc)) {
+        collapsedSized.delete(wc)
+        // 모바일 탭은 제 흉내(412 폭)가 같은 자리를 쓴다 — 풀면 그것까지 지운다
+        if (!tab.mobile) void clearCollapsedSize(wc)
+      }
+      // 깨워 둔 탭이 다시 보이면 원래대로 — 뒤 층 탭은 뒤에서 계속 일하므로 그대로 둔다(pruneBehind 가 푼다)
+      if (collapsedAwake.has(wc) && !this.behindIds.includes(tab.id)) {
+        collapsedAwake.delete(wc)
+        wc.setBackgroundThrottling(true)
+        void setFocusEmulation(wc, false)
+      }
+      return
+    }
+    // 뒤 층 탭처럼 숨은 채로도 입력·타이머가 돌게 한다 — 안 하면 숨은 탭에 보낸 진짜 클릭이 페이지에 아예 닿지 않았다(실측 10/30)
+    if (!collapsedAwake.has(wc)) {
+      collapsedAwake.add(wc)
+      wc.setBackgroundThrottling(false)
+      void setFocusEmulation(wc, true)
+    }
+    if (collapsedSized.has(wc)) return
+    if (!needsCollapsedSize(false, tab.mobile, lastRealWindowWidth.get(wc))) return
+    collapsedSized.add(wc)
+    // 창 밖에 둔 크기(computeBehindBounds)와 같은 크기로 배치한다 — 입력 좌표가 뷰 밖으로 나가지 않게
+    void applyCollapsedSize(
+      wc,
+      bounds.width > 0 ? bounds.width : Math.max(w, COLLAPSED_MIN_WIDTH),
+      bounds.height > 0 ? bounds.height : Math.max(h, COLLAPSED_MIN_HEIGHT)
+    )
   }
 
   /** 더는 뒤에서 조작하지 않는 탭(자동화 대상도 레인도 아님)을 뒤 층에서 뗀다. 보이는 탭은 떼지 않는다 */
@@ -1088,6 +1170,8 @@ export class TabManager {
       if (id !== this.activeId) this.win.contentView.removeChildView(t.view)
       t.view.webContents.setBackgroundThrottling(true)
       void setFocusEmulation(t.view.webContents, false)
+      // 접힌 채 보이는 탭이 되면 fitCollapsed 가 다시 깨우게 표식을 지운다
+      collapsedAwake.delete(t.view.webContents)
     }
   }
 
@@ -1412,7 +1496,11 @@ export class TabManager {
       return
     }
     const [w, h] = this.win.getContentSize()
-    tab.view.setBounds(computeViewBounds(this.layout, w, h, tab.mobile))
+    // 브라우저 영역이 접혀도(대화만 보는 좁은 창·설정 화면) 보이는 탭을 0 크기로 두지 않고 창 밖에 둔다 —
+    // 폰으로 대화만 보던 중 재시작 뒤 만든 11번가 탭에서 AI 의 진짜 클릭이 엉뚱한 메뉴에 떨어졌다(실기 10/30)
+    const bounds = computeBehindBounds(this.layout, w, h, tab.mobile, false)
+    tab.view.setBounds(bounds)
+    this.fitCollapsed(tab, bounds)
     // 뒤에서 도는 자동화 대상 탭이 아직 뒤 층에 없으면 붙인다
     const working = this.automationTabId ? this.get(this.automationTabId) : null
     if (working && working !== tab) this.sizeHidden(working)

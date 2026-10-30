@@ -61,6 +61,28 @@ export async function setFocusEmulation(wc: WebContents, enabled: boolean): Prom
   await send(wc, 'Emulation.setFocusEmulationEnabled', { enabled })
 }
 
+/**
+ * 브라우저 영역이 접혀 화면 크기가 없는 탭을 이 크기로 배치되게 한다(CDP Emulation.setDeviceMetricsOverride).
+ * 0×0 으로 배치된 페이지에서는 AI 가 잰 좌표로 보낸 진짜 클릭이 엉뚱한 곳에 떨어졌다(실기 10/30 11번가).
+ * 탭이 보이지 않을 때만 건다 — 사람 화면은 그대로다
+ */
+export function applyCollapsedSize(wc: WebContents, width: number, height: number): Promise<void> {
+  return enqueue(wc, async () => {
+    if (!attach(wc)) return
+    await send(wc, 'Emulation.setDeviceMetricsOverride', {
+      width,
+      height,
+      deviceScaleFactor: 0,
+      mobile: false
+    })
+  })
+}
+
+/** 탭이 다시 화면 크기를 받으면 흉내를 푼다(디버거는 다른 기능이 쓸 수 있어 떼지 않는다) */
+export function clearCollapsedSize(wc: WebContents): Promise<void> {
+  return enqueue(wc, () => send(wc, 'Emulation.clearDeviceMetricsOverride'))
+}
+
 function attach(wc: WebContents): boolean {
   try {
     if (!isUsable(wc)) return false
